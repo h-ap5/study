@@ -7638,5 +7638,18 @@
 
   if (document.body) boot();
   else document.addEventListener('DOMContentLoaded', boot, { once: true });
+})();// =====================================================
+// Crack UI Plus: 설정 패널 높이 줄이기 (독립 모듈)
+// =====================================================
+(() => {
+  'use strict';
+  const style = document.createElement('style');
+  style.id = 'crack-ui-panel-height-addon';
+  style.textContent = `
+    #crack-ui-settings-panel {
+      max-height: min(400px, calc(100dvh - 16px)) !important;
+    }
+  `;
+  document.head.appendChild(style);
 })();
 })();
