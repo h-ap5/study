@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         AI 캐릭터 맞춤 번역기
 // @namespace    http://tampermonkey.net/
-// @version      2.9
-// @description  Firebase Vertex AI 호환 추가 및 모바일 최적화 (하얀색 UI 고정)
+// @version      3.0
+// @description  출력 형식 커스텀 + 목표 언어 확장 + 다크/라이트 자동 테마 UI (Scene Painter 호환)
 // @match        https://crack.wrtn.ai/*
 // @grant        GM_addStyle
 // @grant        GM_setValue
@@ -17,12 +17,54 @@
     // ===================================================================================
     // [상태 관리]
     // ===================================================================================
+    const DEFAULT_FORMAT = '{번역문} ({원문})';
+
     let characters = JSON.parse(GM_getValue('AITrans_chars', '{}'));
-    // provider, firebaseConfig 기본값 추가
-    let settings = JSON.parse(GM_getValue('AITrans_settings', '{"provider":"google","apiKey":"","firebaseConfig":"","model":"gemini-3.5-flash","lang":"English","activeChar":""}'));
+    let settings = JSON.parse(GM_getValue('AITrans_settings',
+        '{"provider":"google","apiKey":"","firebaseConfig":"","model":"gemini-3.5-flash","lang":"English","customLang":"","format":"' + DEFAULT_FORMAT.replace(/"/g, '\\"') + '","activeChar":""}'
+    ));
+    if (settings.format === undefined) settings.format = DEFAULT_FORMAT;
+    if (settings.customLang === undefined) settings.customLang = '';
 
     function saveSettings() { GM_setValue('AITrans_settings', JSON.stringify(settings)); }
     function saveChars() { GM_setValue('AITrans_chars', JSON.stringify(characters)); }
+
+    // ===================================================================================
+    // [테마 감지] - Crack 다크/라이트 모드에 맞춰 UI 자동 전환
+    // ===================================================================================
+    function isDarkTheme() {
+        const html = document.documentElement;
+        const body = document.body;
+        const hints = [
+            html.getAttribute('data-theme'), html.getAttribute('data-color-mode'), html.className,
+            body?.getAttribute('data-theme'), body?.getAttribute('data-color-mode'), body?.className
+        ].join(' ').toLowerCase();
+
+        if (/\bdark\b|theme-dark|dark-mode|darkmode|color-scheme-dark/.test(hints)) return true;
+        if (/\blight\b|theme-light|light-mode|lightmode|color-scheme-light/.test(hints)) return false;
+
+        // 텍스트 색 밝기로 판별 (Scene Painter와 같은 방식)
+        try {
+            const probe = document.createElement('span');
+            probe.style.cssText = 'position:fixed;left:-9999px;color:var(--text_primary, var(--foreground, inherit));';
+            document.documentElement.appendChild(probe);
+            const rgb = getComputedStyle(probe).color.match(/\d+/g);
+            probe.remove();
+            if (rgb && rgb.length >= 3) {
+                const lum = (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255;
+                if (lum > 0.58) return true;
+                if (lum < 0.42) return false;
+            }
+        } catch (e) {}
+
+        return window.matchMedia?.('(prefers-color-scheme: dark)')?.matches || false;
+    }
+
+    function applyAitTheme() {
+        const theme = isDarkTheme() ? 'dark' : 'light';
+        document.getElementById('ai-trans-panel')?.setAttribute('data-ait-theme', theme);
+        document.getElementById('ai-trans-inline-group')?.setAttribute('data-ait-theme', theme);
+    }
 
     function setReactValue(el, value) {
         if (el.isContentEditable) {
@@ -49,77 +91,208 @@
     }
 
     function toast(msg, type = "info") {
-        const palette = { success:"#16a34a", warn:"#d97706", error:"#dc2626", info:"#6A3DE8" };
+        const palette = { success:"#4ade80", warn:"#fbbf24", error:"#f87171", info:"#a5b4fc" };
         const el = document.createElement("div");
         el.textContent = msg;
         el.style.cssText = `
             position:fixed; bottom:80px; left:50%; transform:translateX(-50%);
-            z-index:999999; background:#1a1a1a; color:#fff;
-            padding:10px 16px; border-radius:8px; font-size:12px; font-weight:bold;
-            border-left:4px solid ${palette[type]||palette.info};
-            box-shadow:0 4px 16px rgba(0,0,0,.4); transition:opacity .4s; white-space:nowrap;
+            z-index:999999; background:rgba(20,22,30,.94); color:#eceef6;
+            padding:10px 16px; border-radius:10px; font-size:12px; font-weight:bold;
+            border:1px solid rgba(205,216,255,.16); border-left:3px solid ${palette[type]||palette.info};
+            box-shadow:0 8px 24px rgba(0,0,0,.4); transition:opacity .4s; white-space:nowrap;
+            backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
         `;
         document.body.appendChild(el);
         setTimeout(() => { el.style.opacity="0"; setTimeout(()=>el.remove(),400); }, 3000);
     }
 
     // ===================================================================================
-    // [스타일 정의]
+    // [스타일 정의] - 다크(기본)/라이트 이중 테마
     // ===================================================================================
     GM_addStyle(`
-        #ai-trans-inline-group { display: flex; align-items: center; gap: 4px; margin-left: auto; margin-right: 6px; }
+        #ai-trans-inline-group { display: flex; align-items: center; gap: 5px; margin-right: 8px; }
+
+        /* 인라인 버튼: Crack 하단 툴바의 둥근 아이콘 버튼과 통일 */
+        .trans-action-btn, .trans-setting-btn {
+            height: 2rem; width: 2rem; border-radius: 999px; padding: 0;
+            font-size: 14px; cursor: pointer; transition: background .15s ease, transform .15s ease;
+            display: flex; align-items: center; justify-content: center;
+            box-shadow: none;
+        }
+        /* 다크 (기본) */
         .trans-action-btn {
-            height: 1.8rem; border-radius: 6px; background: #6A3DE8; color: white; border: none;
-            padding: 0 10px; font-size: 12px; font-weight: bold; cursor: pointer; transition: 0.2s;
-            display: flex; align-items: center; gap: 4px; box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            background: rgba(255,255,255,.09); color: #e8ecf5;
+            border: 1px solid rgba(255,255,255,.10);
         }
-        .trans-action-btn:hover { background: #5228CC; transform: translateY(-1px); }
-        .trans-action-btn:disabled { background: #9ca3af; cursor: not-allowed; transform: none; }
-
+        .trans-action-btn:hover { background: rgba(255,255,255,.16); transform: translateY(-1px); }
+        .trans-action-btn:disabled { background: rgba(255,255,255,.05); color: rgba(255,255,255,.35); cursor: not-allowed; transform: none; }
         .trans-setting-btn {
-            height: 1.8rem; width: 1.8rem; border-radius: 6px; background: #ffffff; color: #666666;
-            border: 1px solid #cccccc; padding: 0; font-size: 12px; cursor: pointer; transition: 0.2s; display: flex; justify-content: center; align-items: center;
+            background: rgba(255,255,255,.06); color: #b9c0d0;
+            border: 1px solid rgba(255,255,255,.08); font-size: 12px;
         }
-        .trans-setting-btn:hover { background: #f0f0f0; color: #333333; }
+        .trans-setting-btn:hover { background: rgba(255,255,255,.13); color: #eceef6; }
 
+        /* 라이트 */
+        [data-ait-theme="light"] .trans-action-btn {
+            background: #f0f0f3; color: #444; border: 1px solid #dcdce2;
+        }
+        [data-ait-theme="light"] .trans-action-btn:hover { background: #e5e5ea; }
+        [data-ait-theme="light"] .trans-setting-btn {
+            background: #f7f7fa; color: #777; border: 1px solid #e2e2e8;
+        }
+        [data-ait-theme="light"] .trans-setting-btn:hover { background: #ececf1; color: #444; }
+
+        /* ===== 설정 패널 ===== */
         #ai-trans-panel {
             position: fixed; top: 10vh; left: 5vw; z-index: 999999;
-            width: 90vw; max-width: 320px;
-            background: #ffffff; border: 1px solid #dddddd; color: #333333;
-            border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,0.3); display: none; flex-direction: column; overflow: hidden;
-            font-family: system-ui, -apple-system, sans-serif;
+            width: 90vw; max-width: 330px;
+            border-radius: 16px; display: none; flex-direction: column; overflow: hidden;
+            font-family: Pretendard, system-ui, -apple-system, "Apple SD Gothic Neo", sans-serif;
+            /* 다크 글라스 (기본) */
+            background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.015)), rgba(20,22,31,.92);
+            border: 1px solid rgba(205,216,255,.20); color: #e8ecf5;
+            box-shadow: 0 20px 60px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.09);
+            backdrop-filter: blur(16px) saturate(1.1); -webkit-backdrop-filter: blur(16px) saturate(1.1);
         }
-        .ai-panel-header { background: #1f2937; color: white; padding: 10px; display: flex; justify-content: space-between; cursor: move; font-weight: bold; font-size: 13px; user-select: none;}
-        .ai-panel-close { cursor: pointer; color: #f87171; padding: 0 5px; }
-        .ai-tabs { display: flex; background: #f3f4f6; border-bottom: 1px solid #e5e7eb; }
-        .ai-tab { flex: 1; padding: 8px 0; text-align: center; cursor: pointer; font-size: 12px; color: #4b5563; }
-        .ai-tab.active { background: #ffffff; color: #6A3DE8; font-weight: bold; border-bottom: 2px solid #6A3DE8; }
+        #ai-trans-panel[data-ait-theme="light"] {
+            background: #ffffff; border: 1px solid #ddd; color: #333;
+            box-shadow: 0 10px 30px rgba(0,0,0,.22);
+            backdrop-filter: none; -webkit-backdrop-filter: none;
+        }
 
-        .ai-content { padding: 12px; display: none; max-height: 60vh; overflow-y: auto; background: #ffffff; }
+        .ai-panel-header {
+            padding: 11px 14px; display: flex; justify-content: space-between; cursor: move;
+            font-weight: 800; font-size: 13px; user-select: none;
+            background: rgba(255,255,255,.04); border-bottom: 1px solid rgba(205,216,255,.13); color: inherit;
+        }
+        #ai-trans-panel[data-ait-theme="light"] .ai-panel-header { background: #f6f6f9; border-bottom-color: #e7e7ec; }
+        .ai-panel-close { cursor: pointer; color: #f87171; padding: 0 5px; font-weight: 400; }
+
+        .ai-tabs { display: flex; gap: 4px; padding: 8px 10px 0; }
+        .ai-tab {
+            flex: 1; padding: 7px 0; text-align: center; cursor: pointer; font-size: 12px; font-weight: 700;
+            color: rgba(226,232,248,.62); border-radius: 9px; transition: background .15s ease;
+        }
+        .ai-tab:hover { background: rgba(255,255,255,.06); }
+        .ai-tab.active { background: rgba(255,255,255,.10); color: #fff; box-shadow: inset 0 0 0 1px rgba(205,216,255,.22); }
+        #ai-trans-panel[data-ait-theme="light"] .ai-tab { color: #888; }
+        #ai-trans-panel[data-ait-theme="light"] .ai-tab:hover { background: #f1f1f5; }
+        #ai-trans-panel[data-ait-theme="light"] .ai-tab.active { background: #f1eefb; color: #5a43b5; box-shadow: inset 0 0 0 1px #d8cff2; }
+
+        .ai-content { padding: 12px; display: none; max-height: 62vh; overflow-y: auto; }
         .ai-content::-webkit-scrollbar { width: 4px; }
-        .ai-content::-webkit-scrollbar-thumb { background: #cccccc; border-radius: 4px; }
+        .ai-content::-webkit-scrollbar-thumb { background: rgba(255,255,255,.18); border-radius: 4px; }
+        #ai-trans-panel[data-ait-theme="light"] .ai-content::-webkit-scrollbar-thumb { background: #ccc; }
         .ai-content.active { display: block; }
 
-        .ai-form-group { margin-bottom: 8px; }
-        .ai-form-group label { display: block; font-size: 11px; margin-bottom: 3px; font-weight: bold; color: #374151; }
+        .ai-form-group { margin-bottom: 9px; }
+        .ai-form-group label { display: block; font-size: 11px; margin-bottom: 4px; font-weight: 700; color: rgba(226,232,248,.72); }
+        #ai-trans-panel[data-ait-theme="light"] .ai-form-group label { color: #555; }
+
         .ai-input {
-            width: 100%; padding: 6px; background: #ffffff; color: #333333;
-            border: 1px solid #d1d5db; border-radius: 4px; box-sizing: border-box; font-size: 12px; outline: none;
+            width: 100%; padding: 7px 9px; box-sizing: border-box; font-size: 12px; outline: none;
+            border-radius: 8px; background: rgba(255,255,255,.07); color: #eceef6;
+            border: 1px solid rgba(205,216,255,.16); transition: border-color .15s ease;
         }
-        .ai-input:focus { border-color: #6A3DE8; }
+        .ai-input:focus { border-color: rgba(165,180,252,.60); background: rgba(255,255,255,.10); }
+        .ai-input::placeholder { color: rgba(226,232,248,.38); }
+        select.ai-input option { color: #111; background: #fff; }
+        #ai-trans-panel[data-ait-theme="light"] .ai-input {
+            background: #fff; color: #333; border: 1px solid #d6d6dd;
+        }
+        #ai-trans-panel[data-ait-theme="light"] .ai-input:focus { border-color: #8a72d8; }
         textarea.ai-input { resize: vertical; min-height: 50px; }
-        #cfg-firebase { min-height: 70px; font-family: monospace; font-size: 11px; white-space: pre-wrap; }
+        #cfg-firebase { min-height: 70px; font-family: ui-monospace, monospace; font-size: 11px; white-space: pre-wrap; }
+        #cfg-format { min-height: 40px; font-family: ui-monospace, monospace; font-size: 12px; }
 
-        .ai-btn-full { width: 100%; background: #6A3DE8; color: white; border: none; padding: 8px; border-radius: 4px; cursor: pointer; font-weight: bold; margin-top: 5px; font-size: 12px;}
-        .ai-btn-full:hover { background: #5228CC; }
+        .ai-hint { margin-top: 5px; font-size: 10.5px; line-height: 1.5; color: rgba(226,232,248,.52); }
+        #ai-trans-panel[data-ait-theme="light"] .ai-hint { color: #888; }
+        .ai-hint code {
+            padding: 1px 5px; border-radius: 5px; font-size: 10px;
+            background: rgba(255,255,255,.10); border: 1px solid rgba(205,216,255,.14); color: #cfd8ff;
+        }
+        #ai-trans-panel[data-ait-theme="light"] .ai-hint code { background: #f0eefa; border-color: #e0daf0; color: #5a43b5; }
 
-        .char-item { background: #f9fafb; color: #333333; border: 1px solid #e5e7eb; padding: 6px 8px; margin-bottom: 4px; border-radius: 4px; display: flex; justify-content: space-between; font-size: 12px; cursor: pointer; align-items: center; }
-        .char-item:hover { border-color: #6A3DE8; }
-        .char-del { color: #ef4444; font-weight: bold; padding: 0 4px; }
+        .ai-btn-full {
+            width: 100%; border: 1px solid rgba(165,180,252,.34); padding: 9px; border-radius: 10px;
+            cursor: pointer; font-weight: 800; margin-top: 6px; font-size: 12px;
+            background: linear-gradient(180deg, rgba(129,140,248,.30), rgba(106,90,232,.24)); color: #eef0ff;
+            transition: background .15s ease;
+        }
+        .ai-btn-full:hover { background: linear-gradient(180deg, rgba(129,140,248,.42), rgba(106,90,232,.34)); }
+        #ai-trans-panel[data-ait-theme="light"] .ai-btn-full {
+            background: #6A3DE8; color: #fff; border-color: #6A3DE8;
+        }
+        #ai-trans-panel[data-ait-theme="light"] .ai-btn-full:hover { background: #5228CC; }
+
+        .ai-divider { border-top: 1px solid rgba(205,216,255,.13); margin: 12px 0 8px; }
+        #ai-trans-panel[data-ait-theme="light"] .ai-divider { border-top-color: #e5e5ea; }
+
+        .char-item {
+            padding: 6px 9px; margin-bottom: 4px; border-radius: 8px; display: flex;
+            justify-content: space-between; font-size: 12px; cursor: pointer; align-items: center;
+            background: rgba(255,255,255,.05); border: 1px solid rgba(205,216,255,.12); color: inherit;
+            transition: border-color .15s ease;
+        }
+        .char-item:hover { border-color: rgba(165,180,252,.55); }
+        #ai-trans-panel[data-ait-theme="light"] .char-item { background: #f9f9fb; border-color: #e5e5ea; }
+        #ai-trans-panel[data-ait-theme="light"] .char-item:hover { border-color: #8a72d8; }
+        .char-del { color: #f87171; font-weight: bold; padding: 0 4px; }
 
         @keyframes spin { 100% { transform: rotate(360deg); } }
         .spin-icon { display: inline-block; animation: spin 1s linear infinite; }
     `);
+
+    // ===================================================================================
+    // [목표 언어 목록]
+    // ===================================================================================
+    const LANGUAGES = [
+        { value: 'English', label: '영어' },
+        { value: 'Japanese', label: '일본어' },
+        { value: 'Chinese (Simplified)', label: '중국어 간체' },
+        { value: 'Chinese (Traditional)', label: '중국어 번체' },
+        { value: 'Russian', label: '러시아어' },
+        { value: 'Spanish', label: '스페인어' },
+        { value: 'French', label: '프랑스어' },
+        { value: 'German', label: '독일어' },
+        { value: 'Italian', label: '이탈리아어' },
+        { value: 'Portuguese', label: '포르투갈어' },
+        { value: 'Vietnamese', label: '베트남어' },
+        { value: 'Thai', label: '태국어' },
+        { value: 'Indonesian', label: '인도네시아어' },
+        { value: 'Arabic', label: '아랍어' },
+        { value: 'Turkish', label: '터키어' },
+        { value: 'Hindi', label: '힌디어' },
+        { value: '__custom__', label: '직접 입력…' }
+    ];
+
+    function getTargetLang() {
+        if (settings.lang === '__custom__') {
+            return (settings.customLang || '').trim() || 'English';
+        }
+        return settings.lang || 'English';
+    }
+
+    // ===================================================================================
+    // [출력 형식 템플릿]
+    // {번역문} = 번역된 대사, {원문} = 한국어 원문. {원문}은 생략 가능.
+    // ===================================================================================
+    function getFormatTemplate() {
+        let fmt = (settings.format || '').trim();
+        if (!fmt.includes('{번역문}')) fmt = DEFAULT_FORMAT;
+        return fmt;
+    }
+
+    function buildFormatInstruction() {
+        const fmt = getFormatTemplate();
+        const pattern = fmt
+            .split('{번역문}').join('<TRANSLATED_DIALOGUE>')
+            .split('{원문}').join('<ORIGINAL_KOREAN_DIALOGUE>');
+        const example = fmt
+            .split('{번역문}').join('Hello, nice to meet you!')
+            .split('{원문}').join('안녕, 반가워!');
+        return { pattern, example, includesOriginal: fmt.includes('{원문}') };
+    }
 
     // ===================================================================================
     // [UI 패널 생성]
@@ -129,14 +302,18 @@
             this.createPanel();
             this.bindEvents();
             this.renderCharList();
+            applyAitTheme();
         },
 
         createPanel() {
             const panel = document.createElement('div');
             panel.id = 'ai-trans-panel';
+
+            const langOptions = LANGUAGES.map(l => `<option value="${l.value}">${l.label}</option>`).join('');
+
             panel.innerHTML = `
                 <div class="ai-panel-header" id="ai-panel-drag">
-                    <span>⚙️ 번역 설정</span>
+                    <span>🌐 번역 설정</span>
                     <span class="ai-panel-close" id="ai-panel-close">✕</span>
                 </div>
                 <div class="ai-tabs">
@@ -149,15 +326,10 @@
                         <label>적용할 캐릭터</label>
                         <select id="cfg-char" class="ai-input"><option value="">선택 안 함</option></select>
                     </div>
-                    <div style="display:flex; gap:4px;">
+                    <div style="display:flex; gap:6px;">
                         <div class="ai-form-group" style="flex:1;">
                             <label>목표 언어</label>
-                            <select id="cfg-lang" class="ai-input">
-                                <option value="English">영어</option>
-                                <option value="Japanese">일본어</option>
-                                <option value="Chinese">중국어</option>
-                                <option value="Russian">러시아어</option>
-                            </select>
+                            <select id="cfg-lang" class="ai-input">${langOptions}</select>
                         </div>
                         <div class="ai-form-group" style="flex:1;">
                             <label>사용 모델</label>
@@ -166,6 +338,21 @@
                                 <option value="gemini-3.1-flash-lite-preview">3.1 Flash-Lite</option>
                                 <option value="gemini-3.1-pro-preview">3.1 Pro</option>
                             </select>
+                        </div>
+                    </div>
+
+                    <div class="ai-form-group" id="group-custom-lang" style="display:none;">
+                        <label>목표 언어 직접 입력</label>
+                        <input type="text" id="cfg-custom-lang" class="ai-input" placeholder="예: Polish, Swahili, 고전 라틴어...">
+                    </div>
+
+                    <div class="ai-form-group">
+                        <label>출력 형식</label>
+                        <textarea id="cfg-format" class="ai-input" placeholder="${DEFAULT_FORMAT}"></textarea>
+                        <div class="ai-hint">
+                            <code>{번역문}</code> 자리에 번역된 대사, <code>{원문}</code> 자리에 한국어 원문이 들어가요.<br>
+                            예: <code>{번역문} ({원문})</code> · <code>{원문} → {번역문}</code> · <code>{번역문}</code> (원문 생략)<br>
+                            <b>**서술**</b> 부분은 항상 한국어 그대로 유지돼요.
                         </div>
                     </div>
 
@@ -188,21 +375,18 @@
                     </div>
 
                     <button class="ai-btn-full" id="btn-save-cfg">설정 저장</button>
-                    <div style="margin-top:10px; font-size:10px; color:#666; line-height:1.3; text-align:center;">
-                        * <b>**서술** 대사</b> ➡️ <b>**서술** 번역 (한국어원문)</b> 형태로 적용됨
-                    </div>
                 </div>
 
                 <div class="ai-content" id="tab-chars">
                     <div class="ai-form-group"><label>이름</label><input type="text" id="ch-name" class="ai-input" placeholder="캐릭터 이름"></div>
-                    <div style="display:flex; gap:4px;">
+                    <div style="display:flex; gap:6px;">
                         <div class="ai-form-group" style="flex:1;"><label>나이</label><input type="text" id="ch-age" class="ai-input"></div>
                         <div class="ai-form-group" style="flex:1;"><label>성별</label><input type="text" id="ch-gender" class="ai-input"></div>
                     </div>
                     <div class="ai-form-group"><label>직업/국적</label><input type="text" id="ch-job" class="ai-input"></div>
                     <div class="ai-form-group"><label>특징/말투</label><textarea id="ch-traits" class="ai-input" placeholder="까칠함, 존댓말 등"></textarea></div>
                     <button class="ai-btn-full" id="btn-save-char">캐릭터 저장</button>
-                    <div style="border-top:1px solid #dddddd; margin:12px 0 8px;"></div>
+                    <div class="ai-divider"></div>
                     <label style="font-size:11px; font-weight:bold;">저장된 목록</label>
                     <div id="char-list-box" style="margin-top:4px;"></div>
                 </div>
@@ -213,6 +397,7 @@
             let isDragging = false, startX, startY, initLeft, initTop;
 
             const dragStart = (e) => {
+                if (e.target.id === 'ai-panel-close') return;
                 isDragging = true;
                 const evt = e.touches ? e.touches[0] : e;
                 startX = evt.clientX; startY = evt.clientY;
@@ -252,35 +437,62 @@
 
             // 설정값 불러오기
             const selProvider = document.getElementById('cfg-provider');
+            const selLang = document.getElementById('cfg-lang');
             const groupKey = document.getElementById('group-api-key');
             const groupFb = document.getElementById('group-firebase');
+            const groupCustomLang = document.getElementById('group-custom-lang');
 
             selProvider.value = settings.provider || 'google';
             document.getElementById('cfg-key').value = settings.apiKey || '';
             document.getElementById('cfg-firebase').value = settings.firebaseConfig || '';
             document.getElementById('cfg-model').value = settings.model || 'gemini-3.5-flash';
-            document.getElementById('cfg-lang').value = settings.lang || 'English';
+            document.getElementById('cfg-format').value = settings.format || DEFAULT_FORMAT;
+            document.getElementById('cfg-custom-lang').value = settings.customLang || '';
+
+            // 저장된 언어가 목록에 없으면 (구버전 'Chinese' 등) 목록에 임시 추가
+            if (settings.lang && ![...selLang.options].some(o => o.value === settings.lang)) {
+                const opt = document.createElement('option');
+                opt.value = settings.lang;
+                opt.textContent = settings.lang;
+                selLang.insertBefore(opt, selLang.lastElementChild);
+            }
+            selLang.value = settings.lang || 'English';
 
             // Provider 변경에 따른 UI 토글
             const toggleProviderUI = () => {
-                if (selProvider.value === 'google') {
-                    groupKey.style.display = 'block';
-                    groupFb.style.display = 'none';
-                } else {
-                    groupKey.style.display = 'none';
-                    groupFb.style.display = 'block';
-                }
+                const isGoogle = selProvider.value === 'google';
+                groupKey.style.display = isGoogle ? 'block' : 'none';
+                groupFb.style.display = isGoogle ? 'none' : 'block';
             };
             selProvider.addEventListener('change', toggleProviderUI);
             toggleProviderUI();
 
+            // 직접 입력 언어 토글
+            const toggleCustomLangUI = () => {
+                groupCustomLang.style.display = selLang.value === '__custom__' ? 'block' : 'none';
+            };
+            selLang.addEventListener('change', toggleCustomLangUI);
+            toggleCustomLangUI();
+
             document.getElementById('btn-save-cfg').onclick = () => {
+                const fmt = document.getElementById('cfg-format').value.trim();
+                if (fmt && !fmt.includes('{번역문}')) {
+                    return toast('출력 형식에 {번역문}이 반드시 포함돼야 해요', 'warn');
+                }
+
                 settings.provider = selProvider.value;
                 settings.apiKey = document.getElementById('cfg-key').value;
                 settings.firebaseConfig = document.getElementById('cfg-firebase').value;
                 settings.model = document.getElementById('cfg-model').value;
-                settings.lang = document.getElementById('cfg-lang').value;
+                settings.lang = selLang.value;
+                settings.customLang = document.getElementById('cfg-custom-lang').value.trim();
+                settings.format = fmt || DEFAULT_FORMAT;
                 settings.activeChar = document.getElementById('cfg-char').value;
+
+                if (settings.lang === '__custom__' && !settings.customLang) {
+                    return toast('직접 입력할 언어를 적어주세요', 'warn');
+                }
+
                 saveSettings();
                 toast('기본 설정 저장됨', 'success');
             };
@@ -366,6 +578,32 @@
         return null;
     }
 
+    function buildSystemPrompt() {
+        const lang = getTargetLang();
+        const { pattern, example, includesOriginal } = buildFormatInstruction();
+
+        let sysPrompt = `Translate the roleplay text to ${lang}.
+Rules:
+1. Ignore and DO NOT translate any narrative wrapped in ** (e.g. **He smiled.**). Keep it exactly as original Korean.
+2. Translate the spoken dialogue (text outside the **) to ${lang}.
+3. 🚨CRITICAL: Output each dialogue segment EXACTLY in this format: ${pattern}`;
+
+        if (!includesOriginal) {
+            sysPrompt += `\n   Do NOT append the original Korean dialogue. Output only what the format specifies.`;
+        }
+
+        sysPrompt += `
+Example Input: **손을 흔들며** 안녕, 반가워!
+Example Output: **손을 흔들며** ${example}`;
+
+        if (settings.activeChar && characters[settings.activeChar]) {
+            const c = characters[settings.activeChar];
+            sysPrompt += `\n4. Apply Character Persona to the dialogue translation: Name:${settings.activeChar}, Age:${c.age}, Gender:${c.gender}, Job:${c.job}, Traits:${c.traits}`;
+        }
+
+        return sysPrompt;
+    }
+
     async function executeTranslation() {
         const inputEl = getChatInput();
         if (!inputEl) return toast('입력창을 찾을 수 없음', 'error');
@@ -384,18 +622,7 @@
         icon.classList.add('spin-icon');
         toast('번역 중...', 'info');
 
-        let sysPrompt = `Translate the roleplay text to ${settings.lang}.
-Rules:
-1. Ignore and DO NOT translate any narrative wrapped in ** (e.g. **He smiled.**). Keep it exactly as original Korean.
-2. Translate the spoken dialogue (text outside the **) to ${settings.lang}.
-3. 🚨CRITICAL: ALWAYS append the original Korean dialogue in parentheses right after the translated dialogue.
-Example Input: **손을 흔들며** 안녕, 반가워!
-Example Output: **손을 흔들며** Hello, nice to meet you! (안녕, 반가워!)`;
-
-        if (settings.activeChar && characters[settings.activeChar]) {
-            const c = characters[settings.activeChar];
-            sysPrompt += `\n4. Apply Character Persona to the dialogue translation: Name:${settings.activeChar}, Age:${c.age}, Gender:${c.gender}, Job:${c.job}, Traits:${c.traits}`;
-        }
+        const sysPrompt = buildSystemPrompt();
 
         try {
             let translatedText = "";
@@ -492,16 +719,9 @@ Example Output: **손을 흔들며** Hello, nice to meet you! (안녕, 반가워
     // [UI 자동 주입 로직]
     // ===================================================================================
     function findSendContainer() {
-        const input = getChatInput();
-        if (!input) return null;
-        let node = input;
-        for (let i = 0; i < 6 && node; i++, node = node.parentElement) {
-            const btns = Array.from(node.querySelectorAll("button"));
-            if (btns.length > 0) {
-                return btns[btns.length - 1].parentElement;
-            }
-        }
-        return null;
+        // 대시보드 버튼에 낚이지 않도록, 하단 툴바(</> 버튼 있는 곳)를 정확히 지정합니다.
+        const toolbar = document.querySelector('.flex.items-center.space-x-2');
+        return toolbar || null;
     }
 
     function injectButtons() {
@@ -512,9 +732,10 @@ Example Output: **손을 흔들며** Hello, nice to meet you! (안녕, 반가워
         if (!wrapper || !wrapper.isConnected) {
             wrapper = document.createElement('div');
             wrapper.id = 'ai-trans-inline-group';
+            wrapper.style.marginRight = '4px';
 
             wrapper.innerHTML = `
-                <button id="ai-trans-btn" class="trans-action-btn" title="캐릭터 번역"><span id="trans-icon">🌐</span> 번역</button>
+                <button id="ai-trans-btn" class="trans-action-btn" title="캐릭터 번역"><span id="trans-icon">🌐</span></button>
                 <button id="ai-trans-cfg-btn" class="trans-setting-btn" title="설정">⚙️</button>
             `;
 
@@ -524,8 +745,11 @@ Example Output: **손을 흔들며** Hello, nice to meet you! (안녕, 반가워
             wrapper.querySelector('#ai-trans-cfg-btn').onclick = () => {
                 const p = document.getElementById('ai-trans-panel');
                 p.style.display = p.style.display === 'flex' ? 'none' : 'flex';
+                applyAitTheme();
             };
         }
+
+        applyAitTheme();
     }
 
     UI.init();
