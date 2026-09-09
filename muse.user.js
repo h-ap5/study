@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ✨ Crack Muse Writer (AI 답변 커스텀)
 // @namespace    muse writer
-// @version      5.2.13
+// @version      5.2.14
 // @description  Crack 캐릭터챗 입력을 맥락·프로필·유저 노트·참고자료·서사 나침반에 맞춰 다듬고, 단기·장기 기억과 최신 에리 로어를 읽기 전용으로 참고하며 유저 입력 번역까지 처리하는 AI 집필 보조 도구
 // @match        https://crack.wrtn.ai/*
 // @grant        GM_addStyle
@@ -25,6 +25,7 @@
   const REFERENCE_CACHE_MS = 30000;
   const TOKEN_RECOMMENDED = 80000;
   const TOKEN_MODEL_LIMITS = Object.freeze({
+    "gemini-3.8-flash": 1048576,
     "gemini-3.7-flash": 1048576,
     "gemini-3.5-flash": 1048576,
     "gemini-3.1-flash-lite": 1048576,
@@ -147,9 +148,10 @@
 
   // API 요금 계산용 모델별 가격 (USD / 1M tokens)
   // Gemini 가격은 기존 확프의 기준값을 USD 표시로 사용한다.
-  // Gemini 3.7 Flash는 2026-12-31까지의 공식 프로모션 단가다.
+  // Gemini 3.8/3.7 Flash는 2026-12-31까지의 공식 프로모션 단가다.
   // DeepSeek V4 가격은 공식 API 문서 기준: cache hit / cache miss / output.
   const MODEL_PRICING = {
+    "gemini-3.8-flash": { input: 0.75, output: 3.75, cacheRead: 0.075, cacheWrite: 0.75 },
     "gemini-3.7-flash": { input: 0.75, output: 3.75, cacheRead: 0.075, cacheWrite: 0.75 },
     "gemini-3.1-flash-lite": { input: 0.25, output: 1.5, cacheRead: 0.025, cacheWrite: 0.25 },
     "gemini-3-flash-preview": { input: 0.5, output: 3.0, cacheRead: 0.05, cacheWrite: 0.5 },
@@ -172,16 +174,18 @@
 
   function normalizeThinkingLevel(modelId, level) {
     const model = normalizeModelId(modelId);
-    const allowed = model === "gemini-3.7-flash"
+    const supportsLowToHighOnly = model === "gemini-3.8-flash" || model === "gemini-3.7-flash";
+    const allowed = supportsLowToHighOnly
       ? ["low", "medium", "high"]
       : ["minimal", "low", "medium", "high"];
     const value = String(level || "").trim().toLowerCase();
-    if (model === "gemini-3.7-flash" && value === "minimal") return "low";
+    if (supportsLowToHighOnly && value === "minimal") return "low";
     return allowed.includes(value) ? value : "medium";
   }
 
   const PROVIDER_MODEL_OPTIONS = {
     google: [
+      ["gemini-3.8-flash", "Gemini 3.8 Flash"],
       ["gemini-3.7-flash", "Gemini 3.7 Flash"],
       ["gemini-3.5-flash", "Gemini 3.5 Flash"],
       ["gemini-3.1-flash-lite", "Gemini 3.1 Flash-Lite"],
@@ -190,6 +194,7 @@
       ["gemini-2.5-flash", "Gemini 2.5 Flash"],
     ],
     firebase: [
+      ["gemini-3.8-flash", "Gemini 3.8 Flash"],
       ["gemini-3.7-flash", "Gemini 3.7 Flash"],
       ["gemini-3.5-flash", "Gemini 3.5 Flash"],
       ["gemini-3.1-flash-lite", "Gemini 3.1 Flash-Lite"],
@@ -271,6 +276,10 @@
     return match ? match[1] : "global_room";
   }
 
+  function getTransConfigKey(kind, room = getChatRoomId()) {
+    return `cmwTrans_${kind}_${room}`;
+  }
+
   function getLoreActiveKey(room, index) {
     return `loreActive_${room}_${index}`;
   }
@@ -282,7 +291,7 @@
   // =============================================
   // 0-1. 유저 입력 번역 기능 (V4.1.1 번역 시스템 통합)
   //      - API 제공자/모델/키는 집필 기능과 공유한다.
-  //      - 번역 설정은 변경 즉시 저장되며 말투 메모는 방별 저장된다.
+  //      - 번역 모드/언어/형식은 방별로 변경 즉시 저장되며 말투 메모도 방별 저장된다.
   // =============================================
   const TRANS_DEFAULT_FORMAT = "{번역문} ({원문})";
 
@@ -306,16 +315,16 @@
     ["__custom__", "직접 입력…"],
   ];
 
-  function getTargetLang() {
-    const lang = GM_getValue("cfgTransLang", "English");
+  function getTargetLang(room = getChatRoomId()) {
+    const lang = GM_getValue(getTransConfigKey("lang", room), "English");
     if (lang === "__custom__") {
-      return (GM_getValue("cfgTransCustomLang", "") || "").trim() || "English";
+      return (GM_getValue(getTransConfigKey("customLang", room), "") || "").trim() || "English";
     }
     return lang || "English";
   }
 
-  function getTransFormatTemplate() {
-    let fmt = (GM_getValue("cfgTransFormat", TRANS_DEFAULT_FORMAT) || "").trim();
+  function getTransFormatTemplate(room = getChatRoomId()) {
+    let fmt = (GM_getValue(getTransConfigKey("format", room), TRANS_DEFAULT_FORMAT) || "").trim();
     if (!fmt.includes("{번역문}")) fmt = TRANS_DEFAULT_FORMAT;
     return fmt;
   }
@@ -413,7 +422,8 @@
   }
 
   function isUserNoteReferenceEnabled(room = getChatRoomId()) {
-    return GM_getValue(getReferenceKey("userNoteEnabled", room), true) === true;
+    // V2 opt-in 키는 과거 버전의 암묵적 ON 값을 승계하지 않는다.
+    return GM_getValue(getReferenceKey("userNoteEnabledOptInV2", room), false) === true;
   }
 
   function isLongMemoryHookEnabled(room = getChatRoomId()) {
@@ -767,7 +777,7 @@
     }
     if (modelId.includes("gemini-3")) {
       const isPro = modelId.includes("pro");
-      const supportsMinimal = modelId !== "gemini-3.7-flash";
+      const supportsMinimal = modelId !== "gemini-3.8-flash" && modelId !== "gemini-3.7-flash";
       let level;
       if (isPro) level = tokens <= 20000 ? "low" : tokens <= 80000 ? "medium" : "high";
       else if (supportsMinimal) level = tokens <= 12000 ? "minimal" : tokens <= 45000 ? "low" : tokens <= 100000 ? "medium" : "high";
@@ -1757,18 +1767,18 @@
                     </div>
                     <div id="trans-mode-desc" class="ego-desc">입력한 문장을 그대로 목표 언어로 번역해요.</div>
                     <div style="font-size:11px; color:var(--text_secondary); line-height:1.45;">
-                        API 제공자·모델·키·추론 설정은 엔진 탭 값을 공유합니다. 번역 설정은 변경 즉시 저장됩니다.
+                        API 제공자·모델·키·추론 설정은 엔진 탭 값을 공유합니다. 번역 설정은 방별로 변경 즉시 저장됩니다.
                     </div>
                 </div>
 
                 <div class="setting-group">
-                    <span class="setting-label">목표 언어</span>
+                    <span class="setting-label">목표 언어 <em>방별 저장</em></span>
                     <select id="cfg-trans-lang" class="expand-input">${transLangOptionsHTML}</select>
                     <input type="text" id="cfg-trans-custom-lang" class="expand-input" placeholder="예: Polish, Swahili, 고전 라틴어..." style="display:none;">
                 </div>
 
                 <div class="setting-group">
-                    <span class="setting-label">출력 형식</span>
+                    <span class="setting-label">출력 형식 <em>방별 저장</em></span>
                     <textarea id="cfg-trans-format" class="expand-input" rows="3" placeholder="{번역문} ({원문})"></textarea>
                     <div style="font-size:11px; color:var(--text_secondary); line-height:1.55;">
                         <b>{번역문}</b> 자리에 번역된 대사, <b>{원문}</b> 자리에 한국어 원문이 들어갑니다.<br>
@@ -1877,7 +1887,7 @@
                 <div class="cmw-page-head"><span class="g">▤</span><h3>설정집</h3><p>프로필 · 유저 노트 · PC 노트 · 규칙 · 세계관 사전</p></div>
                 <div class="info-box">
                     <div>
-                        <div class="info-title"><span>프로필 · 유저 노트</span><span class="api-detected-tag">API 감지</span><label class="ref-switch user-note-switch" title="현재 방 유저 노트를 AI 집필과 나침반 상담에 반영할지 선택"><input type="checkbox" id="cfg-user-note-enabled"><span id="user-note-enabled-label">반영 ON</span></label></div>
+                        <div class="info-title"><span>프로필 · 유저 노트</span><span class="api-detected-tag">API 감지</span><label class="ref-switch user-note-switch" title="기본값은 OFF입니다. 켠 방에서만 유저 노트를 읽어 AI 집필과 나침반 상담에 반영합니다."><input type="checkbox" id="cfg-user-note-enabled"><span id="user-note-enabled-label">반영 OFF</span></label></div>
                         <div id="detected-profile" class="info-text" style="font-weight:800; margin-top:6px;">스캔 대기 중...</div>
                     </div>
                     <div style="border-top: 1px solid var(--border); padding-top: 10px;">
@@ -2003,6 +2013,7 @@
                 <div class="setting-group">
                     <span class="setting-label">AI 모델 선택</span>
                     <select id="cfg-model" class="expand-input">
+                        <option value="gemini-3.8-flash">Gemini 3.8 Flash</option>
                         <option value="gemini-3.7-flash">Gemini 3.7 Flash</option>
                         <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
                         <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash-Lite</option>
@@ -2076,7 +2087,7 @@
     if (isNaN(savedBudget) || savedBudget < 128) savedBudget = 1024;
 
     if (currentModel.includes("gemini-3")) {
-      const minimalOption = currentModel === "gemini-3.7-flash"
+      const minimalOption = currentModel === "gemini-3.8-flash" || currentModel === "gemini-3.7-flash"
         ? ""
         : `<option value="minimal" ${savedLevel === "minimal" ? "selected" : ""}>Minimal</option>`;
       container.innerHTML = `
@@ -2393,8 +2404,11 @@
       const chatJson = await fetchCrackJson(`${API_BASE}/v3/chats/${room}`);
       const roomData = chatJson?.data ?? chatJson;
       // Crack의 유저 노트는 PC 추가 설정과 별개의 방 데이터다.
+      // 사용자가 현재 방에서 명시적으로 켠 경우에만 노트 필드를 읽는다.
       // API 조회가 성공한 경우 빈 값도 저장하여 사이트에서 삭제된 노트의 낡은 캐시를 지운다.
-      GM_setValue("scannedUserNote_" + room, extractChatUserNote(roomData));
+      if (isUserNoteReferenceEnabled(room)) {
+        GM_setValue("scannedUserNote_" + room, extractChatUserNote(roomData));
+      }
       const wantId = roomData?.chatProfile?._id || roomData?.chatProfile?.id || "";
 
       // 방 데이터에 chatProfile 본문이 같이 내려오는 경우에는 일단 후보로 잡아둔다.
@@ -2463,17 +2477,20 @@
   function updateContextDisplay() {
     const room = getChatRoomId();
     const data = readStoredProfile(room);
-    const userNote = readStoredUserNote(room);
+    const userNoteEnabled = isUserNoteReferenceEnabled(room);
+    const userNote = userNoteEnabled ? readStoredUserNote(room) : "";
     const box = document.getElementById("detected-profile");
     if (!box) return;
 
     if (data || userNote) {
       const blocks = [];
       if (data) blocks.push(`[프로필 · ${data.name || "이름 없음"}]\n${data.profile || "설정 내용 없음"}`);
-      if (userNote) blocks.push(`[유저 노트 · AI 반영 ${isUserNoteReferenceEnabled(room) ? "ON" : "OFF"}]\n${userNote}`);
+      if (userNote) blocks.push(`[유저 노트 · AI 반영 ON]\n${userNote}`);
       box.innerText = blocks.join("\n\n");
     } else {
-      box.innerText = "⏳ 현재 채팅방 프로필과 유저 노트를 읽는 중입니다. 잠시 뒤 다시 열어보세요.";
+      box.innerText = userNoteEnabled
+        ? "⏳ 현재 채팅방 프로필과 유저 노트를 읽는 중입니다. 잠시 뒤 다시 열어보세요."
+        : "⏳ 현재 채팅방 프로필을 읽는 중입니다. 유저 노트는 반영을 켠 뒤에만 읽습니다.";
     }
   }
 
@@ -2787,7 +2804,7 @@
     const loreN = isEriLoreReferenceEnabled() ? (getEriLoreReferenceMode() === "all" ? "전체" : selectedEriLoreKeys().size) : "OFF";
     box.innerHTML = [
       `<button class="sum-chip" data-goto="pane-write">다듬기 <b>${GM_getValue("cfgRewrite", 2)}</b> · 능동 <b>${GM_getValue("cfgActive", 2)}</b></button>`,
-      `<button class="sum-chip" data-goto="pane-trans">번역 <b>${GM_getValue("cfgTransMode", "only") === "write" ? "집필 후" : "번역만"}</b> · ${getTargetLang()}</button>`,
+      `<button class="sum-chip" data-goto="pane-trans">번역 <b>${GM_getValue(getTransConfigKey("mode"), "only") === "write" ? "집필 후" : "번역만"}</b> · ${getTargetLang()}</button>`,
       tones.length ? `<button class="sum-chip" data-goto="pane-mood">${tones.slice(0, 2).join(" · ")}${tones.length > 2 ? " +" + (tones.length - 2) : ""}</button>` : "",
       `<button class="sum-chip" data-goto="pane-compass">나침반 <b>${c.enabled ? "ON" : "OFF"}</b></button>`,
       `<button class="sum-chip" data-goto="pane-lore">유저노트 <b>${isUserNoteReferenceEnabled() ? "ON" : "OFF"}</b></button>`,
@@ -2859,7 +2876,7 @@
     document.getElementsByName("cfg-trans-mode").forEach((radio) => {
       radio.addEventListener("change", () => {
         const mode = document.querySelector('input[name="cfg-trans-mode"]:checked')?.value || "only";
-        GM_setValue("cfgTransMode", mode);
+        GM_setValue(getTransConfigKey("mode"), mode);
         updateTransModeDesc();
         renderSumChips();
       });
@@ -2867,18 +2884,18 @@
 
     const langSel = document.getElementById("cfg-trans-lang");
     langSel?.addEventListener("change", () => {
-      GM_setValue("cfgTransLang", langSel.value);
+      GM_setValue(getTransConfigKey("lang"), langSel.value);
       toggleTransCustomLangUI();
       renderSumChips();
     });
 
     document.getElementById("cfg-trans-custom-lang")?.addEventListener("input", (event) => {
-      GM_setValue("cfgTransCustomLang", event.target.value.trim());
+      GM_setValue(getTransConfigKey("customLang"), event.target.value.trim());
       renderSumChips();
     });
 
     document.getElementById("cfg-trans-format")?.addEventListener("input", (event) => {
-      GM_setValue("cfgTransFormat", event.target.value);
+      GM_setValue(getTransConfigKey("format"), event.target.value);
     });
 
     document.getElementById("cfg-trans-note")?.addEventListener("input", (event) => {
@@ -2887,14 +2904,14 @@
   }
 
   function loadTransCfg(room) {
-    const mode = GM_getValue("cfgTransMode", "only");
+    const mode = GM_getValue(getTransConfigKey("mode", room), "only");
     const modeRadio = document.querySelector(`input[name="cfg-trans-mode"][value="${mode}"]`)
       || document.querySelector('input[name="cfg-trans-mode"][value="only"]');
     if (modeRadio) modeRadio.checked = true;
     updateTransModeDesc();
 
     const langSel = document.getElementById("cfg-trans-lang");
-    const savedLang = GM_getValue("cfgTransLang", "English");
+    const savedLang = GM_getValue(getTransConfigKey("lang", room), "English");
     if (langSel) {
       if (savedLang && ![...langSel.options].some((option) => option.value === savedLang)) {
         const option = document.createElement("option");
@@ -2906,11 +2923,11 @@
     }
 
     const customLang = document.getElementById("cfg-trans-custom-lang");
-    if (customLang) customLang.value = GM_getValue("cfgTransCustomLang", "");
+    if (customLang) customLang.value = GM_getValue(getTransConfigKey("customLang", room), "");
     toggleTransCustomLangUI();
 
     const format = document.getElementById("cfg-trans-format");
-    if (format) format.value = GM_getValue("cfgTransFormat", TRANS_DEFAULT_FORMAT);
+    if (format) format.value = GM_getValue(getTransConfigKey("format", room), TRANS_DEFAULT_FORMAT);
     const note = document.getElementById("cfg-trans-note");
     if (note) note.value = GM_getValue("transNote_" + room, "");
   }
@@ -3672,7 +3689,7 @@
         requireElement("cfg-pc-note").value.trim(),
       );
       addEntry(
-        getReferenceKey("userNoteEnabled", room),
+        getReferenceKey("userNoteEnabledOptInV2", room),
         !!requireElement("cfg-user-note-enabled").checked,
       );
       addEntry(
@@ -3742,10 +3759,10 @@
       );
 
       const checkedTransMode = document.querySelector('input[name="cfg-trans-mode"]:checked');
-      addEntry("cfgTransMode", checkedTransMode?.value || "only");
-      addEntry("cfgTransLang", requireElement("cfg-trans-lang").value);
-      addEntry("cfgTransCustomLang", requireElement("cfg-trans-custom-lang").value.trim());
-      addEntry("cfgTransFormat", requireElement("cfg-trans-format").value);
+      addEntry(getTransConfigKey("mode", room), checkedTransMode?.value || "only");
+      addEntry(getTransConfigKey("lang", room), requireElement("cfg-trans-lang").value);
+      addEntry(getTransConfigKey("customLang", room), requireElement("cfg-trans-custom-lang").value.trim());
+      addEntry(getTransConfigKey("format", room), requireElement("cfg-trans-format").value);
       addEntry("transNote_" + room, requireElement("cfg-trans-note").value);
 
       // 현재 모델에 해당하는 추론 설정도 같은 저장 묶음에 포함한다.
@@ -3926,12 +3943,18 @@
       GM_setValue("cfgMarkdownMode", !!e.target.checked);
     });
     document.getElementById("cfg-user-note-enabled")?.addEventListener("change", (e) => {
-      GM_setValue(getReferenceKey("userNoteEnabled"), !!e.target.checked);
+      const enabled = !!e.target.checked;
+      GM_setValue(getReferenceKey("userNoteEnabledOptInV2"), enabled);
       syncUserNoteReferenceUI();
       updateContextDisplay();
       renderHomeDashboard();
       renderSumChips();
       scheduleReferenceTokenPreview(0);
+      if (enabled) {
+        refreshCurrentProfileFromApi(true)
+          .then(() => updateContextDisplay())
+          .catch(() => updateContextDisplay());
+      }
     });
     document.getElementById("cfg-ref-short-memory-enabled")?.addEventListener("change", (e) => {
       GM_setValue(getReferenceKey("shortMemoryEnabled"), !!e.target.checked);
@@ -5447,7 +5470,7 @@ ${styleInstruction}`);
       const baseText = chatInput.tagName === "TEXTAREA"
         ? chatInput.value
         : chatInput.innerText;
-      const mode = GM_getValue("cfgTransMode", "only");
+      const mode = GM_getValue(getTransConfigKey("mode"), "only");
 
       if (mode === "only" && !baseText.trim()) {
         return alert("번역할 텍스트를 입력창에 먼저 적어주세요.\n(빈 입력으로 이어쓰기+번역을 원하면 번역 탭에서 '집필 후 번역'을 선택하세요.)");
