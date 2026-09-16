@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽 Wish RP Manager
 // @namespace    local.rp.context.manager
-// @version      1.9.0
+// @version      1.9.1
 // @description  Crack RP용 컨텍스트 주입·인지·자동 장기기억·전체 재구축·Wish Import를 하나로 관리합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -31,7 +31,7 @@
 (function () {
   'use strict';
 
-  const SCRIPT_VERSION = '1.9.0';
+  const SCRIPT_VERSION = '1.9.1';
   const RUNTIME_KEY = '__WISH_RP_MANAGER_V1__';
   const RELOAD_GUARD_KEY = `WISH_RP_clean_reload_${SCRIPT_VERSION}`;
   const previousRuntime = window[RUNTIME_KEY];
@@ -1223,7 +1223,7 @@
     return null;
   }
 
-
+  
 
   function libraryDisplayName(lib) {
     return String(lib?.presetName || lib?.label || '캐릭터 설정집').trim() || '캐릭터 설정집';
@@ -2283,7 +2283,7 @@
     return { mode, effectiveMode, minimum, maximum, fixed, target, inherited:mode==='inherit' };
   }
 
-
+  
 
   async function markCommittedTurn(detail = {}) {
     // Outgoing socket data is an attempt, not a persisted USER turn.
@@ -2830,7 +2830,7 @@
     return sections;
   }
 
-
+  
 
   function buildCurrentStateText(sections) {
     return (sections || []).map((section, index) => {
@@ -2840,7 +2840,7 @@
     }).join('\n\n').trim();
   }
 
-
+  
 
   // 최신 로그는 저장소에서 뒤에 붙은 순서가 아니라 확정된 실제 날짜를 우선해 고릅니다.
   // 연도가 없는 [M월 D일-...] 블록은 연도를 추측하지 않습니다.
@@ -3193,11 +3193,16 @@
   function remainingLabelForItem(item) {
     const total = Number(item?.totalTurns || 0);
     const used = Number(item?.usedTurns || 0);
-    if (total === 0) return '계속 유지';
-    return `${Math.max(0, total - used)}턴`;
+    if (total === 0) return '직접 해제 전까지 · 매턴 주입';
+    return `${Math.max(0, total - used)}턴 남음 · 매턴 주입`;
   }
 
+  function slotRetentionLabel(slot) {
+    const turns = normalizeRetentionTurns(slot?.retentionTurns);
+    return turns === 0 ? '직접 해제 전까지 · 매턴' : `${turns}턴 동안 · 매턴`;
+  }
 
+  
 
   function notifyInjectionEnded(room, reason = 'completed', detail = '') {
     if (!room || room.chatId !== state.currentChatId) return;
@@ -3393,7 +3398,7 @@
     });
   }
 
-
+  
 
   function openLogRecallManagerDialog(room) {
     return new Promise(resolve => {
@@ -3623,7 +3628,7 @@
     });
   }
 
-
+  
 
   async function getRoom(chatId, apiChatId = null) {
     const room = await new Promise((resolve, reject) => {
@@ -3821,7 +3826,7 @@
     });
   }
 
-
+  
 
   function libraryItemKey(item) {
     return String(item?.title || '').trim().replace(/\s+/g, ' ').toLowerCase();
@@ -3930,7 +3935,7 @@
     }
   }
 
-
+  
 
   // ---------------------------------------------------------------------------
   // Context building / cleanup
@@ -4119,7 +4124,7 @@
       `${APP.markerEnd}`;
   }
 
-
+  
 
   function stripOurContextBlock(text) {
     const src = String(text || '');
@@ -4279,7 +4284,7 @@
     return contextBlock ? `${clean}\n\n${contextBlock}` : clean;
   }
 
-
+  
 
   function statsForItems(items) {
     const active = (items || []).filter(i => String(i.content || '').trim());
@@ -4329,11 +4334,11 @@
   // 실제 점수 구성과 후보 순위를 UI용 설명으로 노출합니다. 검색 로직 자체는 바꾸지 않습니다.
   // 세부 메타데이터가 비어 있는 pending 관련로그는
   // 마지막 자동회수 컨텍스트를 기준으로 한 번 재계산해 표시용 메타데이터를 보강합니다.
-
+  
 
   // 자동 호출 설명창은 실제 pending 배열의 삽입 순서가 아니라 종류별로 묶어 보여줍니다.
   // 주입 본문의 실제 순서는 건드리지 않고 UI 표시 순서만 정리합니다.
-
+  
 
   function relatedLogEvidence(item) {
     if (item?.autoType !== 'related-log') return '';
@@ -6111,7 +6116,7 @@
       const backdrop=document.createElement('div');backdrop.className='rpcm-cloud-backdrop';
       backdrop.innerHTML=`<div class="rpcm-cloud-dialog" role="dialog" aria-modal="true" aria-label="기타 기본 프리셋 편집"><div class="rpcm-lib-dialog-head"><div><div class="rpcm-lib-dialog-title">기타 · OOC 기본 프리셋</div><div class="rpcm-lib-dialog-desc">여기에 저장한 항목은 앞으로 새로 만드는 방의 기타 슬롯에 자동으로 들어갑니다. 기존 방은 아래 ‘저장하고 이 방에도 적용’을 눌렀을 때만 바뀝니다.</div></div><button type="button" class="rpcm-lib-close" aria-label="닫기">✕</button></div><div class="rpcm-cloud-body"><div class="rpcm-preset-toolbar"><button type="button" class="rpcm-btn secondary sm" data-preset-add>＋ 항목 추가</button><button type="button" class="rpcm-btn secondary sm" data-preset-use-current>현재 방 기타 불러오기</button><small data-preset-count></small></div><div data-preset-list></div><div class="rpcm-cloud-note">‘새 방에서 켜기’를 선택한 항목은 생성 즉시 활성화되며, 첫 턴 시작 설정과 일반 기타·OOC 주입에서 바로 사용할 수 있습니다. 프리셋도 파일 백업과 개인 서버 백업에 함께 포함됩니다.</div></div><div class="rpcm-cloud-actions"><button type="button" class="rpcm-btn secondary" data-preset-cancel>취소</button><span class="sp"></span><button type="button" class="rpcm-btn secondary" data-preset-save>저장</button><button type="button" class="rpcm-btn primary" data-preset-save-apply>저장하고 이 방에도 적용</button></div></div>`;
       document.body.appendChild(backdrop);
-      const retentionOptions=value=>APP.allowedRetentionTurns.map(n=>`<option value="${n}" ${Number(value)===n?'selected':''}>${n===0?'직접 해제 전까지':`${n}턴 유지`}</option>`).join('');
+      const retentionOptions=value=>APP.allowedRetentionTurns.map(n=>`<option value="${n}" ${Number(value)===n?'selected':''}>${n===0?'직접 해제 전까지 · 매턴':`${n}턴 동안 매턴`}</option>`).join('');
       const render=()=>{
         const list=backdrop.querySelector('[data-preset-list]');
         list.innerHTML=draft.length?draft.map((item,index)=>`<section class="rpcm-preset-card" data-preset-id="${esc(item.id)}"><div class="rpcm-preset-head"><input class="rpcm-preset-title" data-preset-title value="${esc(item.title||`기타 ${index+1}`)}" maxlength="100" aria-label="프리셋 이름"><label class="rpcm-preset-enabled"><input type="checkbox" data-preset-enabled ${item.enabled!==false?'checked':''}>새 방에서 켜기</label><button type="button" class="rpcm-preset-delete" data-preset-delete aria-label="항목 삭제">삭제</button></div><select class="rpcm-preset-select" data-preset-retention aria-label="유지 기간">${retentionOptions(item.retentionTurns)}</select><textarea class="rpcm-preset-content" data-preset-content spellcheck="false" placeholder="새 방마다 반복해서 넣을 기타 설정이나 OOC를 입력하세요.">${esc(item.content||'')}</textarea></section>`).join(''):'<div class="rpcm-cloud-empty">저장된 기본 프리셋이 없습니다. ‘항목 추가’로 만들어 주세요.</div>';
@@ -6385,7 +6390,7 @@
     return { verified: ok, text, serverChars: text.length };
   }
 
-
+  
 
   async function carrierOriginalFromServer(room, p) {
     const current = await fetchMessage(apiChatIdOf(room), p.messageId);
@@ -6543,7 +6548,7 @@
     return true;
   }
 
-
+  
 
   function closeQuickInjectionPanel({ cancelQueued = false } = {}) {
     if (cancelQueued) {
@@ -7694,7 +7699,7 @@
     return candidates[0] || null;
   }
 
-
+  
 
   function purgeRetiredUi() {
     document.querySelectorAll('#rpcm-fab,#rpcm-mobile-button-host,#yam-cognition-root,#rpcm-quick-trigger,[data-rpcm-settings-entry="1"]').forEach(node=>node.remove());
@@ -7807,7 +7812,7 @@
     return btn;
   }
 
-
+  
 
   function updateLauncher() {
     const btn=state.launcher;
@@ -8026,7 +8031,7 @@
     .rpcm-v2-slot{display:flex;align-items:center;gap:9px;border:1px solid var(--v2-line);background:var(--v2-bg3);border-radius:11px;border-left:3px solid var(--tone);padding:10px 11px;margin-bottom:6px}.rpcm-v2-slot button.name{flex:1;min-width:0;border:0;background:transparent;color:var(--v2-fg);font-size:12.5px;font-weight:750;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.rpcm-v2-slot .meta{font-size:10px;color:var(--v2-fg3);white-space:nowrap}.rpcm-v2-check{width:18px;height:18px;accent-color:var(--v2-acc)}
     .rpcm-v2-subtabs{display:flex;gap:5px;border-bottom:1px solid var(--v2-line);margin-bottom:11px}.rpcm-v2-subtabs button{border:0;background:transparent;color:var(--v2-fg3);font-size:11.5px;font-weight:750;padding:7px 10px;border-bottom:2px solid transparent}.rpcm-v2-subtabs button.on{color:var(--v2-acc);border-bottom-color:var(--v2-acc)}
     .rpcm-v2-knw{display:flex;gap:5px;flex-wrap:wrap;margin-top:8px}.rpcm-v2-knw span{font-size:10px;border:1px solid var(--v2-line3);background:var(--v2-bg4);color:var(--v2-fg3);padding:4px 7px;border-radius:7px}.rpcm-v2-knw b{margin-left:4px}.rpcm-v2-knw .aw b{color:var(--v2-ok)}.rpcm-v2-knw .un b{color:var(--v2-warn)}.rpcm-v2-conceal{margin-top:8px;color:var(--v2-cog);font-size:10px}
-    .rpcm-v2-editor{display:flex;flex-direction:column;min-height:100%;gap:9px}.rpcm-v2-editor-head{display:flex;align-items:center;gap:8px}.rpcm-v2-editor-head strong{flex:1}.rpcm-v2-input,.rpcm-v2-textarea,.rpcm-v2-select{width:100%;box-sizing:border-box;border:1px solid var(--v2-line2);background:var(--v2-field);color:var(--v2-fg);border-radius:9px;padding:9px;font:12px/1.55 inherit}.rpcm-v2-textarea{min-height:300px;resize:vertical}.rpcm-v2-field label{display:block;color:var(--v2-fg3);font-size:10px;margin:0 0 4px}.rpcm-v2-editor-actions{display:flex;gap:7px;flex-wrap:wrap}.rpcm-v2-textarea.compact{min-height:150px}.rpcm-v2-grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:9px}.rpcm-v2-checkrow{display:flex;align-items:flex-start;gap:9px;padding:9px 10px;border:1px solid var(--v2-line);background:var(--v2-bg2);border-radius:9px;color:var(--v2-fg2)}.rpcm-v2-checkrow.compact{margin-top:20px}.rpcm-v2-checkrow input{width:18px;height:18px;accent-color:var(--v2-acc);margin:1px 0 0;flex:0 0 auto}.rpcm-v2-checkrow span{display:block}.rpcm-v2-checkrow b{display:block;font-size:11px}.rpcm-v2-checkrow small{display:block;color:var(--v2-fg4);font-size:9.5px;margin-top:2px}.rpcm-v2-krow{display:grid;grid-template-columns:minmax(0,1fr) 135px;gap:8px;align-items:center;padding:7px 0;border-bottom:1px solid var(--v2-line3)}.rpcm-v2-krow strong{font-size:11px}.rpcm-v2-conceal-row{display:flex;align-items:center;gap:6px;padding:7px 0;border-bottom:1px solid var(--v2-line3);font-size:10.5px;color:var(--v2-fg2)}.rpcm-v2-conceal-row span{flex:1;min-width:0}
+    .rpcm-v2-editor{display:flex;flex-direction:column;min-height:100%;gap:9px}.rpcm-v2-editor-head{display:flex;align-items:center;gap:8px}.rpcm-v2-editor-head strong{flex:1}.rpcm-v2-input,.rpcm-v2-textarea,.rpcm-v2-select{width:100%;box-sizing:border-box;border:1px solid var(--v2-line2);background:var(--v2-field);color:var(--v2-fg);border-radius:9px;padding:9px;font:12px/1.55 inherit}.rpcm-v2-textarea{min-height:300px;resize:vertical}.rpcm-v2-field label{display:block;color:var(--v2-fg3);font-size:10px;margin:0 0 4px}.rpcm-v2-field small{display:block;color:var(--v2-fg4);font-size:10px;line-height:1.6;margin-top:4px}.rpcm-v2-editor-actions{display:flex;gap:7px;flex-wrap:wrap}.rpcm-v2-textarea.compact{min-height:150px}.rpcm-v2-grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:9px}.rpcm-v2-checkrow{display:flex;align-items:flex-start;gap:9px;padding:9px 10px;border:1px solid var(--v2-line);background:var(--v2-bg2);border-radius:9px;color:var(--v2-fg2)}.rpcm-v2-checkrow.compact{margin-top:20px}.rpcm-v2-checkrow input{width:18px;height:18px;accent-color:var(--v2-acc);margin:1px 0 0;flex:0 0 auto}.rpcm-v2-checkrow span{display:block}.rpcm-v2-checkrow b{display:block;font-size:11px}.rpcm-v2-checkrow small{display:block;color:var(--v2-fg4);font-size:9.5px;margin-top:2px}.rpcm-v2-krow{display:grid;grid-template-columns:minmax(0,1fr) 135px;gap:8px;align-items:center;padding:7px 0;border-bottom:1px solid var(--v2-line3)}.rpcm-v2-krow strong{font-size:11px}.rpcm-v2-conceal-row{display:flex;align-items:center;gap:6px;padding:7px 0;border-bottom:1px solid var(--v2-line3);font-size:10.5px;color:var(--v2-fg2)}.rpcm-v2-conceal-row span{flex:1;min-width:0}
     .rpcm-v2-tool-stat{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin-top:9px}.rpcm-v2-tool-stat div{border:1px solid var(--v2-line3);background:var(--v2-bg2);border-radius:8px;padding:7px}.rpcm-v2-tool-stat span{display:block;font-size:9px;color:var(--v2-fg4)}.rpcm-v2-tool-stat b{font-size:13px}.rpcm-v2-prov{display:inline-flex;gap:6px;align-items:center;border:1px solid var(--v2-line2);background:var(--v2-bg4);color:var(--v2-fg3);border-radius:999px;padding:4px 9px;font-size:10px}.rpcm-v2-prov b{width:6px;height:6px;border-radius:50%;background:var(--v2-ok)}
     .rpcm-v2-search{position:absolute;inset:0;z-index:10;background:var(--v2-bg);display:flex;flex-direction:column}.rpcm-v2-search-h{display:flex;gap:8px;padding:12px;border-bottom:1px solid var(--v2-line);background:var(--v2-bg2)}.rpcm-v2-search-h input{flex:1}.rpcm-v2-search-list{overflow:auto;padding:12px}.rpcm-v2-empty{color:var(--v2-fg4);font-size:11px;padding:12px;text-align:center}
     #rpcm-bulk-backdrop{position:fixed;inset:0;z-index:1000012;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;padding:18px;font-family:-apple-system,BlinkMacSystemFont,"Pretendard",sans-serif}.rpcm-v2-bulk-dialog{width:min(560px,96vw);max-height:92vh;background:#181818;color:#ededed;border:1px solid #3b3b3b;border-radius:14px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 24px 80px rgba(0,0,0,.65)}.rpcm-v2-bulk-h{display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid #303030;background:#1d1d1d}.rpcm-v2-bulk-h>div{flex:1}.rpcm-v2-bulk-h strong{font-size:15px}.rpcm-v2-bulk-h small{display:block;color:#888;font-size:10px}.rpcm-v2-bulk-body{padding:13px;overflow:auto}.rpcm-v2-stepper{display:flex;margin-bottom:13px}.rpcm-v2-step{flex:1;text-align:center;color:#666;font-size:9px;font-weight:750;position:relative}.rpcm-v2-step b{display:block;width:22px;height:22px;line-height:20px;border-radius:50%;border:1px solid #444;background:#222;margin:0 auto 4px}.rpcm-v2-step.done{color:#22c55e}.rpcm-v2-step.done b{color:#22c55e;border-color:#22c55e}.rpcm-v2-step.now{color:#df6298}.rpcm-v2-step.now b{background:#df6298;color:#fff;border-color:#df6298}.rpcm-v2-jobbar{height:8px;background:#232323;border-radius:999px;overflow:hidden}.rpcm-v2-jobbar i{display:block;height:100%;background:#df6298;transition:width .25s}.rpcm-v2-jobmeta{display:flex;gap:8px;align-items:center;margin:8px 0 12px;font-size:10px;color:#888;flex-wrap:wrap}.rpcm-v2-jobmeta strong{color:#eee;font-size:12px}.rpcm-v2-seggrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(44px,1fr));gap:6px;margin-bottom:11px}.rpcm-v2-seg{border:1px solid #3b3b3b;background:#1f1f1f;border-radius:8px;padding:7px 2px;text-align:center;font-size:11px;font-weight:800;color:#777}.rpcm-v2-seg small{display:block;font-size:8px;margin-top:2px}.rpcm-v2-seg.ok{color:#22c55e;border-color:#2e6e45;background:rgba(34,197,94,.09)}.rpcm-v2-seg.now{color:#df6298;border-color:#7d3958;background:rgba(223,98,152,.10)}.rpcm-v2-seg.fail{color:#f87171;border-color:#733737;background:rgba(248,113,113,.10)}.rpcm-v2-joblog{border:1px solid #303030;background:#101010;border-radius:9px;padding:8px 10px;max-height:100px;overflow:auto;color:#888;font:10px/1.65 ui-monospace,monospace;margin-bottom:10px}.rpcm-v2-joblog b{color:#bbb}.rpcm-v2-bulk-ft{display:flex;gap:7px;align-items:center;padding:9px 12px;border-top:1px solid #303030;background:#1d1d1d}.rpcm-v2-bulk-ft span{margin-left:auto;color:#777;font-size:10px}
@@ -8218,7 +8223,7 @@
       ${chars.slice(0,8).map(s=>`<div class="rpcm-v2-slot" style="--tone:var(--v2-char)"><input class="rpcm-v2-check" type="checkbox" data-v2-slot-enable="${esc(s.id)}" ${s.enabled?'checked':''}><button class="name" data-v2-edit-slot="${esc(s.id)}">${esc(s.title)}</button><span class="meta">${s.autoPinned?'📌 고정':s.lastAutoMatch?`${esc(s.lastAutoMatch)} 감지`:formatCount(String(s.content||'').length)+'자'}</span></div>`).join('')||'<div class="rpcm-v2-empty">캐릭터 설정이 없습니다.</div>'}
       <button class="rpcm-v2-btn secondary sm" data-v2-add="character">＋ 캐릭터 추가</button>
       <div class="rpcm-v2-sec">기타 · OOC</div>
-      ${extras.map(s=>`<div class="rpcm-v2-slot" style="--tone:var(--v2-extra)"><input class="rpcm-v2-check" type="checkbox" data-v2-slot-enable="${esc(s.id)}" ${s.enabled?'checked':''}><button class="name" data-v2-edit-slot="${esc(s.id)}">${esc(s.title)}</button><span class="meta">${formatCount(String(s.content||'').length)}자</span></div>`).join('')}
+      ${extras.map(s=>`<div class="rpcm-v2-slot" style="--tone:var(--v2-extra)"><input class="rpcm-v2-check" type="checkbox" data-v2-slot-enable="${esc(s.id)}" ${s.enabled?'checked':''}><button class="name" data-v2-edit-slot="${esc(s.id)}">${esc(s.title)}</button><span class="meta">${formatCount(String(s.content||'').length)}자 · ${esc(slotRetentionLabel(s))}</span></div>`).join('')}
       <button class="rpcm-v2-btn secondary sm" data-v2-add="extra">＋ 기타/OOC 추가</button>
       ${v2SessionSetupCard(room)}`;
   }
@@ -8447,7 +8452,10 @@
     if(ed.type==='slot'){
       const slot=(room.slots||[]).find(s=>s.id===ed.slotId);
       if(!slot){state.v2Editor=null;return '';}
-      return `<div class="rpcm-v2-editor"><div class="rpcm-v2-editor-head"><button class="rpcm-v2-btn secondary sm" data-v2-editor-back>←</button><strong>${esc(slot.title)}</strong><span class="rpcm-v2-meta">${formatCount(String(slot.content||'').length)}자</span></div>${slot.group==='character'||slot.group==='extra'?`<div class="rpcm-v2-field"><label>이름</label><input class="rpcm-v2-input" data-v2-ed-title value="${esc(slot.title)}"></div>`:''}${slot.group==='character'?`<div class="rpcm-v2-field"><label>별칭 · 쉼표로 구분</label><input class="rpcm-v2-input" data-v2-ed-alias value="${esc((slot.aliases||[]).join(', '))}"></div>`:''}<div class="rpcm-v2-field"><label>내용</label><textarea class="rpcm-v2-textarea" data-v2-ed-body spellcheck="false">${esc(slot.content||'')}</textarea></div><div class="rpcm-v2-editor-actions"><button class="rpcm-v2-btn" data-v2-editor-save>저장</button>${slot.group==='character'||slot.group==='extra'?'<button class="rpcm-v2-btn danger" data-v2-editor-delete>삭제</button>':''}</div></div>`;
+      const timed=slot.group==='character'||slot.group==='extra';
+      const retention=normalizeRetentionTurns(slot.retentionTurns);
+      const retentionOptions=APP.allowedRetentionTurns.map(turns=>`<option value="${turns}" ${retention===turns?'selected':''}>${turns===0?'직접 해제 전까지 · 매턴':`${turns}턴 동안 매턴`}</option>`).join('');
+      return `<div class="rpcm-v2-editor"><div class="rpcm-v2-editor-head"><button class="rpcm-v2-btn secondary sm" data-v2-editor-back>←</button><strong>${esc(slot.title)}</strong><span class="rpcm-v2-meta">${formatCount(String(slot.content||'').length)}자</span></div>${timed?`<div class="rpcm-v2-field"><label>이름</label><input class="rpcm-v2-input" data-v2-ed-title value="${esc(slot.title)}"></div>`:''}${slot.group==='character'?`<div class="rpcm-v2-field"><label>별칭 · 쉼표로 구분</label><input class="rpcm-v2-input" data-v2-ed-alias value="${esc((slot.aliases||[]).join(', '))}"></div>`:''}${timed?`<div class="rpcm-v2-field"><label>주입 유지 기간</label><select class="rpcm-v2-select" data-v2-ed-retention>${retentionOptions}</select><small>선택한 기간 동안 매 USER턴 주입됩니다. ‘5턴’은 5턴마다 한 번이 아니라 앞으로 5턴 연속 주입이라는 뜻입니다.${room.pending?' 현재 주입 중이므로 저장한 변경은 주입을 해제하고 다시 시작해야 반영됩니다.':''}</small></div>`:''}<div class="rpcm-v2-field"><label>내용</label><textarea class="rpcm-v2-textarea" data-v2-ed-body spellcheck="false">${esc(slot.content||'')}</textarea></div><div class="rpcm-v2-editor-actions"><button class="rpcm-v2-btn" data-v2-editor-save>저장</button>${timed?'<button class="rpcm-v2-btn danger" data-v2-editor-delete>삭제</button>':''}</div></div>`;
     }
     if(ed.type==='state'){
       const slot=(room.slots||[]).find(s=>s.id==='currentState'),sections=parseCurrentStateSections(slot?.content||''),s=sections[ed.index];
@@ -8552,7 +8560,19 @@
     overlay.querySelector('[data-v2-editor-back]')?.addEventListener('click',()=>{const ed=state.v2Editor;if(ed?.type==='cog-conceal'&&ed.factId)state.v2Editor={type:'cog-fact',factId:ed.factId};else state.v2Editor=null;renderModal();});
     overlay.querySelector('[data-v2-editor-save]')?.addEventListener('click',async()=>{
       const ed=state.v2Editor,title=overlay.querySelector('[data-v2-ed-title]')?.value??'',body=overlay.querySelector('[data-v2-ed-body]')?.value??'';
-      if(ed.type==='slot'){const s=room.slots.find(x=>x.id===ed.slotId);if(s){if(s.group==='character'||s.group==='extra')s.title=title.trim()||(s.group==='character'?'새 캐릭터':'기타');if(s.group==='character')s.aliases=String(overlay.querySelector('[data-v2-ed-alias]')?.value||'').split(',').map(x=>x.trim()).filter(Boolean);s.content=['currentState','logSummary'].includes(s.id)?cleanedPastedText(body):body;}}
+      const slotSavedDuringInjection=ed.type==='slot'&&!!room.pending;
+      if(ed.type==='slot'){
+        const s=room.slots.find(x=>x.id===ed.slotId);
+        if(s){
+          if(s.group==='character'||s.group==='extra'){
+            s.title=title.trim()||(s.group==='character'?'새 캐릭터':'기타');
+            const retentionValue=overlay.querySelector('[data-v2-ed-retention]')?.value;
+            if(retentionValue!=null)s.retentionTurns=normalizeRetentionTurns(retentionValue);
+          }
+          if(s.group==='character')s.aliases=String(overlay.querySelector('[data-v2-ed-alias]')?.value||'').split(',').map(x=>x.trim()).filter(Boolean);
+          s.content=['currentState','logSummary'].includes(s.id)?cleanedPastedText(body):body;
+        }
+      }
       else if(ed.type==='state'){const s=room.slots.find(x=>x.id==='currentState'),arr=parseCurrentStateSections(s?.content||'');if(arr[ed.index]){arr[ed.index].title=title.trim()||arr[ed.index].title;arr[ed.index].body=body;s.content=buildCurrentStateText(arr);}}
       else if(ed.type==='log'){const s=room.slots.find(x=>x.id==='logSummary'),blocks=parseDatedLogBlocks(s?.content||'');if(blocks[ed.index]){blocks[ed.index].heading=title.trim()||blocks[ed.index].heading;blocks[ed.index].body=body;s.content=blocks.map(x=>`${x.heading}${String(x.body||'').trim()?`\n${String(x.body||'').trim()}`:''}`).join('\n\n');}}
       else if(ed.type==='guide'){saveGuideText(ed.slotId,body);}
@@ -8561,7 +8581,7 @@
       if(ed.type==='state'){state.v2Tab='memory';state.v2MemoryView='state';}
       else if(ed.type==='log'){state.v2Tab='memory';state.v2MemoryView='log';}
       state.v2Editor=null;
-      notify('저장했습니다.','success',2200);
+      notify(slotSavedDuringInjection?'저장했습니다. 현재 주입에는 이전 값이 유지됩니다. 해제 후 다시 시작하면 반영됩니다.':'저장했습니다.','success',slotSavedDuringInjection?4200:2200);
       renderModal();
     });
     overlay.querySelector('[data-v2-guide-reset]')?.addEventListener('click',()=>{if(!state.v2Editor?.slotId)return;if(confirm('이 API 지침을 기본값으로 복원할까요?')){resetGuideText(state.v2Editor.slotId);renderModal();}});
@@ -8908,7 +8928,7 @@
       .map(x=>[x.holderId,x.targetId,!!x.active,x.scope||'',x.publicName||'']).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b))):[];
     return JSON.stringify([actors,fact,knowledge,concealments,review.kind==='scene'?value.state.present.includes(c.actor_id):null]);
   }
-
+  
   function parseFrame(raw) {
     if (typeof raw !== 'string') return null;
     const m = /^42(\/[^,]+,)?(\d*)(\[.*)$/s.exec(raw);
