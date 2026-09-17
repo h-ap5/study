@@ -122,6 +122,11 @@
     compactTarget:16,
     protectUserAdded:true,
   });
+  const AUTO_LORE_DEFAULTS = Object.freeze({
+    enabled:true,
+    intervalTurns:5,
+    readTurns:8,
+  });
 
 
   const TURN_INTERVAL_MAX = 100;
@@ -538,14 +543,42 @@
 3. 순간 묘사·일회성 감정·상태창 반복·대사 장식은 버린다.
 4. 고유명과 사건을 찾을 단서를 보존하고, 입력에 없는 사실·감정·날짜를 만들지 않는다.
 5. PROTECTED 카드는 참고 전용이다. 출력 카드에 그대로 복제하거나 보호 카드를 수정·삭제하라고 지시하지 않는다.`,
+    loreAuto: `# Wish RP Manager — 진행형 자료 자동 갱신 지침 v1
+
+너는 장기 RP의 진행형 자료집을 증분 관리한다. 기존 자료와 새로 완결된 RP를 비교하고, 실제로 새로 생기거나 명시적으로 바뀐 지속 정보만 제안한다.
+
+[담당 범위]
+- world: 세계 규칙, 장소·세력의 지속 설정과 현재 유효한 세계 상태
+- item: 중요한 물건별 현재 소유자·위치·상태·기능. 같은 물건은 기존 key를 재사용한다.
+- outfit: 인물별 현재 복장·착용 액세서리·착용 아이템. 같은 인물은 기존 key를 재사용한다.
+- key_quote: 고백·맹세·계약·결별·정체 공개·관계 전환처럼 나중에 실제 문장을 회상할 가치가 큰 대사
+
+[판정 원칙]
+- 사용자 직접 정정·고정 설정 > 최신 직접 RP > 객관 서술 > 인물의 주장·추측 > 모델 추론 순서다.
+- 새 RP에서 다시 언급되지 않았다는 이유로 기존 world/item/outfit 값을 삭제·해제·이동·갈아입힘 처리하지 않는다.
+- 순간 자세, 손에 잠시 든 물건, 분위기용 소품, 일회성 표정과 감정은 지속 카드로 만들지 않는다.
+- item/outfit의 현재값이 명시적으로 바뀌면 과거값을 덧붙이지 말고 같은 key의 완전한 최신 교체본을 제안한다. 변화 과정은 날짜로그가 담당한다.
+- world는 장기 연속성에 필요한 확정 설정만 남기고, 등장인물의 오해·소문을 객관 세계관으로 승격하지 않는다.
+- key_quote는 신규 RP에 실제로 연속해서 존재하는 짧은 원문만 exact_quote에 그대로 복사한다. 의역·문장 합성·말투 교정·번역을 금지한다.
+- key_quote에는 누가 누구에게, 어떤 장면·장소·상황에서 말했는지와 고백/약속/결별 같은 검색용 맥락어를 함께 남긴다. 같은 실제 대사를 중복 생성하지 않는다.
+- RP 끝의 상태표·정보창은 item/outfit 현재값의 보조 근거로만 사용할 수 있다. 본문 직접 서술과 충돌하면 본문을 우선하고, 상태표만으로 world의 객관 진실이나 key_quote의 화자·맥락을 만들지 않는다.
+- full/compact/micro에는 evidence와 같은 신규 메시지에서 직접 확인되는 내용만 옮긴다. 짧고 일반적인 동사 하나를 근거로 소유자·장소·기능·복장 전체를 추론하지 않는다.
+- 보호 표시가 있는 카드와 사용자가 만든 일반 자료는 수정하지 않는다.
+- 자동 삭제는 하지 않는다. 변경할 것이 없으면 NO_CHANGE를 선택한다.
+
+입력에 없는 이름·사실·소유·복장·장소·날짜·대사를 만들지 마라.`,
   });
-  const GUIDE_DEFAULTS = Object.freeze({ ...INTERNAL_API_GUIDES, ...LONG_MEMORY_GUIDES });
+  const CURRENT_STATE_DEFAULT_GUIDE = INTERNAL_API_GUIDES.currentState
+    .replace('8. 중요 물건·자산의 현재 소유/보관','8. 중요 물건·복장의 세부 현재값은 진행형 자료집에 맡기고, 여기에는 사건·관계·계획을 직접 제한하는 영향만')
+    .replace('중요 비밀·미완료 약속·소유 상태·지속 부상·현재 제약','중요 비밀·미완료 약속·물건이 사건에 주는 핵심 제약·지속 부상·현재 제약');
+  const GUIDE_DEFAULTS = Object.freeze({ ...INTERNAL_API_GUIDES, currentState:CURRENT_STATE_DEFAULT_GUIDE, ...LONG_MEMORY_GUIDES });
   const API_GUIDE_STORAGE_KEYS = Object.freeze({
     currentState: 'WISH_RP_api_guide_currentState_v1',
     logSummary: 'WISH_RP_api_guide_logSummary_v1',
     longMemoryAuto: 'WISH_RP_guide_long_memory_auto_v1',
     longMemoryCompress: 'WISH_RP_guide_long_memory_compress_v1',
     longMemoryExternal: 'WISH_RP_guide_long_memory_external_v1',
+    loreAuto: 'WISH_RP_guide_lore_auto_v1',
   });
   const DEFAULT_EXTRA_PRESET_KEY = 'WISH_RP_default_extra_preset_v1';
   const SLOT_TEMPLATE = [
@@ -604,6 +637,7 @@
     v2SummaryLoaded: false,
     v2SummaryLoading: false,
     v2SummaryLoadedAt: 0,
+    v2SummaryLoadEpoch: 0,
     v2SummaryChatId: '',
     v2SummaryQuery: '',
     v2SummaryFilter: 'all',
@@ -1309,6 +1343,18 @@
     room.loreConfig.embeddingModel = String(room.loreConfig.embeddingModel || APP.loreEmbeddingModel);
     room.loreConfig.embeddingDimensions = normalizeIntegerRange(room.loreConfig.embeddingDimensions, APP.loreEmbeddingDimensions, 128, 1536);
     room.loreConfig.semanticThreshold = Math.max(0.1, Math.min(0.95, Number(room.loreConfig.semanticThreshold || APP.loreSemanticThreshold)));
+    room.loreAutomation = room.loreAutomation && typeof room.loreAutomation === 'object' ? room.loreAutomation : {};
+    room.loreAutomation.version = 1;
+    room.loreAutomation.enabled = room.loreAutomation.enabled !== false;
+    room.loreAutomation.intervalTurns = normalizeIntegerRange(room.loreAutomation.intervalTurns, AUTO_LORE_DEFAULTS.intervalTurns, 1, 100);
+    room.loreAutomation.readTurns = normalizeIntegerRange(room.loreAutomation.readTurns, AUTO_LORE_DEFAULTS.readTurns, 1, 100);
+    room.loreAutomation.initialized = room.loreAutomation.initialized === true;
+    room.loreAutomation.lastProcessedMessageId = String(room.loreAutomation.lastProcessedMessageId || '');
+    room.loreAutomation.lastRunAt = Number(room.loreAutomation.lastRunAt || 0);
+    room.loreAutomation.lastStatus = String(room.loreAutomation.lastStatus || '');
+    room.loreAutomation.lastError = String(room.loreAutomation.lastError || '');
+    room.loreAutomation.failureCount = Math.max(0, Number(room.loreAutomation.failureCount || 0));
+    room.loreAutomation.paused = room.loreAutomation.paused === true;
     room.logSemanticIndex = Array.isArray(room.logSemanticIndex) ? room.logSemanticIndex.filter(row => row && row.key && Array.isArray(row.vector)).map(row => ({
       key:String(row.key), sourceHash:String(row.sourceHash || ''), model:String(row.model || APP.loreEmbeddingModel),
       dimensions:Number(row.dimensions || row.vector.length || APP.loreEmbeddingDimensions), vector:row.vector.map(Number), updatedAt:Number(row.updatedAt || 0),
@@ -1449,7 +1495,7 @@
       .replace(/-->/g, '--\u200B>');
   }
 
-  function stripAutomationNoise(text, preserveLineBreaks = false) {
+  function stripAutomationNoise(text, preserveLineBreaks = false, preserveStatusFences = false) {
     let src = String(text || '');
     src = stripOurContextBlock(src).text;
     src = stripSessionSetupBlock(src).text;
@@ -1470,7 +1516,7 @@
     // RP 답변에 표시되는 상태창은 실제 지문·대사가 아닙니다. 캐릭터 이름이나 사건 키워드가
     // 상태창에 반복됐다는 이유만으로 자동 캐릭터/관련로그가 호출되지 않게 공통으로 제거합니다.
     // 일반 코드 블록까지 지우지는 않고 info/status 계열 또는 상태 필드가 확실한 무표기 펜스만 제외합니다.
-    src = stripRpStatusFences(src);
+    if(!preserveStatusFences)src = stripRpStatusFences(src);
     if (preserveLineBreaks) {
       return normalizeLineBreaks(src)
         .replace(/[^\S\n]+/g, ' ')
@@ -1920,11 +1966,11 @@
       latestUserId:String(messageIdOf(messages.find(m=>messageRoleOf(m)==='user'))||''),
       trailingUser:messageRoleOf(messages[0])==='user'};
   }
-  function sourceManifestOf(messages) {
-    return messages.map(m=>({id:String(messageIdOf(m)),role:messageRoleOf(m),hash:aiHashTiny(stripAutomationNoise(messageTextOf(m),true).trim())}));
+  function sourceManifestOf(messages,{preserveStatusFences=false}={}) {
+    return messages.map(m=>({id:String(messageIdOf(m)),role:messageRoleOf(m),hash:aiHashTiny(stripAutomationNoise(messageTextOf(m),true,preserveStatusFences).trim())}));
   }
-  function sourceStillPresent(manifest, messages) {
-    const live=sourceManifestOf([...messages].reverse()),indices=new Map(live.map((x,i)=>[x.id,{...x,index:i}]));
+  function sourceStillPresent(manifest, messages, options={}) {
+    const live=sourceManifestOf([...messages].reverse(),options),indices=new Map(live.map((x,i)=>[x.id,{...x,index:i}]));
     let previous=-1;
     for(const x of manifest||[]){const current=indices.get(x.id);if(!current||current.hash!==x.hash||current.role!==x.role||current.index<=previous)return false;previous=current.index;}
     return true;
@@ -1934,8 +1980,7 @@
     if(!list.length||list.some(meta=>!meta?.sourceManifest))throw new Error('원문 검증 정보가 없는 이전 AI 결과입니다. 다시 갱신해 주세요.');
     const all=await fetchAllRoomMessages(apiChatIdOf(room));
     const live=[...stableFrame([...all].reverse()).stable].reverse();
-    const manifest=JSON.stringify(sourceManifestOf(live));
-    if(list.some(meta=>JSON.stringify(meta.sourceManifest)!==manifest))throw new Error('AI 작업 중 확정 대화가 수정·삭제·추가되어 이전 결과를 적용하지 않았습니다.');
+    if(list.some(meta=>JSON.stringify(meta.sourceManifest)!==JSON.stringify(sourceManifestOf(live,{preserveStatusFences:meta.preserveStatusFences===true}))))throw new Error('AI 작업 중 확정 대화가 수정·삭제·추가되어 이전 결과를 적용하지 않았습니다.');
     await assertRoomRevision(room);
   }
   async function assertAiSourceUnchanged(room,meta) {
@@ -2077,7 +2122,8 @@
     const contract=slotId==='logSummary'
       ? '변경이 없으면 NO_CHANGE. 같은 날짜의 다른 사건은 다른 제목으로 유지한다. 기존 사건 교체는 전문이 제공된 동일 날짜·제목의 사건에 한정하며 기존 사실과 신규 사실을 함께 출력한다. 삭제 출력은 지원하지 않는다.'
       : '변경할 지속 상태가 없으면 NO_CHANGE. 상태를 출력할 때는 구분선 → N. 섹션명 → 구분선 → 실제 본문 형식의 완전한 최신 교체본으로 쓴다. 빈 section을 만들지 않는다. 기존 섹션 제목은 역할이 같은 동안 그대로 유지한다. 기존 섹션을 결과에서 없애는 경우에만 출력 맨 끝에 [STATE_RETIREMENTS]와 [/STATE_RETIREMENTS] 사이에 JSON 배열을 추가한다. 각 항목은 {"title":"기존 섹션 제목 그대로","evidence":"이번 [신규 RP 로그]에서 종료·해제·대체를 직접 입증하는 연속 원문"} 형식이다. 단순 미언급·압축·표현 개선은 retirement 근거가 아니다. 모든 기존 지속 상태가 실제 원문에서 종료되어 NO_ACTIVE_STATE를 출력할 때도 사라지는 모든 기존 섹션의 retirement 항목이 필요하다. retirement 제어 블록은 Manager가 검증 후 저장 전에 제거한다.';
-    return getGuideText(slotId)+'\n\n'+PROMPT_INPUT_BOUNDARY+'\n\n[Manager 저장 계약 — 필수]\n'+contract+'\n사용자 직접 정정/고정설정 > 최신 직접 RP > 객관 서술 > 인물 주장/추측 > 모델 추론. 기존 지속 사실은 단순 미언급으로 삭제하지 않는다.';
+    const roleBoundary=slotId==='currentState'?'\n현재상태는 진행·관계·제약의 메인 정답표다. 세계관 상세, 물건별 소유·위치·상태, 인물별 현재 복장, 실제 핵심 대사 원문은 진행형 자료집이 보조 관리한다. 다만 그 물건·복장이 현재 사건의 행동 가능성·위험·약속을 직접 제한한다면 그 영향의 요점은 현재상태에도 남긴다. 자료집용 상세 목록을 현재상태에 장문 복제하지 않는다.':'';
+    return getGuideText(slotId)+'\n\n'+PROMPT_INPUT_BOUNDARY+'\n\n[Manager 저장 계약 — 필수]\n'+contract+roleBoundary+'\n사용자 직접 정정/고정설정 > 최신 직접 RP > 객관 서술 > 인물 주장/추측 > 모델 추론. 기존 지속 사실은 단순 미언급으로 삭제하지 않는다.';
   }
 
   async function buildAiUpdateRequest(room, slotId, settings, options = {}) {
@@ -2552,12 +2598,12 @@
   }
 
   async function runAutomaticMemoryMaintenance(room,reason='scheduled') {
-    if(!room||restoreAutomationSuppressed()||automaticMemoryJob||aiUpdateRunning||internalBulkRebuildJob||memoryImportRunning)return false;
+    if(!room||restoreAutomationSuppressed()||automaticMemoryJob||automaticLoreJob||aiUpdateRunning||internalBulkRebuildJob||memoryImportRunning)return false;
     return withRoomExclusive('ai:'+apiChatIdOf(room),()=>runAutomaticMemoryMaintenanceUnlocked(room,reason));
   }
 
   async function runAutomaticMemoryMaintenanceUnlocked(room, reason = 'scheduled') {
-    if (!room || restoreAutomationSuppressed() || automaticMemoryJob || aiUpdateRunning || internalBulkRebuildJob || memoryImportRunning) return false;
+    if (!room || restoreAutomationSuppressed() || automaticMemoryJob || automaticLoreJob || aiUpdateRunning || internalBulkRebuildJob || memoryImportRunning) return false;
     const settings = loadAiSettings();
     const memory = autoMemoryState(room);
     if (!memory.enabled || !isAiProviderReady(settings)) return false;
@@ -2566,7 +2612,7 @@
     if(generationPending(apiChatIdOf(room)))return false;
     const sourceFrame=stableFrame([...(await fetchAllRoomMessages(apiChatIdOf(room)))].reverse());
     if(!await refreshCommittedTurns(room,sourceFrame))return false;
-    if(automaticMemoryJob||aiUpdateRunning||internalBulkRebuildJob||memoryImportRunning)return false;
+    if(automaticMemoryJob||automaticLoreJob||aiUpdateRunning||internalBulkRebuildJob||memoryImportRunning)return false;
     const cutoff = String(memory.lastCommittedMessageId || '');
     if (!cutoff) return false;
     const schedule = memoryScheduleForRoom(room);
@@ -2689,6 +2735,7 @@
       scheduleRecovery(0);
       scheduleAutomaticMemoryMaintenance(room,'assistant-completed',900);
       scheduleSummaryMemoryAutomation(room,'assistant-completed',4000);
+      scheduleAutomaticLoreMaintenance(room,'assistant-completed',6500);
     });
   }
 
@@ -3885,6 +3932,7 @@
       speechRelations: [],
       speechConfig: { version:1, enabled:true },
       loreConfig: { version:1, enabled:true, semanticEnabled:true, maxEntries:APP.defaultLoreEntries, budgetChars:APP.defaultLoreBudgetChars, embeddingModel:APP.loreEmbeddingModel, embeddingDimensions:APP.loreEmbeddingDimensions, semanticThreshold:APP.loreSemanticThreshold },
+      loreAutomation: { version:1, enabled:AUTO_LORE_DEFAULTS.enabled, intervalTurns:AUTO_LORE_DEFAULTS.intervalTurns, readTurns:AUTO_LORE_DEFAULTS.readTurns, initialized:false, lastProcessedMessageId:'', lastRunAt:0, lastStatus:'', lastError:'', failureCount:0, paused:false },
       logSemanticIndex: [],
       createdAt: nowIso(),
       updatedAt: nowIso(),
@@ -3997,16 +4045,17 @@
     let current=await getRoom(chatId);const rid=String(apiChatIdOf(current));
     return withRoomExclusiveKeys([rid,nativeSummaryLockId(rid)],async()=>{
       current=await getRoom(chatId);
-      if(aiUpdateRunning||internalBulkRebuildJob||automaticMemoryJob||summaryMemoryJob||memoryImportRunning)throw new Error('진행 중인 AI 작업을 중단하거나 완료한 뒤 초기화해 주세요.');
+      if(aiUpdateRunning||internalBulkRebuildJob||automaticMemoryJob||automaticLoreJob||summaryMemoryJob||memoryImportRunning)throw new Error('진행 중인 AI 작업을 중단하거나 완료한 뒤 초기화해 주세요.');
       if(generationPending(rid))throw new Error('AI 응답 또는 리롤이 끝난 뒤 현재 방을 초기화해 주세요.');
       const bridge=(typeof unsafeWindow!=='undefined'?unsafeWindow:window).__WishCognitionBridge;
       if(bridge?.isBusy?.(rid))throw new Error('인지 분석을 중단한 뒤 초기화해 주세요.');
       if(current.pending)throw new Error('주입을 해제한 뒤 초기화해 주세요.');
       cancelRoomSaves(chatId);await storageWrites.get(String(chatId))?.catch(()=>{});
       await new Promise((resolve,reject)=>{
-        const names=[APP.storeName,APP.cognitionStoreName,APP.runtimeStoreName,APP.historyStoreName,APP.nativeMemoryStoreName];
+        const names=[APP.storeName,APP.libraryStoreName,APP.cognitionStoreName,APP.runtimeStoreName,APP.historyStoreName,APP.nativeMemoryStoreName];
         const tx=state.db.transaction(names,'readwrite');
         tx.objectStore(APP.storeName).delete(chatId);
+        tx.objectStore(APP.libraryStoreName).delete(autoLorePackId(current));
         // Cognition도 tombstone(enabled:false)을 남기지 않고 완전히 삭제합니다. 다음 readRoom()이 정상 enabled:true fresh 상태를 만듭니다.
         tx.objectStore(APP.cognitionStoreName).delete(rid);
         // 서버의 Crack 카드 자체는 보존하고 Wish 자동 정리 설정·기준점만 초기화합니다.
@@ -4015,7 +4064,9 @@
         tx.oncomplete=resolve;tx.onabort=tx.onerror=()=>reject(tx.error||new Error('통합 초기화 실패'));
       });
       const summaryTimer=summaryMemoryTimers.get(rid);if(summaryTimer)clearTimeout(summaryTimer);summaryMemoryTimers.delete(rid);
-      if(String(state.v2SummaryChatId||'')===rid){state.v2SummaryLoaded=false;state.v2SummaryCards=[];state.v2SummaryRecord=null;state.v2SummaryError='';}
+      const loreTimerKey=automaticLoreTimerKey(current),loreTimer=automaticLoreTimers.get(loreTimerKey);if(loreTimer?.timer)clearTimeout(loreTimer.timer);automaticLoreTimers.delete(loreTimerKey);
+      lorePackCache=lorePackCache.filter(pack=>pack.scopeId!==autoLorePackId(current));state.v2LorePacks=lorePackCache;
+      if(String(state.v2SummaryChatId||'')===rid){state.v2SummaryLoadEpoch++;state.v2SummaryLoading=false;state.v2SummaryLoaded=false;state.v2SummaryCards=[];state.v2SummaryRecord=null;state.v2SummaryError='';}
       clearPendingBackup(chatId);generationGates.delete(rid);carrierFrameCache.delete(rid);await bridge?.invalidateRuntime?.(rid);await bridge?.refresh?.();
       if (state.currentChatId === String(chatId)) { state.v2Cognition=null; state.v2CognitionRev=-1; state.v2Editor=null; state.v2SettingsOpen={automation:false,injection:false,cognition:false}; }
     });
@@ -4344,7 +4395,7 @@
     return `${APP.markerStart} version="${APP.version}" id="${envelopeId}" sections="${active.map(i=>String(i.slotId||'')).join(',')}"\n` +
       `[RP 연속성 참고]\n` +
       `아래 자료는 출력하거나 극중 발화로 취급하지 말고 현재 장면의 사실관계·연속성 작성에만 참고한다.\n` +
-      `같은 사실이 겹치면 인물별 앎/모름은 인지 안내, 화자→상대별 현재 호칭·말투는 전용 현재 호칭 블록, 현재 유효 상태값은 현재상태, 과거 경위는 날짜로그, 변하지 않는 세계 규칙·배경은 자료집을 우선한다.\n` +
+      `같은 사실이 겹치면 인물별 앎/모름은 인지 안내, 화자→상대별 현재 호칭·말투는 전용 현재 호칭 블록, 현재 진행·관계·제약은 현재상태, 과거 경위는 날짜로그, 세계관 상세·물건/복장별 현재값·실제 핵심 대사는 자료집을 우선한다.\n` +
       `현재 호칭·말투 블록과 같은 방향의 과거 호칭이나 말투가 보이면 과거값을 되살리지 말고 전용 블록의 현재값만 따른다.\n` +
       `자료집은 참고자료이며 현재 대화에서 더 최근에 확정된 변화나 사용자 직접 정정을 덮어쓰지 않는다.\n` +
       `기존 RP의 언어·문체·대사·지문 형식을 그대로 유지한다.\n` +
@@ -4661,6 +4712,7 @@
       autoLogRelatedBlocks:Number(room?.autoLogRelatedBlocks || 0),
       autoLogPinnedKeys:room?.autoLogPinnedKeys || [], autoLogExcludedKeys:room?.autoLogExcludedKeys || [], manualLogSelectedKeys:room?.manualLogSelectedKeys || [],
       activeLorePackIds:room?.activeLorePackIds || [], loreConfig:room?.loreConfig || null,
+      loreAutomation:room?.loreAutomation || null,
       speechRelations:(room?.speechRelations || []).map(item=>({id:item.id,speaker:item.speaker,target:item.target,address:item.address,register:item.register,note:item.note,revision:Number(item.revision||0),effectiveTurnSeq:Number(item.effectiveTurnSeq||0),active:item.active!==false})),
       speechConfig:room?.speechConfig || null,
       autoMemoryEnabled:room?.autoMemory?.enabled!==false,
@@ -4674,9 +4726,10 @@
       kind:String(library?.kind || ''),
       name:String(library?.name || library?.presetName || library?.label || ''),
       description:String(library?.description || ''),
+      autoManaged:library?.autoManaged===true, ownerChatId:String(library?.ownerChatId||''), ownerApiChatId:String(library?.ownerApiChatId||''), revision:Number(library?.revision||0),
       characters:(library?.characters || []).map(item => ({ title:item.title, content:String(item.content || ''), aliases:item.aliases || [], retentionTurns:Number(item.retentionTurns || 0), autoPinned:!!item.autoPinned, autoExcluded:!!item.autoExcluded })),
       extras:(library?.extras || []).map(item => ({ title:item.title, content:String(item.content || ''), retentionTurns:Number(item.retentionTurns || 0) })),
-      loreEntries:(library?.entries || []).map(item => ({ id:item.id, name:item.name, type:item.type, triggers:item.triggers || [], summary:item.summary || {}, inject:item.inject || {}, anchor:!!item.anchor, enabled:item.enabled!==false, priority:Number(item.priority || 0), speechRule:item.speechRule || null, embeddingHash:item.embedding?.sourceHash || '', embeddingModel:item.embedding?.model || '', embeddingDimensions:Number(item.embedding?.dimensions || 0) })),
+      loreEntries:(library?.entries || []).map(item => ({ id:item.id, name:item.name, type:item.type, triggers:item.triggers || [], summary:item.summary || {}, inject:item.inject || {}, anchor:!!item.anchor, enabled:item.enabled!==false, priority:Number(item.priority || 0), speechRule:item.speechRule || null, autoManaged:item.autoManaged===true, userProtected:item.userProtected===true, autoLoreKey:item.autoLoreKey||'', sourceMessageIds:item.sourceMessageIds||[], exactQuote:item.exactQuote||'', quoteSpeaker:item.quoteSpeaker||'', quoteTarget:item.quoteTarget||'', sceneContext:item.sceneContext||'', sceneLocation:item.sceneLocation||'', sceneDate:item.sceneDate||'', embeddingHash:item.embedding?.sourceHash || '', embeddingModel:item.embedding?.model || '', embeddingDimensions:Number(item.embedding?.dimensions || 0) })),
     });
   }
 
@@ -4954,7 +5007,7 @@
   let memoryImportRunning=false;
   async function applyWishRpImportToRoom(room,rawData,options={}) {
     if(memoryImportRunning)throw new Error('다른 기억 불러오기가 진행 중입니다.');
-    if((aiUpdateRunning||automaticMemoryJob||internalBulkRebuildJob)&&!options.rawEvidenceVerified)throw new Error('AI 작업이 끝난 뒤 기억을 불러와 주세요.');
+    if((aiUpdateRunning||automaticMemoryJob||automaticLoreJob||internalBulkRebuildJob)&&!options.rawEvidenceVerified)throw new Error('AI 작업이 끝난 뒤 기억을 불러와 주세요.');
     validateWishRpImportPayload(rawData);
     memoryImportRunning=true;
     try{return await withRoomExclusive(apiChatIdOf(room),async()=>{
@@ -5574,7 +5627,7 @@
       rooms:data[APP.storeName],characterLibraries:data[APP.libraryStoreName],cognitionRooms:data[APP.cognitionStoreName],
       nativeMemoryRooms:data[APP.nativeMemoryStoreName],
       runtime:data[APP.runtimeStoreName].filter(x=>x.kind!=='wish-lease'),autoHistory:data[APP.historyStoreName],
-      guides:{currentState:guideBackupValue('currentState'),logSummary:guideBackupValue('logSummary'),longMemoryAuto:guideBackupValue('longMemoryAuto'),longMemoryCompress:guideBackupValue('longMemoryCompress'),longMemoryExternal:guideBackupValue('longMemoryExternal')},
+      guides:{currentState:guideBackupValue('currentState'),logSummary:guideBackupValue('logSummary'),longMemoryAuto:guideBackupValue('longMemoryAuto'),longMemoryCompress:guideBackupValue('longMemoryCompress'),longMemoryExternal:guideBackupValue('longMemoryExternal'),loreAuto:guideBackupValue('loreAuto')},
       defaultExtraPreset:loadDefaultExtraPreset(),
       cognitionSettings:bridge?.getSettings?.()||null};
   }
@@ -6259,7 +6312,7 @@
 
   function summaryMemoryOwnerLabel(item,record) {
     if(summaryMemoryManualProtectedSet(record).has(summaryMemoryId(item)))return '직접 수정 보호';
-    if(summaryMemoryIsUserAdded(item))return '[추가] 보호';
+    if(summaryMemoryIsUserAdded(item))return record?.config?.protectUserAdded===false?'[추가] 수정 가능':'[추가] 보호';
     if(summaryMemoryIsNative(item))return '본체 생성';
     return '출처 불명 · 보호';
   }
@@ -6275,25 +6328,31 @@
 
   async function loadSummaryMemoryView(room,{force=false,render=true}={}) {
     const rid=String(apiChatIdOf(room)||'');if(!rid)return;
-    if(state.v2SummaryLoading&&state.v2SummaryChatId===rid)return;
+    // 탭/방 전환 뒤 늦게 도착한 이전 방의 로드가 현재 화면 상태를 다시 잡지 못하게 합니다.
+    if(String(apiChatIdOf(state.currentRoom)||'')!==rid)return;
+    if(state.v2SummaryLoading&&state.v2SummaryChatId===rid&&!force)return;
     if(!force&&state.v2SummaryLoaded&&state.v2SummaryChatId===rid&&Date.now()-state.v2SummaryLoadedAt<5000)return;
+    const loadEpoch=++state.v2SummaryLoadEpoch;
     state.v2SummaryLoading=true;state.v2SummaryChatId=rid;
     try{
       await withRoomExclusive(nativeSummaryLockId(rid),()=>recoverSummaryMemoryPlanUnlocked(rid,{announce:true}));
       const [cards,record]=await Promise.all([fetchCrackSummaryMemories(rid),getNativeMemoryRecord(rid)]);
-      if(String(apiChatIdOf(state.currentRoom)||'')!==rid)return;
+      if(loadEpoch!==state.v2SummaryLoadEpoch||String(apiChatIdOf(state.currentRoom)||'')!==rid)return;
       state.v2SummaryCards=cards;state.v2SummaryRecord=record;state.v2SummaryError='';state.v2SummaryLoaded=true;state.v2SummaryLoadedAt=Date.now();
     }catch(error){
-      if(String(apiChatIdOf(state.currentRoom)||'')===rid){state.v2SummaryLoaded=true;state.v2SummaryCards=[];state.v2SummaryRecord=await getNativeMemoryRecord(rid).catch(()=>null);state.v2SummaryError=String(error.message||error);}
+      const fallback=await getNativeMemoryRecord(rid).catch(()=>null);
+      if(loadEpoch===state.v2SummaryLoadEpoch&&String(apiChatIdOf(state.currentRoom)||'')===rid){state.v2SummaryLoaded=true;state.v2SummaryCards=[];state.v2SummaryRecord=fallback;state.v2SummaryError=String(error.message||error);}
       throw error;
     }finally{
-      state.v2SummaryLoading=false;
-      if(render&&state.modal&&state.v2Tab==='summary'&&!v2UiIsEditing())renderModal();
+      if(loadEpoch===state.v2SummaryLoadEpoch){
+        state.v2SummaryLoading=false;
+        if(render&&state.modal&&state.v2Tab==='summary'&&!v2UiIsEditing())renderModal();
+      }
     }
   }
 
   function invalidateSummaryMemoryView(apiChatId='') {
-    if(!apiChatId||String(state.v2SummaryChatId||'')===String(apiChatId)){state.v2SummaryLoaded=false;state.v2SummaryLoadedAt=0;state.v2SummaryError='';}
+    if(!apiChatId||String(state.v2SummaryChatId||'')===String(apiChatId)){state.v2SummaryLoadEpoch++;state.v2SummaryLoading=false;state.v2SummaryLoaded=false;state.v2SummaryLoadedAt=0;state.v2SummaryError='';}
   }
 
   function summaryMemoryPlanId(chatId) { return `wish-native-summary-plan-v1:${String(chatId||'')}`; }
@@ -6412,8 +6471,8 @@
     return rows.join('\n\n')||'(없음)';
   }
 
-  function summaryMemoryConversation(messages) {
-    const cleaned=(messages||[]).filter(m=>['user','assistant'].includes(messageRoleOf(m))).map(m=>({id:String(messageIdOf(m)||''),role:messageRoleOf(m),text:stripAutomationNoise(messageTextOf(m),true).trim()})).filter(m=>m.id&&m.text);
+  function summaryMemoryConversation(messages,{preserveStatusFences=false}={}) {
+    const cleaned=(messages||[]).filter(m=>['user','assistant'].includes(messageRoleOf(m))).map(m=>({id:String(messageIdOf(m)||''),role:messageRoleOf(m),text:stripAutomationNoise(messageTextOf(m),true,preserveStatusFences).trim()})).filter(m=>m.id&&m.text);
     const turns=[];let current=null,seq=0;
     for(const m of cleaned){
       if(m.role==='user'){if(current?.assistant)turns.push(current);current={seq:++seq,user:m,assistant:null,messages:[m]};}
@@ -6459,6 +6518,30 @@
     return record;
   }
 
+  async function setSummaryMemoryEnabled(room,nextEnabled,{announce=true}={}) {
+    const rid=String(apiChatIdOf(room)||''),desired=!!nextEnabled;
+    return withRoomExclusive(nativeSummaryLockId(rid),async()=>{
+      if(await recoverSummaryMemoryPlanUnlocked(rid,{announce:true}))throw nativeMemoryError('NATIVE_MEMORY_STALE','이전 미확정 작업을 안전 모드로 정리했습니다. 서버 목록을 확인한 뒤 다시 실행해 주세요.');
+      const record=await getNativeMemoryRecord(rid),wasEnabled=record.config.enabled;
+      if(desired&&legacySummaryMemoryAutomationEnabled(rid))throw new Error('독립 요약 메모리 확프의 자동 정리를 먼저 꺼 주세요.');
+      record.config.enabled=desired;
+      if(desired&&!wasEnabled){
+        // 스위치 값은 서버 목록/기준점 조회보다 먼저 저장합니다. 탭을 바로 이동하거나 닫아도 체크가 되돌아가지 않습니다.
+        await saveNativeMemoryRecord(record);let protectedCount=0;
+        try{const cards=await fetchCrackSummaryMemories(rid);protectedCount=cards.filter(summaryMemoryIsUserAdded).length;await initializeSummaryMemoryAutomation(room,record);}
+        catch(error){record.state.lastError=`자동 정리는 켰지만 첫 기준점 설정을 보류했습니다: ${error.message}`;record.state.lastStatus='다음 자동 확인 때 기준점 설정을 다시 시도합니다.';await saveNativeMemoryRecord(record);if(announce)notify(record.state.lastError,'warn',7000);}
+        if(announce&&!record.state.lastError)notify(`요약메모리 자동 정리를 켰습니다. 스위치 상태를 바로 저장했습니다.${record.config.protectUserAdded&&protectedCount?` 사용자 [추가] 카드 ${protectedCount}개는 수정·삭제하지 않습니다.`:''}`,'success',5000);
+        scheduleSummaryMemoryAutomation(room,'enabled',3000);
+      }else{
+        if(desired&&record.state.paused){record.state.paused=false;record.state.failureCount=0;record.state.lastError='';record.state.lastStatus='사용자가 자동 정리를 다시 시작했습니다.';}
+        await saveNativeMemoryRecord(record);
+        if(announce&&wasEnabled!==desired)notify(desired?'요약메모리 자동 정리를 다시 켰습니다.':'요약메모리 자동 정리를 껐습니다.', 'success', 3000);
+        if(desired)scheduleSummaryMemoryAutomation(room,'enabled',3000);
+      }
+      return record;
+    });
+  }
+
   async function generateSummaryMemoryAppend(room,record,turns,slots,contextCards) {
     const system=`${getGuideText('longMemoryAuto')}\n\n${PROMPT_INPUT_BOUNDARY}\n\n[불변 출력 계약]\nJSON 객체만 출력한다. decision은 APPLY 또는 NO_CHANGE다. APPLY면 cards는 1~${slots}개다. 각 title은 1~${SUMMARY_MEMORY_TITLE_MAX}자 한 줄, summary는 1~${SUMMARY_MEMORY_BODY_MAX}자 한 줄이다. 서로 독립된 사건만 나누고 기존 카드와 중복하지 않는다.`;
     const prompt=`[기존 카드 참고 — 중복 방지]\n${summaryMemoryCardsText(contextCards,'CONTEXT')}\n\n[신규 완결 RP]\n${turns.map(summaryMemoryTurnText).join('\n\n')}\n\n사용 가능한 새 서버 슬롯: ${slots}개`;
@@ -6500,7 +6583,7 @@
     if(aiUpdateRunning||internalBulkRebuildJob||memoryImportRunning||restoreAutomationSuppressed())throw new Error('다른 AI·복원 작업이 끝난 뒤 다시 시도해 주세요.');
     summaryMemoryJob=withRoomExclusive(nativeSummaryLockId(rid),async()=>{
       if(await recoverSummaryMemoryPlanUnlocked(rid,{announce:true}))throw nativeMemoryError('NATIVE_MEMORY_STALE','이전 미확정 작업을 안전 모드로 정리했습니다. 서버 목록을 확인한 뒤 다시 실행해 주세요.');
-      if(aiUpdateRunning||automaticMemoryJob||internalBulkRebuildJob||memoryImportRunning||restoreAutomationSuppressed())throw new Error('잠금을 기다리는 동안 다른 AI·복원 작업이 시작됐습니다. 끝난 뒤 다시 시도해 주세요.');
+      if(aiUpdateRunning||automaticMemoryJob||automaticLoreJob||internalBulkRebuildJob||memoryImportRunning||restoreAutomationSuppressed())throw new Error('잠금을 기다리는 동안 다른 AI·복원 작업이 시작됐습니다. 끝난 뒤 다시 시도해 주세요.');
       aiUpdateRunning=true;let record=null;
       try{record=await getNativeMemoryRecord(rid);return await compactSummaryMemoriesUnlocked(room,record,await fetchCrackSummaryMemories(rid),{automatic,operationId});}
       catch(error){summaryMemoryNotifyError(error,{automatic,record,operationId});throw error;}
@@ -6515,7 +6598,7 @@
     summaryMemoryJob=withRoomExclusive(nativeSummaryLockId(rid),async()=>{
       if(await recoverSummaryMemoryPlanUnlocked(rid,{announce:true}))return false;let record=await getNativeMemoryRecord(rid);if(!record.config.enabled&&!force)return false;
       if(record.state.paused&&!force)return false;
-      if(aiUpdateRunning||automaticMemoryJob||internalBulkRebuildJob||memoryImportRunning||restoreAutomationSuppressed()){
+      if(aiUpdateRunning||automaticMemoryJob||automaticLoreJob||internalBulkRebuildJob||memoryImportRunning||restoreAutomationSuppressed()){
         if(force)throw new Error('잠금을 기다리는 동안 다른 AI·복원 작업이 시작됐습니다. 끝난 뒤 다시 시도해 주세요.');
         return false;
       }
@@ -6529,7 +6612,7 @@
         let start=0;
         if(record.state.lastProcessedMessageId){const index=eligible.findIndex(t=>String(t.assistant.id)===record.state.lastProcessedMessageId);if(index<0)throw nativeMemoryError('NATIVE_MEMORY_STALE','자동 기준점이 현재 대화 분기에 없어 자동 정리를 멈췄습니다. 기준점을 다시 설정해 주세요.');start=index+1;}
         const pending=eligible.slice(start);
-        if(!pending.length){record.state.lastStatus='새로 정리할 완결 RP 턴이 없습니다.';record.state.lastError='';record.state.lastRunAt=Date.now();await saveNativeMemoryRecord(record,{silent:true});return false;}
+        if(!pending.length){record.state.lastStatus='새로 정리할 완결 RP 턴이 없습니다.';record.state.lastError='';record.state.lastRunAt=Date.now();if(force){record.state.paused=false;record.state.failureCount=0;}await saveNativeMemoryRecord(record,{silent:true});return false;}
         if(!force&&pending.length<record.config.intervalTurns){record.state.lastStatus=`${pending.length}/${record.config.intervalTurns}턴 대기 중`;await saveNativeMemoryRecord(record,{silent:true});return false;}
         const batch=pending.slice(0,record.config.readTurns),known=record.state.known||{},managed=record.state.managed||{};
         const manualProtected=summaryMemoryManualProtectedSet(record);
@@ -6540,13 +6623,13 @@
         if(JSON.stringify(summaryMemoryMessageManifest(verifySource.messages))!==manifest)throw nativeMemoryError('NATIVE_MEMORY_STALE','AI 정리 중 RP 로그가 변경됐습니다.');
         if(generated.decision==='NO_CHANGE'){
           for(const slot of fresh)record.state.known[summaryMemoryId(slot)]=summaryMemoryFingerprint(slot);
-          record.state.lastProcessedMessageId=String(batch.at(-1)?.assistant?.id||record.state.lastProcessedMessageId);record.state.lastRunAt=Date.now();record.state.lastStatus=`${batch.length}턴 확인 · 새 장기기억 변화 없음`;record.state.lastError='';record.state.failureCount=0;await saveNativeMemoryRecord(record);return true;
+          record.state.lastProcessedMessageId=String(batch.at(-1)?.assistant?.id||record.state.lastProcessedMessageId);record.state.lastRunAt=Date.now();record.state.lastStatus=`${batch.length}턴 확인 · 새 장기기억 변화 없음`;record.state.lastError='';record.state.failureCount=0;record.state.paused=false;await saveNativeMemoryRecord(record);return true;
         }
         const targets=fresh.slice(0,generated.cards.length),applied=await applySummaryMemoryReplacementUnlocked(room,targets,generated.cards,{deleteExtra:false,mode:'auto-append',operationId});
         cards=applied.cards;
         for(const card of cards)if(applied.targetIds.includes(summaryMemoryId(card))){record.state.known[summaryMemoryId(card)]=summaryMemoryFingerprint(card);record.state.managed[summaryMemoryId(card)]=summaryMemoryFingerprint(card);}
         for(const slot of fresh.slice(generated.cards.length))record.state.known[summaryMemoryId(slot)]=summaryMemoryFingerprint(slot);
-        record.state.lastProcessedMessageId=String(batch.at(-1)?.assistant?.id||record.state.lastProcessedMessageId);record.state.lastRunAt=Date.now();record.state.lastStatus=`완결 RP ${batch.length}턴 → 카드 ${generated.cards.length}개 정리`;record.state.lastError='';record.state.failureCount=0;
+        record.state.lastProcessedMessageId=String(batch.at(-1)?.assistant?.id||record.state.lastProcessedMessageId);record.state.lastRunAt=Date.now();record.state.lastStatus=`완결 RP ${batch.length}턴 → 카드 ${generated.cards.length}개 정리`;record.state.lastError='';record.state.failureCount=0;record.state.paused=false;
         await commitNativeMemoryRecordAndJournal(record,applied.journalId);
         const manualProtectedAfter=summaryMemoryManualProtectedSet(record);
         const autoMutableLive=cards.filter(card=>{const id=summaryMemoryId(card);if(manualProtectedAfter.has(id))return false;return (record.state.managed[id]===summaryMemoryFingerprint(card)&&summaryMemoryIsNative(card))||(record.config.protectUserAdded===false&&summaryMemoryIsUserAdded(card));});
@@ -6772,7 +6855,20 @@
   let lorePackCache = [];
   let lorePackCacheLoaded = false;
   let loreIndexingRunning = false;
+  const loreIndexRerunRooms = new Map();
   const LORE_QUERY_VECTOR_CACHE = new Map();
+
+  function queueSemanticSearchRerun(room) {
+    const chatId=String(room?.chatId||''),apiChatId=String(apiChatIdOf(room)||'');
+    if(chatId)loreIndexRerunRooms.set(chatId,{chatId,apiChatId});
+  }
+
+  async function readQueuedSemanticRoom(ref) {
+    const chatId=String(ref?.chatId||'');if(!chatId)return null;
+    const room=await new Promise((resolve,reject)=>{const tx=state.db.transaction(APP.storeName,'readonly'),req=tx.objectStore(APP.storeName).get(chatId);req.onsuccess=()=>resolve(req.result||null);req.onerror=()=>reject(req.error);});
+    if(!room)return null;
+    normalizeRoomSlots(room);room.maxChars=APP.defaultMaxChars;room.apiChatId=room.apiChatId||String(ref?.apiChatId||'')||chatId.split('::')[0];return room;
+  }
 
   function makeLorePackId() { return `lore:${crypto.randomUUID()}`; }
   function makeLoreEntryId() { return `lore-entry:${crypto.randomUUID()}`; }
@@ -6851,6 +6947,19 @@
         return Number.isFinite(parsed) ? parsed : Date.now();
       })(),
       speechRule,
+      autoManaged:src.autoManaged === true,
+      userProtected:src.userProtected === true,
+      autoLoreKey:String(src.autoLoreKey || src.managedKey || '').normalize('NFKC').trim().replace(/\s+/g,' ').slice(0,180),
+      sourceMessageIds:[...new Set((Array.isArray(src.sourceMessageIds)?src.sourceMessageIds:[]).map(String).filter(Boolean))].slice(0,20),
+      sourceHash:String(src.sourceHash || '').slice(0,120),
+      lastSeenMessageId:String(src.lastSeenMessageId || '').slice(0,200),
+      evidence:String(src.evidence || '').trim().slice(0,1200),
+      exactQuote:String(src.exactQuote || src.exact_quote || '').trim().slice(0,1200),
+      quoteSpeaker:String(src.quoteSpeaker || src.speaker || '').trim().slice(0,120),
+      quoteTarget:String(src.quoteTarget || src.target || '').trim().slice(0,120),
+      sceneContext:String(src.sceneContext || src.context || '').trim().slice(0,1000),
+      sceneLocation:String(src.sceneLocation || src.location || '').trim().slice(0,240),
+      sceneDate:String(src.sceneDate || src.date || '').trim().slice(0,160),
       embedding:null,
     };
     entry.embedding = normalizeLoreEmbedding(src.embedding, entry);
@@ -6944,6 +7053,10 @@
       name:String(src.name || src.packName || src.title || fallbackName || '자료집').trim().slice(0, 160) || '자료집',
       description:String(src.description || '').trim().slice(0, 2000),
       entries,
+      autoManaged:src.autoManaged === true,
+      ownerChatId:String(src.ownerChatId || '').slice(0,300),
+      ownerApiChatId:String(src.ownerApiChatId || '').slice(0,200),
+      revision:Math.max(0,Number(src.revision || 0)),
       createdAt:String(src.createdAt || nowIso()),
       updatedAt:String(src.updatedAt || nowIso()),
     };
@@ -7004,6 +7117,43 @@
     return pack;
   }
 
+  function lorePackStorageFingerprint(value) {
+    // IDB에서 실제로 읽은 원본 전체를 비교해 카드 본문뿐 아니라 entry id와 임베딩만 바뀐 경쟁 저장도 감지합니다.
+    return JSON.stringify(value ?? null);
+  }
+
+  async function putLorePackIfFingerprint(value, expectedStorageFingerprint, options = {}) {
+    const pack = normalizeLorePack(value, value?.name || '자료집');
+    pack.updatedAt = nowIso();
+    await new Promise((resolve, reject) => {
+      const tx = state.db.transaction(APP.libraryStoreName, 'readwrite');
+      const store = tx.objectStore(APP.libraryStoreName);
+      let rejected = false;
+      const req = store.get(pack.scopeId);
+      req.onsuccess = () => {
+        const current = req.result;
+        if (!current || lorePackStorageFingerprint(current) !== expectedStorageFingerprint) {
+          rejected = true;
+          const error = new Error('저장 직전에 자료팩이 다른 탭이나 작업에서 수정되어 오래된 결과를 덮어쓰지 않았습니다.');
+          error.code = 'AUTO_LORE_STALE';
+          try { tx.abort(); } catch (_) {}
+          reject(error);
+          return;
+        }
+        store.put(pack);
+      };
+      req.onerror = () => reject(req.error || new Error('자료집 확인 실패'));
+      tx.oncomplete = () => resolve();
+      tx.onerror = tx.onabort = () => { if (!rejected) reject(tx.error || new Error('자료집 저장 실패')); };
+    });
+    const index = lorePackCache.findIndex(item => item.scopeId === pack.scopeId);
+    if (index >= 0) lorePackCache[index] = pack; else lorePackCache.push(pack);
+    state.v2LorePacks = lorePackCache;
+    lorePackCacheLoaded = true;
+    if (!options.silent) markCloudDirty('자료집');
+    return pack;
+  }
+
   async function removeLorePack(scopeId) {
     const id = String(scopeId || '');
     if (!id) return;
@@ -7021,9 +7171,285 @@
     markCloudDirty('자료집 삭제');
   }
 
+  function lorePackVisibleInRoom(pack,room) {
+    if(!pack?.autoManaged)return true;
+    if(!room||String(pack.scopeId||'')!==autoLorePackId(room))return false;
+    const ownerChat=String(pack.ownerChatId||''),ownerApi=String(pack.ownerApiChatId||'');
+    return (!ownerChat||ownerChat===String(room.chatId||''))&&(!ownerApi||ownerApi===String(apiChatIdOf(room)||''));
+  }
+
+  function visibleLorePacksForRoom(room) {
+    return (lorePackCache||[]).filter(pack=>lorePackVisibleInRoom(pack,room));
+  }
+
   function activeLorePacks(room) {
-    const byId=new Map(lorePackCache.map(pack=>[String(pack.scopeId),pack]));
+    const byId=new Map(visibleLorePacksForRoom(room).map(pack=>[String(pack.scopeId),pack]));
     return [...new Set((room?.activeLorePackIds||[]).map(String))].map(id=>byId.get(id)).filter(Boolean);
+  }
+
+  // ---------------------------------------------------------------------------
+  // 진행형 자료 자동 갱신
+  // 사용자 자료팩은 읽기 전용 참고로만 사용하고, 방별 자동 팩의 autoManaged 카드만 upsert합니다.
+  // ---------------------------------------------------------------------------
+  let automaticLoreJob = null;
+  const automaticLoreTimers = new Map();
+  const AUTO_LORE_TYPES = new Set(['world','item','outfit','key_quote']);
+  const AUTO_LORE_RESPONSE_SCHEMA = {
+    type:'object',additionalProperties:false,required:['decision','upserts'],properties:{
+      decision:{type:'string',enum:['APPLY','NO_CHANGE']},
+      upserts:{type:'array',minItems:0,maxItems:24,items:{type:'object',additionalProperties:false,
+        required:['key','type','name','triggers','entities','full','compact','micro','anchor','source_message_id','evidence','exact_quote','speaker','target','context','location','date'],properties:{
+          key:{type:'string',minLength:1,maxLength:180},type:{type:'string',enum:['world','item','outfit','key_quote']},name:{type:'string',minLength:1,maxLength:160},
+          triggers:{type:'array',maxItems:30,items:{type:'string',minLength:1,maxLength:120}},entities:{type:'array',maxItems:30,items:{type:'string',minLength:1,maxLength:120}},
+          full:{type:'string',minLength:1,maxLength:6000},compact:{type:'string',minLength:1,maxLength:1800},micro:{type:'string',minLength:1,maxLength:500},anchor:{type:'boolean'},
+          source_message_id:{type:'string',minLength:1,maxLength:200},evidence:{type:'string',minLength:4,maxLength:1200},exact_quote:{type:'string',maxLength:1200},
+          speaker:{type:'string',maxLength:120},target:{type:'string',maxLength:120},context:{type:'string',maxLength:1000},location:{type:'string',maxLength:240},date:{type:'string',maxLength:160},
+        }
+      }}
+    }
+  };
+
+  function autoLoreState(room) { normalizeRoomSlots(room); return room.loreAutomation; }
+  function autoLorePackId(room) { return `lore:auto:${String(room?.chatId || apiChatIdOf(room) || 'room')}`; }
+  function automaticLoreTimerKey(room) { return `${String(apiChatIdOf(room)||'')}|${String(room?.chatId||'')}`; }
+  function autoLoreTypeCounts(pack) {
+    const out={world:0,item:0,outfit:0,key_quote:0};
+    for(const entry of pack?.entries||[])if(entry.autoLoreKey&&Object.hasOwn(out,entry.type))out[entry.type]++;
+    return out;
+  }
+  function autoLoreContentFingerprint(pack) {
+    const normalized=normalizeLorePack(pack,pack?.name||'진행형 자료');
+    return JSON.stringify({scopeId:normalized.scopeId,name:normalized.name,description:normalized.description,autoManaged:normalized.autoManaged,ownerChatId:normalized.ownerChatId,ownerApiChatId:normalized.ownerApiChatId,revision:normalized.revision,
+      entries:(normalized.entries||[]).map(entry=>({name:entry.name,type:entry.type,triggers:entry.triggers,summary:entry.summary,inject:entry.inject,anchor:entry.anchor,enabled:entry.enabled,priority:entry.priority,entities:entry.entities,notes:entry.notes,speechRule:entry.speechRule,
+        autoManaged:entry.autoManaged,userProtected:entry.userProtected,autoLoreKey:entry.autoLoreKey,sourceMessageIds:entry.sourceMessageIds,sourceHash:entry.sourceHash,lastSeenMessageId:entry.lastSeenMessageId,evidence:entry.evidence,exactQuote:entry.exactQuote,quoteSpeaker:entry.quoteSpeaker,quoteTarget:entry.quoteTarget,sceneContext:entry.sceneContext,sceneLocation:entry.sceneLocation,sceneDate:entry.sceneDate}))});
+  }
+
+  async function ensureAutoLorePack(room) {
+    await loadLorePackCache();
+    const id=autoLorePackId(room),raw=await getCharacterLibrary(id);let created=false,changed=false;
+    let pack=raw?normalizeLorePack(raw,'이 방의 진행형 자료'):normalizeLorePack({scopeId:id,name:'이 방의 진행형 자료',description:'AI가 완결 RP에서 세계관·아이템·복장 현재값과 실제 핵심 대사를 안전하게 누적합니다.',entries:[],autoManaged:true,ownerChatId:room.chatId,ownerApiChatId:apiChatIdOf(room),revision:0},'이 방의 진행형 자료');
+    if(!raw){created=true;changed=true;}
+    if(raw){
+      const ownerChat=String(pack.ownerChatId||''),ownerApi=String(pack.ownerApiChatId||''),expectedChat=String(room.chatId||''),expectedApi=String(apiChatIdOf(room)||'');
+      if(!pack.autoManaged||(ownerChat&&ownerChat!==expectedChat)||(ownerApi&&ownerApi!==expectedApi)){
+        const error=new Error('같은 ID의 자료팩이 수동 자료이거나 다른 방 소유라 자동 팩으로 덮어쓰지 않았습니다. 자료집 이름과 백업 상태를 확인해 주세요.');
+        error.code='AUTO_LORE_STALE';throw error;
+      }
+      // 초기 시험판에서 소유자 필드가 비어 있던 자동 팩만 현재 방에 안전하게 귀속합니다.
+      if(!ownerChat||!ownerApi){pack.ownerChatId=expectedChat;pack.ownerApiChatId=expectedApi;changed=true;}
+    }
+    if(changed)pack=await putLorePack(pack);
+    if(created&&!(room.activeLorePackIds||[]).includes(pack.scopeId)){room.activeLorePackIds.push(pack.scopeId);await saveRoom(room);}
+    return pack;
+  }
+
+  function autoLoreCanonicalText(value) {
+    return String(value||'').normalize('NFKC').replace(/[\u200B-\u200D\uFEFF]/g,'').replace(/\s+/g,' ').trim();
+  }
+  function autoLoreLooseText(value) {
+    return autoLoreCanonicalText(value).toLowerCase().replace(/[`*_~#>“”‘’"'「」『』〈〉《》()\[\]{}]/g,'').replace(/\s+/g,'');
+  }
+  function autoLoreSourceContains(source, excerpt) {
+    const hay=autoLoreCanonicalText(source),needle=autoLoreCanonicalText(excerpt);
+    if(needle.length<2)return false;
+    if(hay.includes(needle))return true;
+    const looseNeedle=autoLoreLooseText(needle);
+    return looseNeedle.length>=4&&autoLoreLooseText(hay).includes(looseNeedle);
+  }
+  function autoLoreSourceContainsExact(source, excerpt) {
+    const hay=String(source||'').normalize('NFKC').replace(/\r\n?/g,'\n');
+    const needle=String(excerpt||'').normalize('NFKC').replace(/\r\n?/g,'\n').trim();
+    return needle.length>=2&&hay.includes(needle);
+  }
+  function normalizeAutoLoreKey(type,value,name,quote,speaker='',sourceMessageId='') {
+    if(type==='key_quote')return `key_quote:${aiHashTiny(`${sourceMessageId}|${speaker}|${quote}`)}`;
+    let core=String(value||name||'').normalize('NFKC').trim().toLowerCase().replace(/\s+/g,'-').replace(/[^\p{L}\p{N}._:-]+/gu,'-').replace(/-+/g,'-').replace(/^[-:]+|[-:]+$/g,'');
+    if(core.startsWith(`${type}:`))core=core.slice(type.length+1);
+    return `${type}:${core||aiHashTiny(name)}`.slice(0,180);
+  }
+
+  function autoLoreInventoryText(pack) {
+    const entries=[...(pack?.entries||[])].filter(entry=>entry.type!=='speech'&&!entry.speechRule);
+    const keys=entries.filter(entry=>entry.autoLoreKey).map(entry=>`${entry.autoManaged&&!entry.userProtected?'AUTO_EDITABLE':'PROTECTED'} · ${entry.autoLoreKey} · ${entry.type} · ${entry.name}`);
+    const rows=entries.sort((a,b)=>Number(a.type==='key_quote')-Number(b.type==='key_quote')||Number(b.updatedAt||0)-Number(a.updatedAt||0)).map(entry=>{
+      const protection=entry.autoManaged&&!entry.userProtected?'AUTO_EDITABLE':'PROTECTED';
+      const quote=entry.exactQuote?`\nexact_quote: ${entry.exactQuote}\ncontext: ${entry.sceneContext||''} / ${entry.sceneLocation||''} / ${entry.sceneDate||''}`:'';
+      return `[${protection}] key=${entry.autoLoreKey||'(수동 보호 · 새 key를 만들기 전 중복 확인)'} · type=${entry.type} · name=${entry.name}\n${loreTextAtLevel(entry,'full').slice(0,1800)}${quote}`;
+    });
+    return `[전체 기존 key 색인]\n${trimApiReference(keys.join('\n')||'(없음)',26000,false)}\n\n[최신·현재 카드 상세 — 새 항목 우선]\n${trimApiReference(rows.join('\n\n')||'(없음)',33000,false)}`;
+  }
+  function manualLoreReferenceText(room,autoPackId) {
+    const rows=[];
+    for(const pack of activeLorePacks(room)){
+      for(const entry of pack.entries||[]){
+        if(pack.scopeId===autoPackId&&entry.autoLoreKey)continue;
+        if(entry.enabled===false||entry.type==='speech'||entry.speechRule)continue;
+        rows.push(`[READ_ONLY${pack.scopeId===autoPackId?' · PROTECTED':''}] ${pack.name} / ${entry.name} · ${entry.type}\n찾을 말: ${(entry.triggers||[]).join(', ')}\n${loreTextAtLevel(entry,'micro').slice(0,500)}`);
+      }
+    }
+    return trimApiReference(rows.join('\n\n')||'(없음)',24000,false);
+  }
+  function autoLorePackBasis(room,autoPack=null) {
+    const packs=new Map(activeLorePacks(room).map(pack=>[pack.scopeId,pack]));if(autoPack)packs.set(autoPack.scopeId,autoPack);
+    const automation=autoLoreState(room);
+    return {version:2,roomRevision:Number(room?._rev||0),roomEpoch:String(room?._epoch||''),activeIds:activeLorePacks(room).map(pack=>String(pack.scopeId)).sort(),automation:{enabled:!!automation.enabled,intervalTurns:Number(automation.intervalTurns||0),readTurns:Number(automation.readTurns||0),initialized:!!automation.initialized,lastProcessedMessageId:String(automation.lastProcessedMessageId||''),paused:!!automation.paused},packs:Object.fromEntries([...packs.values()].map(pack=>[pack.scopeId,autoLoreContentFingerprint(pack)]))};
+  }
+  async function assertAutoLorePacksUnchanged(room,basis) {
+    const stored=await new Promise((resolve,reject)=>{const q=state.db.transaction(APP.storeName,'readonly').objectStore(APP.storeName).get(room.chatId);q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error);});
+    const currentAutomation=autoLoreState(stored||{}),currentActive=activeLorePacks(stored||room).map(pack=>String(pack.scopeId)).sort();
+    const currentRoomBasis={roomRevision:Number(stored?._rev||0),roomEpoch:String(stored?._epoch||''),activeIds:currentActive,automation:{enabled:!!currentAutomation.enabled,intervalTurns:Number(currentAutomation.intervalTurns||0),readTurns:Number(currentAutomation.readTurns||0),initialized:!!currentAutomation.initialized,lastProcessedMessageId:String(currentAutomation.lastProcessedMessageId||''),paused:!!currentAutomation.paused}};
+    const expectedRoomBasis={roomRevision:Number(basis?.roomRevision||0),roomEpoch:String(basis?.roomEpoch||''),activeIds:Array.isArray(basis?.activeIds)?basis.activeIds:[],automation:basis?.automation||{}};
+    if(JSON.stringify(currentRoomBasis)!==JSON.stringify(expectedRoomBasis)){const error=new Error('자료 갱신 중 방 설정·기준점 또는 사용 자료집이 바뀌어 이전 AI 결과를 적용하지 않았습니다. 자동 자료 갱신을 일시정지했습니다.');error.code='AUTO_LORE_STALE';throw error;}
+    for(const [id,fingerprint] of Object.entries(basis?.packs||{})){
+      const raw=await getCharacterLibrary(id);
+      if(!raw||autoLoreContentFingerprint(raw)!==fingerprint){const error=new Error('자료 갱신 중 자료팩이나 카드가 수정되어 이전 AI 결과를 적용하지 않았습니다. 자동 자료 갱신을 일시정지했습니다.');error.code='AUTO_LORE_STALE';throw error;}
+    }
+  }
+
+  function parseAutoLoreAiResult(text,selectedTurns) {
+    let parsed;try{parsed=JSON.parse(cleanAiGeneratedText(text));}catch{throw new Error('자동 자료 갱신 결과가 올바른 JSON이 아닙니다.');}
+    if(!parsed||!['APPLY','NO_CHANGE'].includes(String(parsed.decision)))throw new Error('자동 자료 갱신 decision이 올바르지 않습니다.');
+    const messages=new Map(selectedTurns.flatMap(turn=>turn.messages||[]).map(message=>[String(message.id||''),message]));
+    const rawRows=Array.isArray(parsed.upserts)?parsed.upserts:[];
+    if(parsed.decision==='NO_CHANGE')return {decision:'NO_CHANGE',upserts:[]};
+    if(!rawRows.length||rawRows.length>24)throw new Error('자동 자료 갱신 항목 수가 허용 범위를 벗어났습니다.');
+    const upserts=rawRows.map((raw,index)=>{
+      const type=String(raw?.type||'');if(!AUTO_LORE_TYPES.has(type))throw new Error(`자동 자료 ${index+1}의 종류가 올바르지 않습니다.`);
+      const name=String(raw?.name||'').trim().slice(0,160),sourceMessageId=String(raw?.source_message_id||'').trim(),evidence=String(raw?.evidence||'').trim();
+      const source=messages.get(sourceMessageId);if(!name||!source)throw new Error(`자동 자료 ${index+1}의 이름 또는 근거 메시지 ID가 올바르지 않습니다.`);
+      if(autoLoreCanonicalText(evidence).length<4||!autoLoreSourceContains(source.text,evidence))throw new Error(`자동 자료 ‘${name}’의 근거 원문을 신규 RP에서 확인하지 못했습니다.`);
+      const exactQuote=String(raw?.exact_quote||'').trim();
+      if(type==='key_quote'&&(!exactQuote||!autoLoreSourceContainsExact(source.text,exactQuote)))throw new Error(`핵심 대사 ‘${name}’의 실제 문장을 원문에서 정확히 확인하지 못했습니다.`);
+      if(type!=='key_quote'&&exactQuote)throw new Error(`자동 자료 ‘${name}’의 종류와 exact_quote가 맞지 않습니다.`);
+      const full=String(raw?.full||'').trim(),compact=String(raw?.compact||'').trim(),micro=String(raw?.micro||'').trim();if(!full||!compact||!micro)throw new Error(`자동 자료 ‘${name}’의 상세/요약 단계가 비어 있습니다.`);
+      const speaker=String(raw?.speaker||'').trim().slice(0,120),context=String(raw?.context||'').trim().slice(0,1000);if(type==='key_quote'&&(!speaker||!context))throw new Error(`핵심 대사 ‘${name}’의 화자 또는 장면 맥락이 비어 있습니다.`);const key=normalizeAutoLoreKey(type,raw?.key,name,exactQuote,speaker,sourceMessageId);
+      return {key,type,name,triggers:[...new Set((Array.isArray(raw?.triggers)?raw.triggers:[]).map(x=>String(x||'').trim()).filter(Boolean))].slice(0,30),entities:[...new Set((Array.isArray(raw?.entities)?raw.entities:[]).map(x=>String(x||'').trim()).filter(Boolean))].slice(0,30),full,compact,micro,anchor:raw?.anchor===true,sourceMessageId,evidence,exactQuote,speaker,target:String(raw?.target||'').trim().slice(0,120),context,location:String(raw?.location||'').trim().slice(0,240),date:String(raw?.date||'').trim().slice(0,160)};
+    });
+    return {decision:'APPLY',upserts};
+  }
+
+  function autoLoreEntryFromUpsert(row,old,lastMessageId) {
+    let full=row.full,compact=row.compact,micro=row.micro;
+    if(row.type==='key_quote'){
+      const who=[row.speaker,row.target?`→ ${row.target}`:''].filter(Boolean).join(' '),where=[row.date,row.location].filter(Boolean).join(' · ');
+      full=`실제 대사: “${row.exactQuote}”${who?`\n화자/상대: ${who}`:''}${row.context?`\n맥락: ${row.context}`:''}${where?`\n장소·시점: ${where}`:''}`;
+      compact=`${row.speaker||'인물'}${row.target?` → ${row.target}`:''}: “${row.exactQuote}”${row.context?` · ${row.context}`:''}${row.location?` · ${row.location}`:''}`;
+      micro=`${row.speaker||'인물'}${row.location?` @ ${row.location}`:''}: “${row.exactQuote}”`;
+    }
+    const triggers=[...new Set([...row.triggers,row.speaker,row.target,row.location,row.date,...String(row.context||'').split(/[\s,/·]+/).filter(x=>x.length>=2)].map(x=>String(x||'').trim()).filter(Boolean))].slice(0,80);
+    return normalizeLoreEntry({...old,id:old?.id||makeLoreEntryId(),name:row.name,type:row.type,triggers,entities:row.entities,summary:{full,compact,micro},inject:{full,compact,micro},anchor:row.type==='key_quote'?false:row.anchor,enabled:old?old.enabled!==false:true,priority:Number(old?.priority||0),notes:old?.notes||'',speechRule:null,
+      autoManaged:true,userProtected:false,autoLoreKey:row.key,sourceMessageIds:[...new Set([...(old?.sourceMessageIds||[]),row.sourceMessageId])].slice(-20),sourceHash:aiHashTiny(`${row.sourceMessageId}|${row.evidence}`),lastSeenMessageId:lastMessageId,evidence:row.evidence,exactQuote:row.exactQuote,quoteSpeaker:row.speaker,quoteTarget:row.target,sceneContext:row.context,sceneLocation:row.location,sceneDate:row.date,embedding:null,updatedAt:Date.now()});
+  }
+
+  function mergeAutoLoreUpserts(pack,rows,lastMessageId) {
+    const byKey=new Map((pack.entries||[]).filter(entry=>entry.autoLoreKey).map(entry=>[entry.autoLoreKey,entry]));
+    const quoteKeys=new Set((pack.entries||[]).filter(entry=>entry.type==='key_quote'&&entry.exactQuote&&entry.autoLoreKey).map(entry=>entry.autoLoreKey));
+    const anchorLimit=8;let autoAnchors=(pack.entries||[]).filter(entry=>entry.autoManaged&&!entry.userProtected&&entry.anchor&&entry.type!=='key_quote').length;
+    const stats={added:0,updated:0,protected:0,duplicateQuotes:0,world:0,item:0,outfit:0,key_quote:0};
+    for(const row of rows){
+      if(row.type==='key_quote'&&quoteKeys.has(row.key)){stats.duplicateQuotes++;continue;}
+      const old=byKey.get(row.key);
+      if(old&&(!old.autoManaged||old.userProtected)){stats.protected++;continue;}
+      const oldAnchored=!!(old?.anchor&&old?.type!=='key_quote'),allowAnchor=row.type!=='key_quote'&&row.anchor===true&&(oldAnchored||autoAnchors<anchorLimit);
+      const entry=autoLoreEntryFromUpsert({...row,anchor:allowAnchor},old,lastMessageId),index=(pack.entries||[]).findIndex(item=>item.id===entry.id);
+      if(oldAnchored&&!entry.anchor)autoAnchors=Math.max(0,autoAnchors-1);else if(!oldAnchored&&entry.anchor)autoAnchors++;
+      if(index>=0){pack.entries[index]=entry;stats.updated++;}else{if(pack.entries.length>=5000)throw new Error('자동 자료팩이 5,000개 한도에 도달했습니다.');pack.entries.push(entry);stats.added++;}
+      byKey.set(row.key,entry);if(row.type==='key_quote')quoteKeys.add(row.key);stats[row.type]++;
+    }
+    if(stats.added||stats.updated){pack.revision=Math.max(0,Number(pack.revision||0))+1;pack.updatedAt=nowIso();}
+    return stats;
+  }
+
+  async function buildAutoLoreUpdateRequest(room,pack,{force=false}={}) {
+    if(generationPending(apiChatIdOf(room)))throw new Error('AI 생성·리롤 완료 후 자료를 갱신해 주세요.');
+    const all=await fetchAllRoomMessages(apiChatIdOf(room)),frame=stableFrame([...all].reverse()),source=summaryMemoryConversation([...frame.stable].reverse(),{preserveStatusFences:true}),automation=autoLoreState(room);
+    const turns=source.turns,lastKnown=String(automation.lastProcessedMessageId||'');let cursorIndex=-1;
+    if(lastKnown){cursorIndex=turns.findIndex(turn=>String(turn.assistant?.id||'')===lastKnown);if(cursorIndex<0){const error=new Error('자동 자료의 이전 기준 메시지가 현재 확정 대화에 없습니다. 기준점을 다시 잡거나 전체 재구축 후 재개해 주세요.');error.code='AUTO_LORE_BRANCH';throw error;}}
+    if(!automation.initialized&&!force){automation.initialized=true;automation.lastProcessedMessageId=String(turns.at(-1)?.assistant?.id||'');automation.lastRunAt=Date.now();automation.lastError='';automation.lastStatus=turns.length?'현재 시점을 자동 자료 기준점으로 설정했습니다.':'완결된 RP를 기다리는 중입니다.';automation.failureCount=0;automation.paused=false;await saveRoom(room);return {baseline:true};}
+    let pending=automation.initialized?turns.slice(cursorIndex+1):turns.slice(-automation.readTurns);
+    if(!pending.length)return {empty:true};
+    if(!force&&pending.length<automation.intervalTurns)return {due:false,pendingTurns:pending.length};
+    const selected=automation.initialized?pending.slice(0,automation.readTurns):pending.slice(-automation.readTurns),lastMessageId=String(selected.at(-1)?.assistant?.id||'');
+    const systemPrompt=`${getGuideText('loreAuto')}\n\n${PROMPT_INPUT_BOUNDARY}\n\n[Manager 불변 출력 계약]\nJSON 객체 하나만 출력한다. decision은 APPLY 또는 NO_CHANGE다. APPLY의 upserts는 최대 24개다. 삭제 출력은 없다. key는 기존 카드와 같은 대상을 갱신할 때 반드시 기존 key를 그대로 쓴다. PROTECTED key는 출력하지 않는다. source_message_id는 아래 신규 RP에 표시된 실제 MESSAGE_ID여야 하며 evidence는 그 메시지에 연속해서 존재하는 식별력 있는 원문이어야 한다. full/compact/micro는 그 근거와 같은 메시지에서 직접 확인되는 사실만 표현한다. key_quote의 exact_quote도 같은 신규 메시지에 실제로 존재하는 원문 그대로이며, 화자와 장면 맥락을 반드시 적는다. RP 끝의 상태표·정보창은 item/outfit의 보조 근거일 뿐 world의 객관 진실이나 key_quote의 근거가 아니다. 본문과 충돌하면 본문이 우선한다. key_quote는 anchor=false다. anchor=true는 매턴 반드시 필요한 절대 세계 규칙이나 현재 착용·휴대 중인 핵심 상태에만 매우 드물게 쓴다. Manager가 자동 앵커 총량을 제한한다. 순간 상태나 근거 없는 보완을 만들지 않는다.`;
+    const userPrompt=`[기존 자동 자료 — AUTO_EDITABLE만 갱신 가능]\n${autoLoreInventoryText(pack)}\n\n[사용자 자료팩 — READ_ONLY, 중복 방지 참고]\n${manualLoreReferenceText(room,pack.scopeId)}\n\n[신규 완결 RP — 직접 근거]\n${selected.map(summaryMemoryTurnText).join('\n\n')}\n\n이 신규 RP에서 실제 변화나 보존 가치가 확인되는 world/item/outfit/key_quote만 제안하라.`;
+    return {systemPrompt,userPrompt,selected,lastMessageId,pendingTurns:pending.length,sourceManifest:sourceManifestOf([...frame.stable].reverse(),{preserveStatusFences:true}),preserveStatusFences:true,packBasis:autoLorePackBasis(room,pack)};
+  }
+
+  async function resetAutoLoreBaseline(room,{announce=true}={}) {
+    const rid=String(apiChatIdOf(room)||'');
+    if(automaticLoreJob||aiUpdateRunning||automaticMemoryJob||internalBulkRebuildJob||summaryMemoryJob||memoryImportRunning)throw new Error('다른 AI·복원 작업이 끝난 뒤 기준점을 설정해 주세요.');
+    return withRoomExclusive('ai:'+rid,async()=>{
+      if(automaticLoreJob||aiUpdateRunning||automaticMemoryJob||internalBulkRebuildJob||summaryMemoryJob||memoryImportRunning)throw new Error('잠금을 기다리는 동안 다른 AI 작업이 시작됐습니다. 끝난 뒤 다시 시도해 주세요.');
+      if(generationPending(rid))throw new Error('AI 생성·리롤 완료 후 기준점을 설정해 주세요.');
+      const all=await fetchAllRoomMessages(rid),frame=stableFrame([...all].reverse()),source=summaryMemoryConversation([...frame.stable].reverse(),{preserveStatusFences:true}),automation=autoLoreState(room);
+      automation.initialized=true;automation.lastProcessedMessageId=String(source.turns.at(-1)?.assistant?.id||'');automation.lastRunAt=Date.now();automation.lastError='';automation.lastStatus='현재 시점을 기준점으로 설정했습니다. 이전 미처리 턴은 건너뜁니다.';automation.failureCount=0;automation.paused=false;
+      await saveRoom(room);if(announce)notify('진행형 자료 기준점을 지금으로 설정했습니다. 기존 자동 자료 카드는 그대로 유지합니다.','success',4400);return true;
+    });
+  }
+
+  function scheduleAutomaticLoreMaintenance(room,reason='scheduled',delay=6500) {
+    const rid=String(apiChatIdOf(room)||''),branchChatId=String(room?.chatId||''),timerKey=automaticLoreTimerKey(room);if(!rid||!branchChatId)return;
+    const wait=Math.max(0,Number(delay)||0),dueAt=Date.now()+wait,previous=automaticLoreTimers.get(timerKey);
+    if(previous&&previous.dueAt<=dueAt)return;if(previous)clearTimeout(previous.timer);
+    const timer=setTimeout(()=>{automaticLoreTimers.delete(timerKey);const live=state.currentRoom;if(!live||String(live.chatId||'')!==branchChatId||String(apiChatIdOf(live)||'')!==rid)return;void runAutomaticLoreMaintenance(live,{reason}).catch(error=>console.warn('[Wish] 자동 자료 갱신 예약 실패',error));},wait);
+    automaticLoreTimers.set(timerKey,{timer,dueAt,reason});
+  }
+
+  async function recordAutoLoreFailure(room,error) {
+    const live=state.currentRoom?.chatId===room.chatId?state.currentRoom:room,stateRow=autoLoreState(live);stateRow.lastError=String(error?.message||error);stateRow.failureCount=Math.max(0,Number(stateRow.failureCount||0))+1;
+    if(error?.code==='AUTO_LORE_STALE'||error?.code==='AUTO_LORE_BRANCH'||stateRow.failureCount>=3)stateRow.paused=true;
+    try{await saveRoom(live);}catch(_){}
+    notify(`📚 진행형 자료 갱신 ${stateRow.paused?'중단':'보류'}: ${error.message}`,'error',8000);renderModalIfIdle();return false;
+  }
+
+  async function runAutomaticLoreMaintenance(room,{force=false,reason='scheduled'}={}) {
+    if(!room)return false;const rid=String(apiChatIdOf(room)||''),busy=restoreAutomationSuppressed()||automaticLoreJob||aiUpdateRunning||automaticMemoryJob||internalBulkRebuildJob||summaryMemoryJob||memoryImportRunning;
+    if(busy){if(force)throw new Error('다른 AI·복원 작업이 끝난 뒤 자료를 갱신해 주세요.');scheduleAutomaticLoreMaintenance(room,reason,12000);return false;}
+    return withRoomExclusive('ai:'+rid,async()=>{
+      const automation=autoLoreState(room),settings=loadAiSettings();
+      if((!automation.enabled&&!force)||(!force&&automation.paused))return false;
+      if(!isAiProviderReady(settings)){if(force)throw new Error('공용 AI Provider 연결을 먼저 설정해 주세요.');return false;}
+      const cognitionBridge=(typeof unsafeWindow!=='undefined'?unsafeWindow:window).__WishCognitionBridge;
+      if(cognitionBridge?.isBusy?.(rid)||generationPending(rid)){if(force)throw new Error('인지 또는 AI 응답 처리가 끝난 뒤 자료를 갱신해 주세요.');scheduleAutomaticLoreMaintenance(room,reason,10000);return false;}
+      let pack;try{pack=await ensureAutoLorePack(room);}catch(error){return recordAutoLoreFailure(room,error);}
+      if(automaticLoreJob||aiUpdateRunning||automaticMemoryJob||internalBulkRebuildJob||summaryMemoryJob||memoryImportRunning){if(force)throw new Error('다른 AI 작업이 먼저 시작됐습니다.');scheduleAutomaticLoreMaintenance(room,reason,12000);return false;}
+      let request;try{request=await buildAutoLoreUpdateRequest(room,pack,{force});}catch(error){return recordAutoLoreFailure(room,error);}
+      if(automaticLoreJob||aiUpdateRunning||automaticMemoryJob||internalBulkRebuildJob||summaryMemoryJob||memoryImportRunning){if(force)throw new Error('자료 요청을 준비하는 동안 다른 AI 작업이 시작됐습니다. 끝난 뒤 다시 시도해 주세요.');scheduleAutomaticLoreMaintenance(room,reason,12000);return false;}
+      if(request.baseline){if(force)notify('진행형 자료의 기준점을 현재로 설정했습니다.','success',3200);renderModalIfIdle();return true;}
+      if(request.empty){if(force)notify('새로 정리할 완결 RP가 없습니다. 최신 AI 응답은 다음 응답 완료 뒤 확정됩니다.','warn',4300);return false;}
+      if(request.due===false)return false;
+      const restoreEpochAtStart=restorePriorityEpoch;
+      automaticLoreJob=(async()=>{aiUpdateRunning=true;try{
+        if(force)notify(`📚 진행형 자료 갱신 중 · 완결 RP ${request.selected.length}턴`,'success',3000);
+        const result=await callAiProvider(settings,request.systemPrompt,request.userPrompt,{responseMimeType:'application/json',responseJsonSchema:AUTO_LORE_RESPONSE_SCHEMA,maxOutputTokens:Math.min(24000,Math.max(6000,Number(settings.maxOutputTokens||0)||12000))});
+        if(restoreEpochAtStart!==restorePriorityEpoch)throw restoreSupersededError('자동 자료 갱신');
+        const parsed=parseAutoLoreAiResult(result.text,request.selected);
+        await assertAiSourceUnchanged(room,{sourceManifest:request.sourceManifest,preserveStatusFences:request.preserveStatusFences===true});await assertAutoLorePacksUnchanged(room,request.packBasis);
+        if(restoreEpochAtStart!==restorePriorityEpoch)throw restoreSupersededError('자동 자료 갱신');
+        const live=state.currentRoom;if(!live||live.chatId!==room.chatId)throw new Error('자료 갱신 중 다른 채팅방으로 이동해 결과를 적용하지 않았습니다.');
+        const freshRaw=await getCharacterLibrary(pack.scopeId);if(!freshRaw)throw new Error('적용할 자동 자료팩을 찾지 못했습니다.');const freshFingerprint=lorePackStorageFingerprint(freshRaw),working=normalizeLorePack(freshRaw,pack.name);
+        const stats=mergeAutoLoreUpserts(working,parsed.upserts,request.lastMessageId);
+        if(stats.added||stats.updated)await putLorePackIfFingerprint(working,freshFingerprint);
+        const liveState=autoLoreState(live);
+        liveState.initialized=true;liveState.lastProcessedMessageId=request.lastMessageId;liveState.lastRunAt=Date.now();liveState.lastError='';liveState.failureCount=0;liveState.paused=false;
+        liveState.lastStatus=stats.added||stats.updated?`새 카드 ${stats.added} · 갱신 ${stats.updated}${stats.protected?` · 보호 ${stats.protected}`:''}${stats.duplicateQuotes?` · 중복 대사 제외 ${stats.duplicateQuotes}`:''}`:'변경할 진행형 자료가 없었습니다.';
+        await saveRoom(live);
+        let semanticWarning='';if((stats.added||stats.updated)&&live.loreConfig.semanticEnabled!==false&&String(loadAiSettings().apiKey||'').trim()){
+          if(loreIndexingRunning){queueSemanticSearchRerun(live);semanticWarning='진행 중인 의미 검색이 끝난 뒤 재준비하도록 예약했습니다.';}
+          else try{await prepareSemanticSearchIndex(live);}catch(error){semanticWarning=String(error?.message||error);}
+        }
+        const carrierWarning=(stats.added||stats.updated)?await syncLoreMutation(live,'auto-lore-update'):'';
+        renderModalIfIdle();
+        if(stats.added||stats.updated)notify(`📚 진행형 자료 갱신 완료 · 새 ${stats.added} / 교체 ${stats.updated}${stats.key_quote?` · 핵심 대사 ${stats.key_quote}`:''}${semanticWarning?' · 의미 검색 갱신은 보류':''}${carrierWarning?' · 현재 주입 반영은 다음 전송에 재시도':''}`,(semanticWarning||carrierWarning)?'warn':'success',6000);
+        else if(force)notify('📚 확인 완료 · 새로 바뀐 세계관·아이템·복장·핵심 대사가 없습니다.','success',3600);
+        if(request.pendingTurns>request.selected.length)scheduleAutomaticLoreMaintenance(live,'backlog',5000);
+        return true;
+      }catch(error){
+        if(error?.code==='WISH_RESTORE_SUPERSEDED'||restoreEpochAtStart!==restorePriorityEpoch)return false;
+        return recordAutoLoreFailure(room,error);
+      }finally{aiUpdateRunning=false;}})();
+      try{return await automaticLoreJob;}finally{automaticLoreJob=null;}
+    });
   }
 
   function resolvedSpeechRelations(room) {
@@ -7081,14 +7507,15 @@
 
   function loreEntrySourceText(entry) {
     const speech=entry?.speechRule?`${entry.speechRule.speaker} → ${entry.speechRule.target}: ${entry.speechRule.address} / ${speechRegisterLabel(entry.speechRule.register)} / ${entry.speechRule.note||''}`:'';
-    return [entry?.name, entry?.type, speech, ...(entry?.triggers || []), ...(entry?.entities || []), entry?.summary?.full, entry?.summary?.compact, entry?.inject?.full, entry?.notes]
+    const quote=entry?.exactQuote?`실제 대사: ${entry.exactQuote}\n화자: ${entry.quoteSpeaker||''}\n상대: ${entry.quoteTarget||''}\n맥락: ${entry.sceneContext||''}\n장소: ${entry.sceneLocation||''}\n시점: ${entry.sceneDate||''}`:'';
+    return [entry?.name, entry?.type, entry?.autoLoreKey, speech, quote, ...(entry?.triggers || []), ...(entry?.entities || []), entry?.summary?.full, entry?.summary?.compact, entry?.inject?.full, entry?.notes]
       .map(x => String(x || '').trim()).filter(Boolean).join('\n').slice(0, 16000);
   }
 
   function loreEntrySourceHash(entry) { return aiHashTiny(loreEntrySourceText(entry)); }
   function loreEntryMergeKey(entry) {
     const pair=entry?.speechRule&&speechPairKey(entry.speechRule.speaker,entry.speechRule.target);
-    return pair?`speech:${pair}`:`name:${normalizedRecallTerm(entry?.name||'')}`;
+    return entry?.autoLoreKey?`auto:${entry.autoLoreKey}`:pair?`speech:${pair}`:`name:${normalizedRecallTerm(entry?.name||'')}`;
   }
   function logBlockSemanticText(block) { return `${block?.events || block?.titleText || ''}\n${block?.body || ''}`.trim().slice(0, 12000); }
   function logBlockSemanticHash(block) { return aiHashTiny(logBlockSemanticText(block)); }
@@ -7171,14 +7598,35 @@
         onProgress?.(done, work.length);
       }
       const touchedPackIds=new Set(staleEntries.map(item=>item.pack.scopeId));
-      for (const pack of packs) if(touchedPackIds.has(pack.scopeId)) await putLorePack(pack, {silent:true});
+      for (const stagedPack of packs) if(touchedPackIds.has(stagedPack.scopeId)) {
+        // 임베딩 요청 중 카드가 수정돼도 오래된 팩 전체를 덮어쓰지 않습니다.
+        // 저장 직전 최신 팩을 다시 읽고, 원문 hash가 그대로인 카드의 벡터만 병합합니다.
+        const raw=await getCharacterLibrary(stagedPack.scopeId);if(!raw)continue;
+        const freshFingerprint=lorePackStorageFingerprint(raw),fresh=normalizeLorePack(raw,stagedPack.name),stagedRows=staleEntries.filter(item=>item.pack.scopeId===stagedPack.scopeId&&item.entry.embedding);
+        const byId=new Map(stagedRows.map(item=>[String(item.entry.id),item.entry]));
+        const byStable=new Map(stagedRows.map(item=>[`${loreEntryMergeKey(item.entry)}|${item.hash}`,item.entry]));
+        let merged=0;
+        for(const entry of fresh.entries||[]){
+          const hash=loreEntrySourceHash(entry),candidate=byId.get(String(entry.id))||byStable.get(`${loreEntryMergeKey(entry)}|${hash}`);
+          if(!candidate?.embedding||candidate.embedding.sourceHash!==hash)continue;
+          entry.embedding=structuredClone(candidate.embedding);merged++;
+        }
+        if(merged){
+          try{await putLorePackIfFingerprint(fresh,freshFingerprint,{silent:true});}
+          catch(error){if(error?.code!=='AUTO_LORE_STALE')throw error;queueSemanticSearchRerun(room);}
+        }
+      }
       const validLogKeys = new Set(blocks.map(block => String(block.key)));
       room.logSemanticIndex = [...oldLogs.values()].filter(row => validLogKeys.has(String(row.key)));
       room.loreConfig.semanticEnabled = true;
       await saveRoom(room);
       markCloudDirty('의미 검색 인덱스');
       return {entries:staleEntries.length,logs:staleLogs.length,total:work.length};
-    } finally { loreIndexingRunning = false; }
+    } finally {
+      loreIndexingRunning = false;
+      const next=loreIndexRerunRooms.entries().next();
+      if(!next.done){const [key,queuedRef]=next.value;loreIndexRerunRooms.delete(key);setTimeout(()=>{void (async()=>{if(loreIndexingRunning){loreIndexRerunRooms.set(key,queuedRef);return;}const queuedRoom=await readQueuedSemanticRoom(queuedRef);if(!queuedRoom)return;if(loreIndexingRunning){loreIndexRerunRooms.set(key,queuedRef);return;}await prepareSemanticSearchIndex(queuedRoom);})().catch(error=>console.warn('[Wish] 예약된 의미 검색 재준비 보류',error));},250);}
+    }
   }
 
   async function semanticQueryVector(room, query) {
@@ -7429,7 +7877,7 @@
     if(!force&&Date.now()-cloudLastSyncCheckAt<CLOUD_SYNC_CHECK_COOLDOWN_MS)return false;
     const cfg=loadCloudConfig();
     if(!cloudConfigReady(cfg)||cfg.syncOnAccessEnabled===false)return false;
-    if(cloudBackupInFlight||aiUpdateRunning||internalBulkRebuildJob||automaticMemoryJob||summaryMemoryJob||memoryImportRunning||generationGates.size||v2UiIsEditing()){
+    if(cloudBackupInFlight||aiUpdateRunning||internalBulkRebuildJob||automaticMemoryJob||automaticLoreJob||summaryMemoryJob||memoryImportRunning||generationGates.size||v2UiIsEditing()){
       scheduleCloudSyncCheck(30000);return false;
     }
     cloudSyncCheckInFlight=true;cloudLastSyncCheckAt=Date.now();
@@ -7518,7 +7966,7 @@
         const current=state.currentRoom;
         if(current&&ids.includes(String(apiChatIdOf(current)||'')))await runAutomaticMemoryMaintenance(current,'cloud-restore-resume');
       }catch(error){console.warn('[Wish] 서버 복원 후 자동화 재평가 보류',error);}
-      if(automaticMemoryJob&&attempt<45)schedulePostRestoreAutomation(ids,epoch,attempt+1);
+      if((automaticMemoryJob||automaticLoreJob)&&attempt<45)schedulePostRestoreAutomation(ids,epoch,attempt+1);
     },Math.max(250,delay));
   }
 
@@ -7713,7 +8161,10 @@
 
   async function restoreManagerBackup(data,choice) {
     data=validateManagerBackup(data);
-    const rids=new Set(choice.roomIds.map(String)),lids=new Set(choice.libraryIds.map(String));
+    const rids=new Set((choice.roomIds||[]).map(String)),lids=new Set((choice.libraryIds||[]).map(String));
+    // 방별 진행형 자료팩은 그 방의 자동 갱신 cursor와 한 덩어리입니다.
+    // 방을 골랐으면 체크박스 상태와 무관하게 같은 백업의 소유 팩을 함께 복원합니다.
+    for(const library of data.characterLibraries||[]){const owner=String(library?.ownerChatId||''),id=String(library?.scopeId||''),linked=rids.has(owner)||[...rids].some(rid=>id===`lore:auto:${rid}`);if(library?.autoManaged===true){if(linked)lids.add(id);else lids.delete(id);}}
     const rooms=(data.rooms||[]).filter(r=>rids.has(String(r.chatId))).map(r=>normalizeRoomSlots({...structuredClone(r),pending:null}));
     const apiIds=[...new Set(rooms.map(r=>String(apiChatIdOf(r)||'')).filter(Boolean))].sort();
     if(apiIds.some(rid=>generationPending(rid)))throw new Error('복원할 방에서 AI 응답 또는 리롤이 진행 중입니다. 완료 후 백업을 복원해 주세요.');
@@ -7723,9 +8174,9 @@
     const nativeMemoryProvided=Array.isArray(data.nativeMemoryRooms);
     const perform=async()=>{
       if(priorityRestore){
-        if(internalBulkRebuildJob||memoryImportRunning||summaryMemoryJob||(aiUpdateRunning&&!automaticMemoryJob))throw new Error('전체 재구축·Wish Import·요약 메모리·수동 AI 갱신은 완료 또는 중단한 뒤 서버 백업을 복원해 주세요.');
-      }else if(aiUpdateRunning||internalBulkRebuildJob||automaticMemoryJob||summaryMemoryJob||memoryImportRunning||apiIds.some(id=>bridge?.isBusy?.(id)))throw new Error('AI 작업 완료 또는 중단 후 백업을 복원해 주세요.');
-      const existing=await getAllRooms();
+        if(internalBulkRebuildJob||memoryImportRunning||summaryMemoryJob||(aiUpdateRunning&&!automaticMemoryJob&&!automaticLoreJob))throw new Error('전체 재구축·Wish Import·요약 메모리·수동 AI 갱신은 완료 또는 중단한 뒤 서버 백업을 복원해 주세요.');
+      }else if(aiUpdateRunning||internalBulkRebuildJob||automaticMemoryJob||automaticLoreJob||summaryMemoryJob||memoryImportRunning||apiIds.some(id=>bridge?.isBusy?.(id)))throw new Error('AI 작업 완료 또는 중단 후 백업을 복원해 주세요.');
+      const [existing,existingLibraries]=await Promise.all([getAllRooms(),getAllCharacterLibraries()]);
       if(!priorityRestore&&existing.some(r=>rids.has(String(r.chatId))&&r.pending))throw new Error('주입을 해제한 뒤 복원해 주세요.');
       if(choice.restoreSettings&&data.cognitionSettings)await bridge?.validateSettings?.(data.cognitionSettings);
       const cognition=cognitionProvided?(data.cognitionRooms||[]).filter(r=>apiIds.includes(String(r.id))).map(r=>structuredClone(validateCognitionBackup(r))):[];
@@ -7745,7 +8196,9 @@
             const st=tx.objectStore(APP.cognitionStoreName);
             for(const rid of apiIds){const q=st.get(rid);q.onsuccess=()=>{try{const old=q.result,source=cognitionById.get(rid);st.delete(rid);if(!source)return;const c=structuredClone(source);c.rev=Math.max(Number(old?.rev||0),Number(c.rev||0))+1;c.editRev=Math.max(Number(old?.editRev||0),Number(c.editRev||0))+1;c.scanJob=null;c.automation=null;st.put(c);}catch(error){abort(error);}};q.onerror=()=>abort(q.error||new Error('인지 백업 복원 읽기 실패'));}
           }
-          for(const x of libraries)tx.objectStore(APP.libraryStoreName).put(x);
+          const libraryStore=tx.objectStore(APP.libraryStoreName);
+          for(const x of existingLibraries){const owner=String(x?.ownerChatId||''),id=String(x?.scopeId||'');if(x?.autoManaged===true&&(rids.has(owner)||[...rids].some(rid=>id===`lore:auto:${rid}`)))libraryStore.delete(id);}
+          for(const x of libraries)libraryStore.put(x);
           if(nativeMemoryProvided){const st=tx.objectStore(APP.nativeMemoryStoreName);for(const rid of apiIds)st.delete(rid);for(const x of nativeMemory)st.put(x);}
           for(const [name,items] of [[APP.runtimeStoreName,runtime],[APP.historyStoreName,history]]){const st=tx.objectStore(name),q=st.getAll();q.onsuccess=()=>{try{for(const x of q.result||[])if(x.kind!=='wish-lease'&&(rids.has(String(x.chatId||''))||rooms.some(r=>x.id===bulkSessionId(r))))st.delete(x.id);for(const x of items)st.put(structuredClone(x));}catch(error){abort(error);}};q.onerror=()=>abort(q.error||new Error('백업 작업 기록 읽기 실패'));}
         }catch(error){abort(error);return;}
@@ -7762,12 +8215,13 @@
         state.idleAutoScanAt.delete(String(r.chatId));state.sessionSetupEligibility.delete(rid);state.sessionSetupEligibilityPending.delete(rid);
         const memoryTimer=automaticMemoryCheckTimers.get(rid);if(memoryTimer?.timer)clearTimeout(memoryTimer.timer);automaticMemoryCheckTimers.delete(rid);
         const summaryTimer=summaryMemoryTimers.get(rid);if(summaryTimer)clearTimeout(summaryTimer);summaryMemoryTimers.delete(rid);
+        const loreTimerKey=automaticLoreTimerKey(r),loreTimer=automaticLoreTimers.get(loreTimerKey);if(loreTimer?.timer)clearTimeout(loreTimer.timer);automaticLoreTimers.delete(loreTimerKey);
         try{await bridge?.invalidateRuntime?.(rid);}catch(error){console.warn('[Wish] 복원 후 인지 런타임 캐시 정리 보류',error);}
       }
-      if(choice.restoreSettings){if(data.cognitionSettings)await bridge?.saveSettings?.(data.cognitionSettings);for(const key of ['currentState','logSummary','longMemoryAuto','longMemoryCompress','longMemoryExternal'])if(data.guides?.[key]!=null)restoreGuideBackupValue(key,data.guides[key]);if(data.defaultExtraPreset!=null)saveDefaultExtraPreset(data.defaultExtraPreset,{silent:true,preserveUpdatedAt:true});}
+      if(choice.restoreSettings){if(data.cognitionSettings)await bridge?.saveSettings?.(data.cognitionSettings);for(const key of ['currentState','logSummary','longMemoryAuto','longMemoryCompress','longMemoryExternal','loreAuto'])if(data.guides?.[key]!=null)restoreGuideBackupValue(key,data.guides[key]);if(data.defaultExtraPreset!=null)saveDefaultExtraPreset(data.defaultExtraPreset,{silent:true,preserveUpdatedAt:true});}
       try{await bridge?.refresh?.();}catch(error){console.warn('[Wish] 복원 후 인지 화면 갱신 보류',error);}
       state.v2Cognition=null;state.v2CognitionRev=-1;
-      state.v2SummaryLoaded=false;state.v2SummaryCards=[];state.v2SummaryRecord=null;
+      state.v2SummaryLoadEpoch++;state.v2SummaryLoading=false;state.v2SummaryLoaded=false;state.v2SummaryCards=[];state.v2SummaryRecord=null;
       lorePackCacheLoaded=false;await loadLorePackCache(true);
       if(currentRestored)state.currentRoom=await getRoom(state.currentChatId);
       return {rooms:rooms.length,cognition:cognition.length,legacy:!cognitionProvided};
@@ -7808,7 +8262,7 @@
             <div class="rpcm-import-group-title">기타 설정집 · ${extraLibraries.length}개</div>
             ${extraLibraries.length ? extraLibraries.map(lib => { const existing = existingLibraryMap.get(String(lib.scopeId)); const diff = !existing ? '신규' : backupLibrarySignature(existing) === backupLibrarySignature(lib) ? '동일' : '변경 있음'; return `<label class="rpcm-import-row"><input type="checkbox" data-library-id="${esc(lib.scopeId)}"><span><strong>${esc(extraLibraryDisplayName(lib) || lib.scopeId)} <em class="rpcm-import-diff">${diff}</em></strong><small>${lib.extras.length}개 항목</small></span></label>`; }).join('') : '<div class="rpcm-empty">백업에 기타 설정집이 없습니다.</div>'}
             <div class="rpcm-import-group-title">자료집 · ${loreLibraries.length}개</div>
-            ${loreLibraries.length ? loreLibraries.map(lib => { const existing = existingLibraryMap.get(String(lib.scopeId)); const diff = !existing ? '신규' : backupLibrarySignature(existing) === backupLibrarySignature(lib) ? '동일' : '변경 있음'; return `<label class="rpcm-import-row"><input type="checkbox" data-library-id="${esc(lib.scopeId)}"><span><strong>${esc(lib.name || lib.scopeId)} <em class="rpcm-import-diff">${diff}</em></strong><small>${lib.entries.length}개 자료</small></span></label>`; }).join('') : '<div class="rpcm-empty">백업에 자료집이 없습니다.</div>'}
+            ${loreLibraries.length ? loreLibraries.map(lib => { const existing = existingLibraryMap.get(String(lib.scopeId)); const diff = !existing ? '신규' : backupLibrarySignature(existing) === backupLibrarySignature(lib) ? '동일' : '변경 있음'; const owner=lib.autoManaged?String(lib.ownerChatId||''):'';const ownerRoom=owner?rooms.find(room=>String(room.chatId)===owner):null;return `<label class="rpcm-import-row"><input type="checkbox" data-library-id="${esc(lib.scopeId)}" ${owner?`data-owner-room-id="${esc(owner)}"`:''}><span><strong>${esc(lib.name || lib.scopeId)} ${owner?'<span class="rpcm-cloud-badge auto">방과 함께 복원</span>':''} <em class="rpcm-import-diff">${diff}</em></strong><small>${lib.entries.length}개 자료${owner?` · ${esc(ownerRoom?.label||'소유 RP방')} 전용`:''}</small></span></label>`; }).join('') : '<div class="rpcm-empty">백업에 자료집이 없습니다.</div>'}
           </div>
           <div class="rpcm-import-note">선택한 채팅방·설정집은 현재 기기의 같은 항목을 백업본으로 완전히 교체합니다. 선택하지 않은 항목과 이 기기의 서버 주소·기기명·Sync Key·암호화 비밀번호는 유지됩니다.${data._wishRpCloudSnapshot?' 서버 복원은 자동 AI보다 먼저 처리하며, 진행 중 자동 분석의 오래된 결과는 폐기합니다. 현재 숨김 주입은 자동으로 정리한 뒤 백업의 주입 유지 진행도를 새 carrier에서 이어서 준비합니다.':' 주입 진행 상태는 복원하지 않습니다.'}${data.guides||data.defaultExtraPreset||data.cognitionSettings||data.aiSettings?`<label style="display:block;margin-top:8px"><input type="checkbox" data-restore-global ${data._wishRpCloudSnapshot?'checked':''}> 저장된 공용 지침·기타 기본 프리셋·인지${data.aiSettings?'·AI':''} 설정도 복원</label>`:''}</div>
           <div class="rpcm-lib-dialog-actions"><button type="button" class="rpcm-btn secondary rpcm-import-cancel">취소</button><button type="button" class="rpcm-btn primary rpcm-import-apply" disabled>선택 항목 복원</button></div>
@@ -7816,6 +8270,8 @@
       document.body.appendChild(backdrop);
       const boxes = () => [...backdrop.querySelectorAll('input[type="checkbox"]:not(:disabled):not([data-restore-global])')];
       const update = () => {
+        const selectedRooms=new Set(boxes().filter(box=>box.checked&&box.dataset.roomId).map(box=>box.dataset.roomId));
+        boxes().filter(box=>box.dataset.ownerRoomId).forEach(box=>{box.checked=selectedRooms.has(box.dataset.ownerRoomId);});
         const count = boxes().filter(box => box.checked).length;
         backdrop.querySelector('.rpcm-lib-selected').textContent = `${count}개 선택`;
         backdrop.querySelector('.rpcm-import-apply').disabled = count === 0;
@@ -7827,7 +8283,7 @@
       backdrop.onclick = event => { if (event.target === backdrop) close(null); };
       backdrop.onkeydown = event => { if (event.key === 'Escape') close(null); };
       backdrop.querySelector('[data-select-current]').onclick = () => {
-        boxes().forEach(box => { box.checked = box.dataset.roomId === String(state.currentChatId); });
+        boxes().forEach(box => { box.checked = box.dataset.roomId === String(state.currentChatId)||box.dataset.ownerRoomId === String(state.currentChatId); });
         update();
       };
       backdrop.querySelector('[data-select-all]').onclick = () => { boxes().forEach(box => { box.checked = true; }); update(); };
@@ -9806,18 +10262,20 @@
     const cLore=items.filter(i=>i.sourceSlotId==='__lore'||i.group==='lore-auto').reduce((n,i)=>n+String(i.content||'').length,0);
     const cSpeech=items.filter(i=>i.sourceSlotId==='__speech'||i.group==='speech').reduce((n,i)=>n+String(i.content||'').length,0);
     const cState=items.filter(i=>i.sourceSlotId==='currentState'||i.slotId==='currentState').reduce((n,i)=>n+String(i.content||'').length,0);
+    const injectedExtras=items.filter(i=>i.group==='extra'),cExtra=injectedExtras.reduce((n,i)=>n+String(i.content||'').length,0);
     const cogItem=items.filter(i=>i.group==='cognition'||i.autoType==='cognition').reduce((n,i)=>n+String(i.content||'').length,0);
     return `<div class="rpcm-v2-summary">
       <div class="rpcm-v2-copy">다음 주입 컨텍스트 · 최신 AI 제외</div>
       ${room.memoryBranchBlocked?'<div class="rpcm-v2-desc">대화 분기 변경으로 자동기억 주입을 보류했습니다. 전체 재구축으로 현재 대화에 맞춰 주세요.</div>':''}
       <div><strong class="big">${formatCount(stats.block)}자</strong> <span class="rpcm-v2-meta">/ ${formatCount(maxChars)} · ${stats.count}항목</span></div>
       <div class="rpcm-v2-bar">
-        <i style="width:${Math.min(100,cState/maxChars*100)}%;background:var(--v2-state)"></i><i style="width:${Math.min(100,cogItem/maxChars*100)}%;background:var(--v2-cog)"></i><i style="width:${Math.min(100,cChars/maxChars*100)}%;background:var(--v2-char)"></i><i style="width:${Math.min(100,(cLore+cSpeech)/maxChars*100)}%;background:var(--v2-lore)"></i><i style="width:${Math.min(100,cLogs/maxChars*100)}%;background:var(--v2-log)"></i>
+        <i style="width:${Math.min(100,cState/maxChars*100)}%;background:var(--v2-state)"></i><i style="width:${Math.min(100,cogItem/maxChars*100)}%;background:var(--v2-cog)"></i><i style="width:${Math.min(100,cChars/maxChars*100)}%;background:var(--v2-char)"></i><i style="width:${Math.min(100,cExtra/maxChars*100)}%;background:var(--v2-extra)"></i><i style="width:${Math.min(100,(cLore+cSpeech)/maxChars*100)}%;background:var(--v2-lore)"></i><i style="width:${Math.min(100,cLogs/maxChars*100)}%;background:var(--v2-log)"></i>
       </div>
       <div class="rpcm-v2-chips">
         <div class="rpcm-v2-chip"><b style="background:var(--v2-state)"></b><strong>현재상태</strong><em>${formatCount(String(cs?.content||'').length)}</em></div>
         <div class="rpcm-v2-chip"><b style="background:var(--v2-cog)"></b><strong>인지</strong><em>${formatCount(cogItem)}</em></div>
         <div class="rpcm-v2-chip"><b style="background:var(--v2-char)"></b><strong>캐릭터 ${chars.length}</strong><em>${formatCount(cChars)}</em></div>
+        <div class="rpcm-v2-chip"><b style="background:var(--v2-extra)"></b><strong>기타·OOC ${injectedExtras.length}</strong><em>${formatCount(cExtra)}</em></div>
         <div class="rpcm-v2-chip"><b style="background:var(--v2-lore)"></b><strong>호칭 ${speech.length}쌍</strong><em>${formatCount(cSpeech)}</em></div>
         <div class="rpcm-v2-chip"><b style="background:var(--v2-lore)"></b><strong>자료집</strong><em>${formatCount(cLore)}</em></div>
         <div class="rpcm-v2-chip"><b style="background:var(--v2-log)"></b><strong>로그 ${blocks.length}블록</strong><em>${formatCount(cLogs)}</em></div>
@@ -9856,7 +10314,9 @@
 
   function v2SummaryMemoryView(room) {
     const rid=String(apiChatIdOf(room)||''),record=state.v2SummaryRecord||normalizeNativeMemoryRecord({id:rid},rid),cards=state.v2SummaryCards||[];
-    if(state.v2SummaryLoading&&!state.v2SummaryLoaded)return '<div class="rpcm-v2-empty">Crack 서버의 요약 메모리를 불러오는 중…</div>';
+    // 저장값을 읽기 전 기본 false 체크박스를 잠깐 그리면 실제로 꺼진 것처럼 보입니다.
+    // 콜드 로드나 강제 새로고침 중에는 설정 폼 대신 로딩 상태만 보여 줍니다.
+    if(!state.v2SummaryLoaded||state.v2SummaryChatId!==rid)return '<div class="rpcm-v2-empty">Crack 서버의 요약 메모리와 자동 정리 설정을 불러오는 중…</div>';
     const manualProtected=summaryMemoryManualProtectedSet(record),native=cards.filter(summaryMemoryIsNative),added=cards.filter(summaryMemoryIsUserAdded),managed=cards.filter(x=>record.state.managed[summaryMemoryId(x)]===summaryMemoryFingerprint(x));
     const q=String(state.v2SummaryQuery||'').trim().toLowerCase(),filter=String(state.v2SummaryFilter||'all');
     const visible=sortSummaryMemoriesOldestFirst(cards).filter(card=>{
@@ -9869,13 +10329,14 @@
       ${state.v2SummaryError?`<div class="rpcm-v2-banner err"><span>⚠️</span><span>${esc(state.v2SummaryError)}</span></div>`:''}
       ${legacy?'<div class="rpcm-v2-banner warn"><span>⚠️</span><span><b>독립 요약 메모리 확프의 자동 기능이 감지됐습니다.</b> 두 자동화를 함께 켜면 같은 서버 카드를 동시에 수정할 수 있습니다. 독립 확프 자동화를 꺼 주세요.</span></div>':''}
       <div class="rpcm-v2-strip"><div class="rpcm-v2-stat" style="--tone:var(--v2-summary)"><label>전체 카드</label><strong>${cards.length}개</strong><small>본체 ${native.length} · [추가] ${added.length}</small></div><div class="rpcm-v2-stat" style="--tone:var(--v2-ok)"><label>자동 관리</label><strong>${cfg.enabled&&!run.paused?'켜짐':'꺼짐'}</strong><small>관리 ${managed.length} · 직접보호 ${manualProtected.size}</small></div><div class="rpcm-v2-stat" style="--tone:var(--v2-log)"><label>최근 상태</label><strong>${run.lastError?'확인 필요':'정상'}</strong><small>${esc(run.lastStatus||lastRun)}</small></div></div>
-      <div class="rpcm-v2-actions" style="margin-bottom:10px"><button class="rpcm-v2-btn secondary sm" data-v2-summary-refresh>↻ 서버 새로고침</button><button class="rpcm-v2-btn secondary sm" data-v2-summary-new>＋ 새 [추가] 카드</button><button class="rpcm-v2-btn sm" data-v2-summary-run ${legacy?'disabled':''}>🤖 지금 정리</button><button class="rpcm-v2-btn warn sm" data-v2-summary-compact ${editable<2?'disabled':''}>전체 AI 정리 ${editable>target?`${editable}→${target}`:''}</button></div>
+      <div class="rpcm-v2-actions"><button class="rpcm-v2-btn secondary sm" data-v2-summary-refresh>↻ 서버 새로고침</button><button class="rpcm-v2-btn secondary sm" data-v2-summary-new>＋ 새 [추가] 카드</button><button class="rpcm-v2-btn sm" data-v2-summary-run ${legacy?'disabled':''}>🤖 지금 정리</button><button class="rpcm-v2-btn warn sm" data-v2-summary-compact ${editable<2?'disabled':''}>전체 AI 정리 ${editable>target?`${editable}→${target}`:''}</button><button class="rpcm-v2-btn secondary sm" data-v2-guide="longMemoryAuto">지금 정리 지침</button><button class="rpcm-v2-btn secondary sm" data-v2-guide="longMemoryCompress">전체 정리 지침</button></div>
+      <div class="rpcm-v2-desc" style="margin:0 0 10px"><b>지금 정리</b>는 기준점 뒤의 새 완결 RP를 빈 본체 슬롯에 누적합니다(첫 실행은 현재 기준점만 설정). <b>전체 AI 정리</b>는 수정 가능한 기존 카드를 목표 수로 다시 쓰고, 검증이 끝난 뒤 초과 슬롯을 삭제합니다.</div>
       <div class="rpcm-v2-card" style="--tone:var(--v2-summary)"><div class="rpcm-v2-card-h"><strong>자동 정리</strong><span class="rpcm-v2-pill" style="--tone:${cfg.enabled&&!run.paused?'var(--v2-ok)':'var(--v2-fg4)'}">${run.paused?'오류로 일시정지':cfg.enabled?'켜짐':'기본 꺼짐'}</span></div><div class="rpcm-v2-copy">완결 RP를 모아 Crack이 새로 만든 본체 슬롯에 정리합니다. 처음 켤 때는 현재를 기준점으로 잡고 과거 카드를 덮지 않습니다. 사용자 [추가] 카드는 기본 보호됩니다.</div>
-        <label class="rpcm-v2-checkrow" style="margin-top:9px"><input type="checkbox" data-v2-summary-enabled ${cfg.enabled?'checked':''} ${legacy?'disabled':''}><span><b>이 방의 자동 정리 사용</b><small>${legacy?'독립 확프 자동화를 먼저 꺼 주세요.':`${cfg.intervalTurns}턴마다 확인 · 최근 ${cfg.excludeRecentTurns}턴 제외`}</small></span></label>
+        <label class="rpcm-v2-checkrow" style="margin-top:9px"><input type="checkbox" data-v2-summary-enabled ${cfg.enabled?'checked':''} ${legacy?'disabled':''}><span><b>이 방의 자동 정리 사용</b><small>${legacy?'독립 확프 자동화를 먼저 꺼 주세요.':`스위치는 누르는 즉시 저장 · ${cfg.intervalTurns}턴마다 확인 · 최근 ${cfg.excludeRecentTurns}턴 제외`}</small></span></label>
         <details class="rpcm-v2-settings-advanced"><summary>자동 정리 상세 설정</summary><div class="rpcm-v2-settings-body" style="margin-top:8px">
           <div class="rpcm-v2-grid2"><div class="rpcm-v2-field"><label>실행 간격 · 완결 턴</label><input class="rpcm-v2-input" type="number" min="1" max="100" data-v2-summary-interval value="${cfg.intervalTurns}"></div><div class="rpcm-v2-field"><label>한 번에 읽을 턴</label><input class="rpcm-v2-input" type="number" min="1" max="100" data-v2-summary-read value="${cfg.readTurns}"></div><div class="rpcm-v2-field"><label>최근 제외 턴</label><input class="rpcm-v2-input" type="number" min="0" max="20" data-v2-summary-exclude value="${cfg.excludeRecentTurns}"></div><div class="rpcm-v2-field"><label>참고 카드</label><input class="rpcm-v2-input" type="number" min="0" max="30" data-v2-summary-context value="${cfg.contextCards}"></div><div class="rpcm-v2-field"><label>관리 카드 상한</label><input class="rpcm-v2-input" type="number" min="2" max="100" data-v2-summary-max value="${cfg.maxCards}"></div><div class="rpcm-v2-field"><label>압축 목표</label><input class="rpcm-v2-input" type="number" min="1" max="100" data-v2-summary-target value="${cfg.compactTarget}"></div></div>
           <label class="rpcm-v2-checkrow"><input type="checkbox" data-v2-summary-protect ${cfg.protectUserAdded?'checked':''}><span><b>사용자 [추가] 카드 보호</b><small>켜면 자동·전체 재구축이 수정하거나 삭제하지 않습니다.</small></span></label>
-          <div class="rpcm-v2-actions"><button class="rpcm-v2-btn sm" data-v2-summary-settings-save>설정 저장</button><button class="rpcm-v2-btn secondary sm" data-v2-summary-baseline>기준점 다시 설정</button><button class="rpcm-v2-btn secondary sm" data-v2-guide="longMemoryAuto">자동 지침</button><button class="rpcm-v2-btn secondary sm" data-v2-guide="longMemoryCompress">압축 지침</button></div>
+          <div class="rpcm-v2-actions"><button class="rpcm-v2-btn sm" data-v2-summary-settings-save>상세 설정 저장</button><button class="rpcm-v2-btn secondary sm" data-v2-summary-baseline>기준점 다시 설정</button></div>
         </div></details>${run.lastError?`<div class="rpcm-v2-banner err"><span>!</span><span>${esc(run.lastError)}</span></div>`:''}<div class="rpcm-v2-meta" style="margin-top:8px">마지막 실행 · ${esc(lastRun)}</div></div>
       <div class="rpcm-v2-card" style="--tone:var(--v2-extra)"><div class="rpcm-v2-card-h"><strong>📤 외부 AI로 장기기억 재구축</strong><span class="rpcm-v2-pill" style="--tone:var(--v2-extra)">전용 JSON</span></div><div class="rpcm-v2-copy">확정 전체 RP, 기존 카드, 장기기억 전용 지침을 한 TXT에 저장합니다. 결과는 현재상태용 Wish Import와 섞지 않고 별도 검증합니다.</div><div class="rpcm-v2-actions"><button class="rpcm-v2-btn secondary sm" data-v2-summary-export>TXT + 장기기억 지침 저장</button><button class="rpcm-v2-btn secondary sm" data-v2-summary-merge-guide>분할 병합 지침 복사</button><button class="rpcm-v2-btn secondary sm" data-v2-summary-import>장기기억 JSON 가져오기</button><button class="rpcm-v2-btn secondary sm" data-v2-guide="longMemoryExternal">외부 지침 수정</button></div></div>
       <div class="rpcm-v2-grid2" style="margin:12px 0 8px"><input class="rpcm-v2-input" data-v2-summary-query value="${esc(state.v2SummaryQuery)}" placeholder="제목·본문 검색"><select class="rpcm-v2-select" data-v2-summary-filter><option value="all" ${filter==='all'?'selected':''}>전체</option><option value="native" ${filter==='native'?'selected':''}>본체 생성</option><option value="protected" ${filter==='protected'?'selected':''}>보호 카드</option></select></div>
@@ -9954,16 +10415,16 @@
       <div class="rpcm-v2-tool" style="--tone:var(--v2-cog)"><div class="rpcm-v2-card-h"><strong>☁️ 내 서버 백업 · 복원</strong><span class="rpcm-v2-pill" style="--tone:var(--v2-cog)">${esc(cloudLastBackupLabel())}</span></div><div class="rpcm-v2-copy">자동저장은 기기별 최근 3개만 돌려 쓰고, 직접 만든 보관 백업은 자동 삭제하지 않습니다.</div><div class="rpcm-v2-actions"><button class="rpcm-v2-btn sm" data-v2-cloud-backup>📦 보관 백업 만들기</button><button class="rpcm-v2-btn secondary sm" data-v2-cloud-restore>서버 백업 불러오기</button><button class="rpcm-v2-btn secondary sm" data-v2-cloud-settings>서버 설정</button></div></div>
       <div class="rpcm-v2-sec">안전</div>
       <div class="rpcm-v2-tool"><div class="rpcm-v2-card-h"><strong>💾 백업 · 복원</strong></div><div class="rpcm-v2-copy">방·설정집·인지 기록·재구축 이력을 함께 저장합니다. API 키는 포함하지 않습니다.</div><div class="rpcm-v2-actions"><button class="rpcm-v2-btn secondary sm" data-v2-backup>백업 내보내기</button><button class="rpcm-v2-btn secondary sm" data-v2-restore>백업/Import 가져오기</button></div></div>
-      <div class="rpcm-v2-tool" style="--tone:var(--v2-err)"><div class="rpcm-v2-card-h"><strong>🗑 이 방 데이터 초기화</strong></div><div class="rpcm-v2-copy">현재 방의 Manager 데이터와 연결된 인지 기록을 초기화합니다. 시작 전 백업을 권장합니다.</div><div class="rpcm-v2-actions"><button class="rpcm-v2-btn danger sm" data-v2-reset>초기화</button></div></div>
+      <div class="rpcm-v2-tool" style="--tone:var(--v2-err)"><div class="rpcm-v2-card-h"><strong>🗑 이 방 데이터 초기화</strong></div><div class="rpcm-v2-copy">현재 방의 Manager 데이터·인지 기록·이 방 전용 진행형 자료 카드를 초기화합니다. 시작 전 백업을 권장합니다.</div><div class="rpcm-v2-actions"><button class="rpcm-v2-btn danger sm" data-v2-reset>초기화</button></div></div>
       <div class="rpcm-v2-sec">AI 연결</div><div class="rpcm-v2-prov"><b></b>${esc(provider.provider==='deepseek'?'DeepSeek':provider.provider==='firebase'?'Firebase AI Logic':'Google AI Studio')} · ${esc(selected)}</div>`;
   }
 
   function loreTypeLabel(type) {
-    return ({character:'인물',identity:'정체',relationship:'관계',rel:'관계',speech:'호칭·말투',location:'장소',object:'물건',rule:'규칙',faction:'세력',ability:'능력',promise:'약속',prom:'약속',event:'사건',timeline_event:'타임라인 사건',scene:'장면',condition:'조건',key_quote:'핵심 대사',setting:'설정',other:'기타'})[String(type||'other')] || String(type||'기타');
+    return ({character:'인물',identity:'정체',relationship:'관계',rel:'관계',speech:'호칭·말투',location:'장소',object:'물건',item:'아이템 현재값',outfit:'복장 현재값',world:'세계관·세계 상태',rule:'규칙',faction:'세력',ability:'능력',promise:'약속',prom:'약속',event:'사건',timeline_event:'타임라인 사건',scene:'장면',condition:'조건',key_quote:'핵심 대사',setting:'설정',other:'기타'})[String(type||'other')] || String(type||'기타');
   }
 
   function v2LoreView(room) {
-    const packs=state.v2LorePacks||[],active=new Set(room.activeLorePackIds||[]);
+    const packs=visibleLorePacksForRoom(room),active=new Set(room.activeLorePackIds||[]);
     const activePacks=packs.filter(pack=>active.has(pack.scopeId));
     const totalEntries=packs.reduce((n,pack)=>n+(pack.entries||[]).length,0);
     const activeEntries=activePacks.reduce((n,pack)=>n+(pack.entries||[]).filter(entry=>entry.enabled).length,0);
@@ -9975,6 +10436,8 @@
     const semanticReady=prepared+validPreparedLogs>0;
     const density=room.loreConfig.budgetChars<=2600?'light':room.loreConfig.budgetChars>=7600?'rich':'balanced';
     const last=room.lastLoreSearch;
+    const loreAuto=autoLoreState(room),autoPack=packs.find(pack=>pack.scopeId===autoLorePackId(room)),autoCounts=autoLoreTypeCounts(autoPack),autoPackActive=!!autoPack&&active.has(autoPack.scopeId);
+    const autoLast=loreAuto.lastRunAt?new Date(loreAuto.lastRunAt).toLocaleString('ko-KR'):'아직 실행 없음';
     const cards=packs.map(pack=>{
       const on=active.has(pack.scopeId),open=state.v2LoreOpenPackId===pack.scopeId;
       const entries=(pack.entries||[]),anchors=entries.filter(entry=>entry.anchor&&entry.enabled).length;
@@ -9982,12 +10445,23 @@
         const hasEmbedding=entry.embedding?.sourceHash===loreEntrySourceHash(entry)&&entry.embedding?.model===room.loreConfig.embeddingModel&&Number(entry.embedding?.dimensions)===Number(room.loreConfig.embeddingDimensions);
         const speechPreview=entry.speechRule?`${entry.speechRule.speaker} → ${entry.speechRule.target} · “${entry.speechRule.address}” · ${speechRegisterLabel(entry.speechRule.register)}`:'';
         const preview=(speechPreview||loreTextAtLevel(entry,'compact')).replace(/\s+/g,' ').slice(0,150);
-        return `<div class="rpcm-v2-card" style="--tone:var(--v2-lore);margin:7px 0 0"><div class="rpcm-v2-card-h"><span class="rpcm-v2-pill" style="--tone:var(--v2-lore)">${esc(loreTypeLabel(entry.type))}</span><strong>${esc(entry.name)}</strong>${entry.anchor?'<span class="rpcm-v2-pill" style="--tone:var(--v2-warn)">앵커</span>':''}<span class="rpcm-v2-meta" title="의미 검색 준비">${entry.speechRule?'현재값':hasEmbedding?'의미 ✓':'키워드'}</span><button class="rpcm-v2-btn secondary sm" data-v2-lore-entry-edit="${esc(entry.id)}" data-pack-id="${esc(pack.scopeId)}">편집</button></div><div class="rpcm-v2-copy">${esc(preview)}${loreTextAtLevel(entry,'compact').length>150?'…':''}</div></div>`;
+        return `<div class="rpcm-v2-card" style="--tone:var(--v2-lore);margin:7px 0 0"><div class="rpcm-v2-card-h"><span class="rpcm-v2-pill" style="--tone:var(--v2-lore)">${esc(loreTypeLabel(entry.type))}</span><strong>${esc(entry.name)}</strong>${entry.anchor?'<span class="rpcm-v2-pill" style="--tone:var(--v2-warn)">앵커</span>':''}${entry.autoManaged?'<span class="rpcm-v2-pill" style="--tone:var(--v2-ok)">자동</span>':entry.userProtected?'<span class="rpcm-v2-pill" style="--tone:var(--v2-extra)">수동 보호</span>':''}<span class="rpcm-v2-meta" title="의미 검색 준비">${entry.speechRule?'현재값':hasEmbedding?'의미 ✓':'키워드'}</span><button class="rpcm-v2-btn secondary sm" data-v2-lore-entry-edit="${esc(entry.id)}" data-pack-id="${esc(pack.scopeId)}">편집</button></div><div class="rpcm-v2-copy">${esc(preview)}${loreTextAtLevel(entry,'compact').length>150?'…':''}</div></div>`;
       }).join(''):'';
-      return `<div class="rpcm-v2-card" style="--tone:var(--v2-lore)"><div class="rpcm-v2-card-h"><input class="rpcm-v2-check" type="checkbox" data-v2-lore-pack-active="${esc(pack.scopeId)}" ${on?'checked':''} aria-label="이 방에서 ${esc(pack.name)} 사용"><strong>${esc(pack.name)}</strong><span class="rpcm-v2-pill" style="--tone:var(--v2-lore)">${entries.length}개${anchors?` · 앵커 ${anchors}`:''}</span></div>${pack.description?`<div class="rpcm-v2-copy">${esc(pack.description)}</div>`:''}<div class="rpcm-v2-actions"><button class="rpcm-v2-btn secondary sm" data-v2-lore-pack-open="${esc(pack.scopeId)}">${open?'접기':'내용 보기'}</button><button class="rpcm-v2-btn secondary sm" data-v2-lore-entry-new="${esc(pack.scopeId)}">＋ 자료</button><button class="rpcm-v2-btn secondary sm" data-v2-lore-pack-edit="${esc(pack.scopeId)}">팩 편집</button><button class="rpcm-v2-btn secondary sm" data-v2-lore-pack-export="${esc(pack.scopeId)}">내보내기</button></div>${entryRows}</div>`;
+      return `<div class="rpcm-v2-card" style="--tone:var(--v2-lore)"><div class="rpcm-v2-card-h"><input class="rpcm-v2-check" type="checkbox" data-v2-lore-pack-active="${esc(pack.scopeId)}" ${on?'checked':''} aria-label="이 방에서 ${esc(pack.name)} 사용"><strong>${esc(pack.name)}</strong>${pack.autoManaged?'<span class="rpcm-v2-pill" style="--tone:var(--v2-ok)">이 방 전용 자동 팩</span>':''}<span class="rpcm-v2-pill" style="--tone:var(--v2-lore)">${entries.length}개${anchors?` · 앵커 ${anchors}`:''}</span></div>${pack.description?`<div class="rpcm-v2-copy">${esc(pack.description)}</div>`:''}<div class="rpcm-v2-actions"><button class="rpcm-v2-btn secondary sm" data-v2-lore-pack-open="${esc(pack.scopeId)}">${open?'접기':'내용 보기'}</button><button class="rpcm-v2-btn secondary sm" data-v2-lore-entry-new="${esc(pack.scopeId)}">${pack.autoManaged?'＋ 보호 자료':'＋ 자료'}</button><button class="rpcm-v2-btn secondary sm" data-v2-lore-pack-edit="${esc(pack.scopeId)}">팩 편집</button><button class="rpcm-v2-btn secondary sm" data-v2-lore-pack-export="${esc(pack.scopeId)}">내보내기</button></div>${entryRows}</div>`;
     }).join('');
     return `<div class="rpcm-v2-title"><strong>자료집</strong><span>세계관·장소·세력·아이템을 필요한 순간만 자동 호출</span></div>
+      <div class="rpcm-v2-banner"><span>↳</span><span><b>현재상태·날짜로그·인지가 메인 기억</b>이고, 자료집은 세계관·아이템·복장·실제 대사를 자세히 보관했다가 관련 장면에 보태는 검색층입니다.</span></div>
       <div class="rpcm-v2-summary" style="border-left:3px solid var(--v2-lore)"><div class="rpcm-v2-copy">전체 ${packs.length}팩 · ${totalEntries}개 자료 / 이 방 ${activePacks.length}팩 · ${activeEntries}개 사용</div><div style="margin-top:7px"><strong class="big">${room.loreConfig.enabled?'자동 호출 켜짐':'자동 호출 꺼짐'}</strong></div>${last?`<div class="rpcm-v2-meta" style="margin-top:5px">최근 선택 · 자료 ${Number(last.matchedLore||0)}개 · 날짜로그 ${Number(last.matchedLogs||0)}개 · ${last.semanticUsed?'의미+키워드':'키워드'}${last.semanticError?' · 의미 검색은 이번에 건너뜀':''}</div>`:''}</div>
+      <div class="rpcm-v2-card rpcm-v2-settings-card" style="--tone:var(--v2-ok)"><div class="rpcm-v2-settings-head"><strong>진행형 자료 자동 갱신</strong><span class="rpcm-v2-pill" style="--tone:${loreAuto.paused?'var(--v2-err)':loreAuto.enabled?'var(--v2-ok)':'var(--v2-fg4)'}">${loreAuto.paused?'안전 중단':loreAuto.enabled?'켜짐':'꺼짐'}</span></div><div class="rpcm-v2-settings-body">
+        <div class="rpcm-v2-copy">완결 RP에서 <b>세계관·아이템·복장 현재값</b>을 같은 카드에 갱신하고, 중요한 <b>실제 대사</b>는 장면·장소·검색어와 함께 별도 카드로 쌓습니다. 사용자 자료와 손으로 고친 카드는 자동으로 덮지 않습니다. 자동 첫 실행은 현재를 기준점으로 잡고, 첫 ‘지금 자료 갱신’은 최근 ${loreAuto.readTurns}턴부터 확인합니다.</div>
+        <label class="rpcm-v2-checkrow" style="margin-top:9px"><input type="checkbox" data-v2-lore-auto-enabled ${loreAuto.enabled?'checked':''}><span><b>이 방의 자동 자료 갱신 사용</b><small>스위치는 누르는 즉시 저장 · ${loreAuto.intervalTurns}완결 턴마다 확인</small></span></label>
+        <div class="rpcm-v2-chips" style="margin-top:8px"><div class="rpcm-v2-chip"><b style="background:var(--v2-lore)"></b><strong>세계관</strong><em>${autoCounts.world}</em></div><div class="rpcm-v2-chip"><b style="background:var(--v2-extra)"></b><strong>아이템</strong><em>${autoCounts.item}</em></div><div class="rpcm-v2-chip"><b style="background:var(--v2-char)"></b><strong>복장</strong><em>${autoCounts.outfit}</em></div><div class="rpcm-v2-chip"><b style="background:var(--v2-summary)"></b><strong>핵심 대사</strong><em>${autoCounts.key_quote}</em></div></div>
+        ${autoPack&&!autoPackActive?'<div class="rpcm-v2-banner warn"><span>!</span><span>자동 자료팩이 이 방의 검색에서 꺼져 있습니다. 아래 ‘내 자료집’에서 체크하면 주입 후보로 다시 사용합니다.</span></div>':''}
+        ${loreAuto.lastError?`<div class="rpcm-v2-banner err"><span>!</span><span>${esc(loreAuto.lastError)}</span></div>`:''}
+        <div class="rpcm-v2-actions"><button class="rpcm-v2-btn sm" data-v2-lore-auto-run>🤖 지금 자료 갱신</button><button class="rpcm-v2-btn secondary sm" data-v2-guide="loreAuto">자동 갱신 지침</button></div>
+        <details class="rpcm-v2-settings-advanced"><summary>주기·기준점 설정</summary><div class="rpcm-v2-settings-body" style="margin-top:8px"><div class="rpcm-v2-grid2"><div class="rpcm-v2-field"><label>실행 간격 · 완결 턴</label><input class="rpcm-v2-input" type="number" min="1" max="100" data-v2-lore-auto-interval value="${loreAuto.intervalTurns}"></div><div class="rpcm-v2-field"><label>한 번에 읽을 턴</label><input class="rpcm-v2-input" type="number" min="1" max="100" data-v2-lore-auto-read value="${loreAuto.readTurns}"></div></div><div class="rpcm-v2-actions"><button class="rpcm-v2-btn sm" data-v2-lore-auto-save>상세 설정 저장</button><button class="rpcm-v2-btn secondary sm" data-v2-lore-auto-baseline>기준점 지금으로</button></div></div></details>
+        <div class="rpcm-v2-meta" style="margin-top:8px">마지막 확인 · ${esc(autoLast)}${loreAuto.lastStatus?` · ${esc(loreAuto.lastStatus)}`:''}</div>
+      </div></div>
       <div class="rpcm-v2-card rpcm-v2-settings-card" style="--tone:var(--v2-lore)"><div class="rpcm-v2-settings-head"><strong>자동 선택</strong><span class="rpcm-v2-pill" style="--tone:var(--v2-lore)">${semanticReady?`의미 준비 ${prepared+validPreparedLogs}/${searchableEntries+logBlocks.length}`:'키워드로 바로 사용 가능'}</span></div><div class="rpcm-v2-settings-body">
         <div class="rpcm-v2-sent">자료집 자동 호출 <input class="rpcm-v2-sent-sw" type="checkbox" data-v2-lore-enabled ${room.loreConfig.enabled?'checked':''}><div class="rpcm-v2-sent-desc">켜진 팩에서 현재 입력과 관련된 자료만 기존 Manager 주입에 합칩니다</div></div>
         <div class="rpcm-v2-sent">의미로도 찾기 <input class="rpcm-v2-sent-sw" type="checkbox" data-v2-lore-semantic ${room.loreConfig.semanticEnabled?'checked':''}><div class="rpcm-v2-sent-desc">자료집과 날짜로그에서 표현이 달라도 비슷한 뜻을 찾습니다 · 준비되지 않았거나 API가 실패하면 키워드 검색으로 계속 동작합니다</div></div>
@@ -9995,7 +10469,7 @@
         <div class="rpcm-v2-actions"><button class="rpcm-v2-btn" data-v2-lore-settings-save>저장</button><button class="rpcm-v2-btn secondary" data-v2-lore-index ${loreIndexingRunning?'disabled':''}>${loreIndexingRunning?'검색 준비 중…':'자료·로그 의미 검색 준비'}</button></div>
       </div></div>
       <div class="rpcm-v2-actions" style="margin:10px 0 14px"><button class="rpcm-v2-btn" data-v2-lore-pack-new>＋ 새 자료집</button><button class="rpcm-v2-btn secondary" data-v2-lore-import>JSON 가져오기</button><button class="rpcm-v2-btn secondary" data-v2-lore-convert>텍스트를 자료집으로</button></div>
-      <div class="rpcm-v2-sec">내 자료집</div><div class="rpcm-v2-desc">체크한 팩만 현재 방에서 사용됩니다. 같은 팩은 다른 방에서도 다시 켤 수 있습니다.</div>
+      <div class="rpcm-v2-sec">내 자료집</div><div class="rpcm-v2-desc">체크한 팩만 현재 방에서 사용됩니다. 직접 만든 일반 팩은 다른 방에서도 공유할 수 있고, 자동 팩은 자료 혼선을 막기 위해 소유 방에서만 보입니다.</div>
       ${cards||'<div class="rpcm-v2-empty">아직 자료집이 없습니다. JSON을 가져오거나 새 자료집을 만들어 주세요.</div>'}`;
   }
 
@@ -10113,19 +10587,20 @@
         <div class="rpcm-v2-editor-actions"><button class="rpcm-v2-btn" data-v2-summary-card-save>${card?'서버에 저장':'[추가] 카드 만들기'}</button>${card?'<button class="rpcm-v2-btn danger" data-v2-summary-card-delete>삭제</button>':''}</div></div>`;
     }
     if(ed.type==='lore-pack'){
-      const pack=(state.v2LorePacks||[]).find(item=>item.scopeId===ed.packId)||{};
+      const pack=visibleLorePacksForRoom(room).find(item=>item.scopeId===ed.packId)||{};
       return `<div class="rpcm-v2-editor"><div class="rpcm-v2-editor-head"><button class="rpcm-v2-btn secondary sm" data-v2-editor-back>←</button><strong>${pack.scopeId?'자료집 편집':'새 자료집'}</strong></div>
         <div class="rpcm-v2-field"><label>자료집 이름</label><input class="rpcm-v2-input" data-v2-lore-pack-name value="${esc(pack.name||'')}" placeholder="예: 북부 왕국 설정"></div>
         <div class="rpcm-v2-field"><label>설명 · 선택</label><textarea class="rpcm-v2-textarea compact" data-v2-lore-pack-description placeholder="이 자료집에 무엇이 들어 있는지 짧게 적습니다">${esc(pack.description||'')}</textarea></div>
         <div class="rpcm-v2-editor-actions"><button class="rpcm-v2-btn" data-v2-lore-pack-save>저장</button>${pack.scopeId?'<button class="rpcm-v2-btn danger" data-v2-lore-pack-delete>자료집 삭제</button>':''}</div></div>`;
     }
     if(ed.type==='lore-entry'){
-      const pack=(state.v2LorePacks||[]).find(item=>item.scopeId===ed.packId),entry=(pack?.entries||[]).find(item=>item.id===ed.entryId)||{};
-      const types=[['other','기타'],['character','인물'],['identity','정체'],['relationship','관계'],['speech','호칭·말투'],['location','장소'],['faction','세력'],['object','물건'],['ability','능력'],['rule','규칙'],['promise','약속'],['event','사건'],['scene','장면']];
+      const pack=visibleLorePacksForRoom(room).find(item=>item.scopeId===ed.packId),entry=(pack?.entries||[]).find(item=>item.id===ed.entryId)||{};
+      if(!pack)return '<div class="rpcm-v2-empty">현재 방에서 열 수 없는 자료팩입니다.</div>';
+      const types=[['other','기타'],['world','세계관·세계 상태'],['item','아이템 현재값'],['outfit','복장 현재값'],['key_quote','핵심 대사'],['character','인물'],['identity','정체'],['relationship','관계'],['speech','호칭·말투'],['location','장소'],['faction','세력'],['object','물건'],['ability','능력'],['rule','규칙'],['promise','약속'],['event','사건'],['scene','장면']];
       const storedType=String(entry.type||'other');if(!types.some(([value])=>value===storedType))types.push([storedType,`${loreTypeLabel(storedType)} · 가져온 형식`]);
       const full=loreTextAtLevel(entry,'full'),compact=String(entry?.inject?.compact||entry?.summary?.compact||''),micro=String(entry?.inject?.micro||entry?.summary?.micro||'');
       const speechRule=entry?.speechRule||{},speechRegister=normalizeSpeechRegister(speechRule.register||'honorific');
-      return `<div class="rpcm-v2-editor"><div class="rpcm-v2-editor-head"><button class="rpcm-v2-btn secondary sm" data-v2-editor-back>←</button><strong>${entry.id?'자료 편집':'새 자료'}</strong><span class="rpcm-v2-meta">${esc(pack?.name||'자료집')}</span></div>
+      return `<div class="rpcm-v2-editor"><div class="rpcm-v2-editor-head"><button class="rpcm-v2-btn secondary sm" data-v2-editor-back>←</button><strong>${entry.id?'자료 편집':'새 자료'}</strong><span class="rpcm-v2-meta">${esc(pack?.name||'자료집')}</span></div>${entry.autoManaged?'<div class="rpcm-v2-banner warn"><span>✋</span><span>이 자동 카드를 손으로 저장하면 <b>수동 보호 카드</b>로 전환되어 이후 자동 갱신이 덮어쓰지 않습니다.</span></div>':pack.autoManaged&&!entry.id?'<div class="rpcm-v2-banner"><span>✋</span><span>자동 팩에 직접 추가하는 자료는 <b>수동 보호 카드</b>로 저장되며, AI는 중복 방지 참고만 하고 수정하지 않습니다.</span></div>':''}
         <div class="rpcm-v2-grid2"><div class="rpcm-v2-field"><label>이름</label><input class="rpcm-v2-input" data-v2-lore-entry-name value="${esc(entry.name||'')}" placeholder="예: 황궁 지하 감옥"></div><div class="rpcm-v2-field"><label>종류</label><select class="rpcm-v2-select" data-v2-lore-entry-type>${types.map(([v,l])=>`<option value="${v}" ${String(entry.type||'other')===v?'selected':''}>${l}</option>`).join('')}</select></div></div>
         <div class="rpcm-v2-field"><label>찾을 말 · 쉼표로 구분</label><input class="rpcm-v2-input" data-v2-lore-entry-triggers value="${esc((entry.triggers||[]).join(', '))}" placeholder="황궁 감옥, 수감구역, 지하 감옥"><small>A &amp;&amp; B는 둘 다 나올 때, ~단어는 비슷한 표기도 허용합니다.</small></div>
         <details class="rpcm-v2-settings-advanced" ${entry.type==='speech'?'open':''}><summary>호칭·말투 방향 설정 · 종류가 ‘호칭·말투’일 때 필수</summary><div class="rpcm-v2-settings-body"><div class="rpcm-v2-grid2"><div class="rpcm-v2-field"><label>말하는 인물</label><input class="rpcm-v2-input" data-v2-lore-speech-speaker value="${esc(speechRule.speaker||'')}"></div><div class="rpcm-v2-field"><label>상대 인물</label><input class="rpcm-v2-input" data-v2-lore-speech-target value="${esc(speechRule.target||'')}"></div><div class="rpcm-v2-field"><label>현재 호칭</label><input class="rpcm-v2-input" data-v2-lore-speech-address value="${esc(speechRule.address||'')}"></div><div class="rpcm-v2-field"><label>말투</label><select class="rpcm-v2-select" data-v2-lore-speech-register><option value="honorific" ${speechRegister==='honorific'?'selected':''}>존댓말 · 경어</option><option value="banmal" ${speechRegister==='banmal'?'selected':''}>반말</option><option value="mixed" ${speechRegister==='mixed'?'selected':''}>상황별 혼용</option><option value="other" ${speechRegister==='other'?'selected':''}>기타</option></select></div></div><div class="rpcm-v2-field"><label>짧은 조건 · 선택</label><input class="rpcm-v2-input" data-v2-lore-speech-note value="${esc(speechRule.note||'')}"></div><small>같은 화자→상대가 여러 번 나오면 이 현재 규칙 하나만 사용하며, 호칭 자료는 앵커로 처리하지 않습니다.</small></div></details>
@@ -10194,8 +10669,8 @@
       return `<div class="rpcm-v2-editor"><div class="rpcm-v2-editor-head"><button class="rpcm-v2-btn secondary sm" data-v2-editor-back>←</button><strong>날짜로그 · ${ed.index+1}</strong></div><div class="rpcm-v2-field"><label>제목줄</label><input class="rpcm-v2-input" data-v2-ed-title value="${esc(b.heading)}"></div><div class="rpcm-v2-field"><label>본문</label><textarea class="rpcm-v2-textarea" data-v2-ed-body spellcheck="false">${esc(b.body)}</textarea></div><button class="rpcm-v2-btn" data-v2-editor-save>블록 저장</button></div>`;
     }
     if(ed.type==='guide'){
-      const guideTitles={currentState:'현재상태 API 지침',logSummary:'날짜로그 API 지침',longMemoryAuto:'요약 메모리 자동 누적 지침',longMemoryCompress:'요약 메모리 압축 지침',longMemoryExternal:'외부 AI 장기기억 재구축 지침'},longMemory=String(ed.slotId||'').startsWith('longMemory');
-      return `<div class="rpcm-v2-editor"><div class="rpcm-v2-editor-head"><button class="rpcm-v2-btn secondary sm" data-v2-editor-back>←</button><strong>${esc(guideTitles[ed.slotId]||'AI 지침')}</strong></div><div class="rpcm-v2-banner warn"><span>ℹ️</span><span>${longMemory?'정리 기준과 문체는 수정할 수 있지만 JSON 형식·20/300자 제한·보호 카드·서버 검증 계약은 코드가 별도로 강제합니다.':'이 지침은 라이브 API 자동화에 사용됩니다. 외부 본가용 전체 TXT 지침과는 별개입니다.'}</span></div>${guideNeedsRefresh(ed.slotId)?'<div class="rpcm-v2-banner warn"><span>↻</span><span>저장된 사용자 지침의 기반 버전이 오래되었습니다. 아래 “기본값 복원”을 누르면 최신 기본 지침으로 바뀝니다.</span></div>':''}<textarea class="rpcm-v2-textarea" data-v2-ed-body spellcheck="false">${esc(getGuideText(ed.slotId))}</textarea><div class="rpcm-v2-editor-actions"><button class="rpcm-v2-btn" data-v2-editor-save>지침 저장</button><button class="rpcm-v2-btn secondary" data-v2-guide-reset>기본값 복원</button></div></div>`;
+      const guideTitles={currentState:'현재상태 API 지침',logSummary:'날짜로그 API 지침',longMemoryAuto:'요약 메모리 자동 누적 지침',longMemoryCompress:'요약 메모리 압축 지침',longMemoryExternal:'외부 AI 장기기억 재구축 지침',loreAuto:'진행형 자료 자동 갱신 지침'},longMemory=String(ed.slotId||'').startsWith('longMemory'),managedLore=ed.slotId==='loreAuto',managedState=ed.slotId==='currentState';
+      return `<div class="rpcm-v2-editor"><div class="rpcm-v2-editor-head"><button class="rpcm-v2-btn secondary sm" data-v2-editor-back>←</button><strong>${esc(guideTitles[ed.slotId]||'AI 지침')}</strong></div><div class="rpcm-v2-banner warn"><span>ℹ️</span><span>${longMemory?'정리 기준과 문체는 수정할 수 있지만 JSON 형식·20/300자 제한·보호 카드·서버 검증 계약은 코드가 별도로 강제합니다.':managedLore?'무엇을 중요한 자료·대사로 볼지는 수정할 수 있지만 JSON 형식·원문 근거 검증·사용자 카드 보호·자동 삭제 금지는 코드가 별도로 강제합니다.':managedState?'이 지침은 수정할 수 있지만 역할 경계는 고정됩니다. 현재상태는 진행·관계·제약의 메인 정답표, 세계관·아이템·복장 상세와 실제 대사 원문은 진행형 자료집이 담당합니다.':'이 지침은 라이브 API 자동화에 사용됩니다. 외부 본가용 전체 TXT 지침과는 별개입니다.'}</span></div>${guideNeedsRefresh(ed.slotId)?'<div class="rpcm-v2-banner warn"><span>↻</span><span>저장된 사용자 지침의 기반 버전이 오래되었습니다. 아래 “기본값 복원”을 누르면 최신 기본 지침으로 바뀝니다.</span></div>':''}<textarea class="rpcm-v2-textarea" data-v2-ed-body spellcheck="false">${esc(getGuideText(ed.slotId))}</textarea><div class="rpcm-v2-editor-actions"><button class="rpcm-v2-btn" data-v2-editor-save>지침 저장</button><button class="rpcm-v2-btn secondary" data-v2-guide-reset>기본값 복원</button></div></div>`;
     }
     return '';
   }
@@ -10213,7 +10688,7 @@
     for(const f of state.v2Cognition?.facts||[]){
       const hay=`${f.label} ${f.content}`.toLowerCase();if(q&&hay.includes(q))rows.push({kind:'인지',title:f.label||'정보',copy:f.content||''});
     }
-    for(const pack of state.v2LorePacks||[])for(const entry of pack.entries||[]){
+    for(const pack of visibleLorePacksForRoom(room))for(const entry of pack.entries||[]){
       const hay=`${pack.name}\n${entry.name}\n${entry.type}\n${(entry.triggers||[]).join(' ')}\n${loreEntrySourceText(entry)}`.toLowerCase();
       if(q&&hay.includes(q))rows.push({kind:'자료집',title:`${pack.name} / ${entry.name}`,copy:loreTextAtLevel(entry,'compact').replace(/\s+/g,' ').slice(0,180),packId:pack.scopeId,entryId:entry.id});
     }
@@ -10307,10 +10782,37 @@
     overlay.querySelectorAll('[data-v2-lore-pack-active]').forEach(box=>box.onchange=async()=>{
       const id=box.dataset.v2LorePackActive,before=[...(room.activeLorePackIds||[])],active=new Set(before);box.disabled=true;
       try{
+        const pack=(state.v2LorePacks||[]).find(item=>String(item.scopeId)===String(id));if(!pack||!lorePackVisibleInRoom(pack,room))throw new Error('이 자동 자료팩은 다른 방 소유라 현재 방에서 사용할 수 없습니다.');
         if(box.checked)active.add(id);else active.delete(id);room.activeLorePackIds=[...active];await saveRoom(room);
         const warning=await syncLoreMutation(room,'lore-pack-toggle');
         notify(`${box.checked?'이 방에서 자료집을 사용합니다.':'이 방에서 자료집을 껐습니다.'}${warning?' 현재 주입 갱신은 다음 전송 때 다시 시도합니다.':''}`,warning?'warn':'success',warning?4800:2200);renderModal();
       }catch(error){room.activeLorePackIds=before;box.checked=!box.checked;box.disabled=false;notify(error.message,'error',6500);}
+    });
+    overlay.querySelector('[data-v2-lore-auto-enabled]')?.addEventListener('change',async event=>{
+      const box=event.currentTarget,automation=autoLoreState(room),previous=automation.enabled,next=!!box.checked;box.disabled=true;
+      try{
+        if(automaticLoreJob||aiUpdateRunning||automaticMemoryJob||internalBulkRebuildJob||summaryMemoryJob||memoryImportRunning)throw new Error('진행 중인 AI 작업이 끝난 뒤 자동 자료 설정을 바꿔 주세요.');
+        automation.enabled=next;if(next){automation.paused=false;automation.failureCount=0;automation.lastError='';}await saveRoom(room);
+        if(next){scheduleAutomaticLoreMaintenance(room,'enabled',2500);notify('진행형 자료 자동 갱신을 켰습니다. 스위치 상태를 바로 저장했습니다.','success',3800);}
+        else{const timerKey=automaticLoreTimerKey(room),timer=automaticLoreTimers.get(timerKey);if(timer?.timer)clearTimeout(timer.timer);automaticLoreTimers.delete(timerKey);notify('진행형 자료 자동 갱신을 껐습니다. 기존 카드는 유지됩니다.','success',3300);}
+        renderModal();
+      }catch(error){automation.enabled=previous;box.checked=previous;box.disabled=false;notify(error.message,'error',6500);}
+    });
+    overlay.querySelector('[data-v2-lore-auto-save]')?.addEventListener('click',async()=>{
+      const automation=autoLoreState(room),before=structuredClone(automation);
+      try{if(automaticLoreJob||aiUpdateRunning||automaticMemoryJob||internalBulkRebuildJob||summaryMemoryJob||memoryImportRunning)throw new Error('진행 중인 AI 작업이 끝난 뒤 자동 자료 설정을 바꿔 주세요.');automation.intervalTurns=readRequiredIntegerInput(overlay,'[data-v2-lore-auto-interval]','자료 갱신 간격',1,100);automation.readTurns=readRequiredIntegerInput(overlay,'[data-v2-lore-auto-read]','자료 읽기 턴',1,100);await saveRoom(room);if(automation.enabled)scheduleAutomaticLoreMaintenance(room,'settings',2500);notify('진행형 자료의 상세 설정을 저장했습니다.','success',2800);renderModal();}
+      catch(error){room.loreAutomation=before;notify(error.message,'error',6500);}
+    });
+    overlay.querySelector('[data-v2-lore-auto-run]')?.addEventListener('click',async event=>{
+      const btn=event.currentTarget;if(btn.dataset.busy==='1')return;
+      const settings=loadAiSettings();if(!isAiProviderReady(settings)){openAiSettingsDialog({reason:'진행형 자료를 갱신하려면 공용 AI Provider 연결을 먼저 설정해야 합니다.'});return;}
+      btn.dataset.busy='1';btn.disabled=true;const old=btn.textContent;btn.textContent='자료 확인 중…';
+      try{await runAutomaticLoreMaintenance(room,{force:true,reason:'manual'});renderModalIfOpen();}catch(error){notify(`진행형 자료 갱신 실패: ${error.message}`,'error',7500);}
+      finally{if(btn.isConnected){delete btn.dataset.busy;btn.disabled=false;btn.textContent=old;}}
+    });
+    overlay.querySelector('[data-v2-lore-auto-baseline]')?.addEventListener('click',async()=>{
+      if(!confirm('진행형 자료의 기준점을 현재로 옮길까요? 아직 처리하지 않은 과거 턴은 건너뛰고 기존 카드는 유지합니다.'))return;
+      try{await resetAutoLoreBaseline(room,{announce:true});renderModal();}catch(error){notify(error.message,'error',7000);}
     });
     overlay.querySelector('[data-v2-lore-settings-save]')?.addEventListener('click',async()=>{
       const before=structuredClone(room.loreConfig||{});
@@ -10359,10 +10861,11 @@
           speechRule=normalizeLoreSpeechRule({speaker,target,address,register:overlay.querySelector('[data-v2-lore-speech-register]')?.value||'other',note:overlay.querySelector('[data-v2-lore-speech-note]')?.value||'',effectiveTurnSeq:Number(old?.speechRule?.effectiveTurnSeq||0)+1,revision:Number(old?.speechRule?.revision||0)+1});
           if(!speechRule)throw new Error('호칭·말투 자료에는 말하는 인물, 상대 인물, 현재 호칭을 모두 입력해 주세요.');
         }
-        const entry=normalizeLoreEntry({...old,id:old?.id||makeLoreEntryId(),name,type,triggers:String(overlay.querySelector('[data-v2-lore-entry-triggers]')?.value||'').split(',').map(x=>x.trim()).filter(Boolean),summary:{full,compact,micro},inject:{full,compact,micro},anchor:type==='speech'?false:!!overlay.querySelector('[data-v2-lore-entry-anchor]')?.checked,enabled:!!overlay.querySelector('[data-v2-lore-entry-enabled]')?.checked,speechRule,embedding:null,updatedAt:Date.now()});
+        const detachedFromAuto=old?.autoManaged===true;
+        const entry=normalizeLoreEntry({...old,id:old?.id||makeLoreEntryId(),name,type,triggers:String(overlay.querySelector('[data-v2-lore-entry-triggers]')?.value||'').split(',').map(x=>x.trim()).filter(Boolean),summary:{full,compact,micro},inject:{full,compact,micro},anchor:type==='speech'?false:!!overlay.querySelector('[data-v2-lore-entry-anchor]')?.checked,enabled:!!overlay.querySelector('[data-v2-lore-entry-enabled]')?.checked,speechRule,autoManaged:false,userProtected:storedPack.autoManaged===true||detachedFromAuto||old?.userProtected===true,autoLoreKey:String(old?.autoLoreKey||''),embedding:null,updatedAt:Date.now()});
         const pair=entry.speechRule&&speechPairKey(entry.speechRule.speaker,entry.speechRule.target),duplicate=pair?(pack.entries||[]).find(item=>item.id!==entry.id&&item.speechRule&&speechPairKey(item.speechRule.speaker,item.speechRule.target)===pair):null;
         if(duplicate){entry.id=duplicate.id;pack.entries=pack.entries.filter(item=>item.id!==old?.id&&item.id!==duplicate.id);}
-        const index=(pack.entries||[]).findIndex(item=>item.id===entry.id);if(index>=0)pack.entries[index]=entry;else pack.entries.push(entry);await putLorePack(pack);const warning=await syncLoreMutation(room,'lore-entry-save');state.v2LoreOpenPackId=pack.scopeId;state.v2Editor=null;notify(`자료 ‘${entry.name}’을 저장했습니다.${duplicate?' 같은 화자→상대의 이전 호칭 규칙을 교체했습니다.':''}${warning?' 현재 주입 갱신은 다음 전송 때 다시 시도합니다.':''}`,warning?'warn':'success',warning?5000:2400);renderModal();
+        const index=(pack.entries||[]).findIndex(item=>item.id===entry.id);if(index>=0)pack.entries[index]=entry;else pack.entries.push(entry);await putLorePack(pack);const warning=await syncLoreMutation(room,'lore-entry-save');state.v2LoreOpenPackId=pack.scopeId;state.v2Editor=null;notify(`자료 ‘${entry.name}’을 저장했습니다.${detachedFromAuto?' 자동 갱신에서 분리해 수동 보호했습니다.':''}${duplicate?' 같은 화자→상대의 이전 호칭 규칙을 교체했습니다.':''}${warning?' 현재 주입 갱신은 다음 전송 때 다시 시도합니다.':''}`,warning?'warn':'success',warning?5200:detachedFromAuto?4200:2400);renderModal();
       }catch(error){notify(error.message,'error',6500);if(btn.isConnected){delete btn.dataset.busy;btn.disabled=false;}}
     });
     overlay.querySelector('[data-v2-lore-entry-delete]')?.addEventListener('click',async()=>{
@@ -10418,7 +10921,7 @@
           await withRoomExclusive(nativeSummaryLockId(rid),async()=>{if(await recoverSummaryMemoryPlanUnlocked(rid,{announce:true}))throw nativeMemoryError('NATIVE_MEMORY_STALE','이전 미확정 작업을 안전 모드로 정리했습니다. 서버 목록을 확인한 뒤 다시 실행해 주세요.');const record=await getNativeMemoryRecord(rid),result=await applySummaryMemoryReplacementUnlocked(room,[original],[draft],{deleteExtra:false,mode:'manual-edit'}),saved=result.cards.find(x=>summaryMemoryId(x)===id);if(!record.state.manualProtectedIds.includes(id))record.state.manualProtectedIds.push(id);delete record.state.managed[id];if(saved)record.state.known[id]=summaryMemoryFingerprint(saved);record.state.lastStatus=`‘${draft.title}’ 직접 수정 · 자동 보호`;await commitNativeMemoryRecordAndJournal(record,result.journalId);});notify('요약 메모리를 서버에 저장하고 자동 정리에서 보호했습니다.','success',3600);
         }else{
           await withRoomExclusive(nativeSummaryLockId(rid),async()=>{if(await recoverSummaryMemoryPlanUnlocked(rid,{announce:true}))throw nativeMemoryError('NATIVE_MEMORY_STALE','이전 미확정 작업을 안전 모드로 정리했습니다. 서버 목록을 확인한 뒤 다시 실행해 주세요.');const record=await getNativeMemoryRecord(rid),before=await fetchCrackSummaryMemories(rid),beforeIds=new Set(before.map(summaryMemoryId));await addCrackSummaryMemory(rid,draft);const after=await fetchCrackSummaryMemories(rid),created=after.filter(x=>!beforeIds.has(summaryMemoryId(x))).find(x=>summaryMemoryTitle(x)===draft.title&&summaryMemoryBody(x)===draft.summary)||after.find(x=>summaryMemoryTitle(x)===draft.title&&summaryMemoryBody(x)===draft.summary);if(!created)throw new Error('새 카드가 서버 장기기억 목록에 저장됐는지 확인하지 못했습니다.');record.state.known[summaryMemoryId(created)]=summaryMemoryFingerprint(created);await saveNativeMemoryRecord(record);});
-          notify('새 [추가] 요약 메모리를 서버에 저장했습니다. 자동 정리에서는 보호됩니다.','success',3600);
+          notify(state.v2SummaryRecord?.config?.protectUserAdded===false?'새 [추가] 요약 메모리를 서버에 저장했습니다. 현재 설정에서는 AI 정리 대상이 될 수 있습니다.':'새 [추가] 요약 메모리를 서버에 저장했습니다. 자동 정리에서는 보호됩니다.',state.v2SummaryRecord?.config?.protectUserAdded===false?'warn':'success',4200);
         }
         state.v2Editor=null;invalidateSummaryMemoryView(rid);await loadSummaryMemoryView(room,{force:true,render:false});renderModal();
       }catch(error){summaryMemoryNotifyError(error,{automatic:false,operationId:crypto.randomUUID()});}
@@ -10431,18 +10934,23 @@
     };
     overlay.querySelectorAll('[data-v2-summary-delete]').forEach(btn=>btn.onclick=()=>void deleteSummaryCard(btn.dataset.v2SummaryDelete));
     overlay.querySelector('[data-v2-summary-card-delete]')?.addEventListener('click',()=>void deleteSummaryCard(state.v2Editor?.summaryId));
+    overlay.querySelector('[data-v2-summary-enabled]')?.addEventListener('change',async event=>{
+      const box=event.currentTarget,next=!!box.checked,previous=state.v2SummaryRecord?.config?state.v2SummaryRecord.config.enabled===true:!next,rid=String(apiChatIdOf(room)||'');box.disabled=true;if(state.v2SummaryRecord?.config)state.v2SummaryRecord.config.enabled=next;invalidateSummaryMemoryView(rid);
+      try{await setSummaryMemoryEnabled(room,next,{announce:true});invalidateSummaryMemoryView(rid);await loadSummaryMemoryView(room,{force:true,render:false});renderModal();}
+      catch(error){if(state.v2SummaryRecord?.config)state.v2SummaryRecord.config.enabled=previous;box.checked=previous;box.disabled=false;notify(error.message,'error',7500);const rid=String(apiChatIdOf(room)||'');invalidateSummaryMemoryView(rid);void loadSummaryMemoryView(room,{force:true}).catch(()=>{});}
+    });
     overlay.querySelector('[data-v2-summary-settings-save]')?.addEventListener('click',async()=>{
       try{
-        const rid=String(apiChatIdOf(room)||''),nextEnabled=!!overlay.querySelector('[data-v2-summary-enabled]')?.checked,nextProtect=!!overlay.querySelector('[data-v2-summary-protect]')?.checked;
+        const rid=String(apiChatIdOf(room)||''),nextProtect=!!overlay.querySelector('[data-v2-summary-protect]')?.checked;let settingsSaved=false;
         await withRoomExclusive(nativeSummaryLockId(rid),async()=>{
-          if(await recoverSummaryMemoryPlanUnlocked(rid,{announce:true}))throw nativeMemoryError('NATIVE_MEMORY_STALE','이전 미확정 작업을 안전 모드로 정리했습니다. 서버 목록을 확인한 뒤 다시 실행해 주세요.');const record=await getNativeMemoryRecord(rid),wasEnabled=record.config.enabled;
-          if(nextEnabled&&legacySummaryMemoryAutomationEnabled(rid))throw new Error('독립 요약 메모리 확프의 자동 정리를 먼저 꺼 주세요.');
+          if(await recoverSummaryMemoryPlanUnlocked(rid,{announce:true}))throw nativeMemoryError('NATIVE_MEMORY_STALE','이전 미확정 작업을 안전 모드로 정리했습니다. 서버 목록을 확인한 뒤 다시 실행해 주세요.');const record=await getNativeMemoryRecord(rid);
           if(record.config.protectUserAdded&&!nextProtect&&!confirm('사용자 [추가] 카드 보호를 해제할까요? 수동 전체 정리·외부 재구축에서 수정 또는 삭제될 수 있습니다.'))return;
-          record.config={enabled:nextEnabled,intervalTurns:readRequiredIntegerInput(overlay,'[data-v2-summary-interval]','실행 간격',1,100),readTurns:readRequiredIntegerInput(overlay,'[data-v2-summary-read]','읽을 턴',1,100),excludeRecentTurns:readRequiredIntegerInput(overlay,'[data-v2-summary-exclude]','최근 제외 턴',0,20),contextCards:readRequiredIntegerInput(overlay,'[data-v2-summary-context]','참고 카드',0,30),maxCards:readRequiredIntegerInput(overlay,'[data-v2-summary-max]','관리 카드 상한',2,100),compactTarget:readRequiredIntegerInput(overlay,'[data-v2-summary-target]','압축 목표',1,100),protectUserAdded:nextProtect};
+          record.config={...record.config,intervalTurns:readRequiredIntegerInput(overlay,'[data-v2-summary-interval]','실행 간격',1,100),readTurns:readRequiredIntegerInput(overlay,'[data-v2-summary-read]','읽을 턴',1,100),excludeRecentTurns:readRequiredIntegerInput(overlay,'[data-v2-summary-exclude]','최근 제외 턴',0,20),contextCards:readRequiredIntegerInput(overlay,'[data-v2-summary-context]','참고 카드',0,30),maxCards:readRequiredIntegerInput(overlay,'[data-v2-summary-max]','관리 카드 상한',2,100),compactTarget:readRequiredIntegerInput(overlay,'[data-v2-summary-target]','압축 목표',1,100),protectUserAdded:nextProtect};
           if(record.config.compactTarget>record.config.maxCards)throw new Error('압축 목표는 관리 카드 상한 이하여야 합니다.');
-          if(nextEnabled&&!wasEnabled){const cards=await fetchCrackSummaryMemories(rid),protectedCount=cards.filter(summaryMemoryIsUserAdded).length;await initializeSummaryMemoryAutomation(room,record);notify(`요약메모리 자동 정리를 켰습니다.${nextProtect&&protectedCount?` 사용자 [추가] 카드 ${protectedCount}개는 수정·삭제하지 않습니다.`:''}`,'success',4800);scheduleSummaryMemoryAutomation(room,'enabled',3000);}
-          else{if(!nextEnabled&&wasEnabled)notify('요약메모리 자동 정리를 껐습니다.','success',2600);if(record.config.protectUserAdded===false)notify('사용자 [추가] 카드 보호를 해제했습니다. 수동 전체 정리·외부 재구축에서 수정·삭제될 수 있습니다.','warn',6000);await saveNativeMemoryRecord(record);}
+          if(record.config.protectUserAdded===false)notify('사용자 [추가] 카드 보호를 해제했습니다. 수동 전체 정리·외부 재구축에서 수정·삭제될 수 있습니다.','warn',6000);await saveNativeMemoryRecord(record);settingsSaved=true;
         });
+        if(!settingsSaved)return;
+        notify('요약메모리 상세 설정을 저장했습니다.','success',2800);
         invalidateSummaryMemoryView(rid);await loadSummaryMemoryView(room,{force:true,render:false});renderModal();
       }catch(error){notify(error.message,'error',7000);}
     });
@@ -10676,7 +11184,7 @@
     overlay.querySelector('[data-v2-wish-import]')?.addEventListener('click',pick);overlay.querySelector('[data-v2-restore]')?.addEventListener('click',pick);
     if(file)file.onchange=async()=>{const f=file.files?.[0];if(!f)return;try{const data=JSON.parse(await f.text());if(data?.format==='wish-rp-import'){if(!confirm('Wish Import를 현재 방의 현재상태·날짜로그·인지에 적용할까요?'))return;const result=await applyWishRpImportToRoom(room,data);notify(`Wish Import 적용 완료 · 현재상태 ${result.sections}섹션 · 날짜로그 ${result.timeline}블록 · 인지 ${result.actors}명/${result.facts}정보`,'success',6000);state.v2Cognition=null;v2ScheduleAsyncRefresh(room);}else if(data?._wishRpManagerBackup===true){const backup=validateManagerBackup(data),existingRooms=await getAllRooms(),libs=await getAllCharacterLibraries(),choice=await openBackupImportDialog(backup,existingRooms,libs);if(!choice)return;const restored=await restoreManagerBackup(backup,choice);await ensureCurrentRoom(getChatIdFromPath(),true);notify(restored.legacy?'백업 복원 완료 · 구형 백업에는 인지 기록이 없어 현재 인지 기록을 유지했습니다.':`백업 복원 완료 · 인지 ${restored.cognition}개 방 포함`,'success',5000);}else throw new Error('지원하는 Wish Import/백업 JSON이 아닙니다.');}catch(e){notify(`불러오기 실패: ${e.message}`,'error',6000);}finally{file.value='';renderModalIfOpen();}};
     overlay.querySelector('[data-v2-backup]')?.addEventListener('click',async()=>{const backup=await createManagerBackup();downloadText(JSON.stringify(backup,null,2),`Wish_RP_Manager_백업_${new Date().toISOString().slice(0,10)}.json`);notify('전체 백업 저장 완료','success');});
-    overlay.querySelector('[data-v2-reset]')?.addEventListener('click',async()=>{if(room.pending){notify('먼저 주입을 해제해 주세요.','warn');return;}if(!confirm('현재 방의 RP Manager 데이터를 완전히 초기화할까요? 현재상태·날짜로그·인지·요약메모리 자동 설정·작업 이력이 새 방 기본값으로 돌아갑니다. Crack 서버의 요약 카드는 삭제하지 않습니다.'))return;try{const rid=apiChatIdOf(room);await clearCurrentRoom(room.chatId);await ensureCurrentRoom(rid,true);state.v2Cognition=null;state.v2CognitionRev=-1;state.v2Editor=null;state.v2SettingsOpen={automation:false,injection:false,cognition:false};notify('현재 방을 fresh 기본값으로 초기화했습니다. Crack 서버 요약 카드는 유지했습니다.','success',4800);v2ScheduleAsyncRefresh(state.currentRoom);renderModalIfOpen();}catch(error){notify('초기화하지 못했습니다: '+error.message,'error',7000);}});
+    overlay.querySelector('[data-v2-reset]')?.addEventListener('click',async()=>{if(room.pending){notify('먼저 주입을 해제해 주세요.','warn');return;}if(!confirm('현재 방의 RP Manager 데이터를 완전히 초기화할까요? 현재상태·날짜로그·인지·요약메모리 자동 설정·작업 이력과 이 방 전용 진행형 자료 카드가 삭제되어 새 방 기본값으로 돌아갑니다. Crack 서버의 요약 카드는 삭제하지 않습니다.'))return;try{const rid=apiChatIdOf(room);await clearCurrentRoom(room.chatId);await ensureCurrentRoom(rid,true);state.v2Cognition=null;state.v2CognitionRev=-1;state.v2Editor=null;state.v2SettingsOpen={automation:false,injection:false,cognition:false};notify('현재 방과 방별 진행형 자료를 fresh 기본값으로 초기화했습니다. Crack 서버 요약 카드는 유지했습니다.','success',5200);v2ScheduleAsyncRefresh(state.currentRoom);renderModalIfOpen();}catch(error){notify('초기화하지 못했습니다: '+error.message,'error',7000);}});
   }
 
   // SPA / initialization
@@ -10690,7 +11198,7 @@
     const roomKey = getRoomScopeKey(apiChatId);
     if (!force && state.currentChatId === roomKey && state.currentRoom) return;
     state.currentChatId = roomKey; state.currentApiChatId = apiChatId;
-    if(state.v2SummaryChatId!==String(apiChatId)){state.v2SummaryChatId=String(apiChatId);state.v2SummaryLoaded=false;state.v2SummaryCards=[];state.v2SummaryRecord=null;state.v2SummaryError='';state.v2SummaryQuery='';state.v2SummaryFilter='all';}
+    if(state.v2SummaryChatId!==String(apiChatId)){state.v2SummaryLoadEpoch++;state.v2SummaryLoading=false;state.v2SummaryChatId=String(apiChatId);state.v2SummaryLoaded=false;state.v2SummaryCards=[];state.v2SummaryRecord=null;state.v2SummaryError='';state.v2SummaryQuery='';state.v2SummaryFilter='all';}
     // 방 메타 API가 느려도 상단 Manager 진입 버튼부터 즉시 표시합니다. 실제 모달 데이터는 아래 초기화 완료 후 엽니다.
     placeLauncher(); updateLauncher();
     const room = await getRoom(roomKey, apiChatId);
@@ -10707,6 +11215,8 @@
     await saveRoom(room);
     if (epoch !== state.routeEpoch || getRoomScopeKey(getChatIdFromPath(), location.href) !== roomKey) return;
     state.currentRoom = room;
+    // 예약 대기 중 다른 분기로 이동해 실행을 건너뛴 경우에도, 그 분기로 돌아오면 미처리 완결 턴을 다시 확인합니다.
+    if(autoLoreState(room).enabled&&!autoLoreState(room).paused)scheduleAutomaticLoreMaintenance(room,'room-entered',2500);
     placeLauncher(); updateLauncher(); sanitizeRenderedContextSoon(); scheduleMessageInjectionMagnifier(60);
   }
 
