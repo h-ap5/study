@@ -1,8 +1,11 @@
 // ==UserScript==
 // @name         ✨ Crack Muse Writer (AI 답변 커스텀)
 // @namespace    muse writer
-// @version      5.2.14
+// @version      5.2.15
 // @description  Crack 캐릭터챗 입력을 맥락·프로필·유저 노트·참고자료·서사 나침반에 맞춰 다듬고, 단기·장기 기억과 최신 에리 로어를 읽기 전용으로 참고하며 유저 입력 번역까지 처리하는 AI 집필 보조 도구
+// @updateURL    https://github.com/h-ap5/study/raw/refs/heads/main/muse.user.js
+// @downloadURL  https://github.com/h-ap5/study/raw/refs/heads/main/muse.user.js
+// @homepageURL  https://github.com/h-ap5/study
 // @match        https://crack.wrtn.ai/*
 // @grant        GM_addStyle
 // @grant        GM_setValue
@@ -19,6 +22,141 @@
 
   const API_BASE = "https://crack-api.wrtn.ai/crack-gen";
   const API_ORIGIN = "https://crack-api.wrtn.ai";
+
+  // =============================================
+  // 공통 한글 오류 토스트
+  // - 원문 API 오류/영문 스택은 사용자에게 그대로 노출하지 않는다.
+  // - 오류 원문은 개발자 콘솔에만 남긴다.
+  // - 2.7초 후 자연스럽게 사라진다.
+  // =============================================
+  let museToastTimer = 0;
+
+  function ensureMuseToastStyle() {
+    if (document.getElementById("cmw-toast-style")) return;
+    const style = document.createElement("style");
+    style.id = "cmw-toast-style";
+    style.textContent = `
+      #cmw-toast {
+        position: fixed;
+        z-index: 2147483647;
+        left: 50%;
+        max-width: min(88vw, 430px);
+        padding: 12px 16px;
+        border-radius: 14px;
+        background: rgba(31, 31, 35, .96);
+        color: #fff;
+        border: 1px solid rgba(255,255,255,.13);
+        box-shadow: 0 10px 30px rgba(0,0,0,.38);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        font-size: 14px;
+        font-weight: 700;
+        line-height: 1.5;
+        text-align: center;
+        white-space: pre-line;
+        pointer-events: none;
+        opacity: 0;
+        transform: translate(-50%, 10px) scale(.98);
+        transition: opacity .22s ease, transform .22s ease;
+        will-change: opacity, transform, top;
+      }
+      #cmw-toast.show {
+        opacity: 1;
+        transform: translate(-50%, 0) scale(1);
+      }
+      #cmw-toast[data-tone="error"] {
+        background: rgba(54, 28, 31, .97);
+        border-color: rgba(255, 122, 132, .28);
+      }
+      #cmw-toast[data-tone="warning"] {
+        background: rgba(55, 45, 24, .97);
+        border-color: rgba(255, 206, 91, .25);
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  function positionMuseToast(toast) {
+    if (!toast) return;
+    const vv = window.visualViewport;
+    const top = vv
+      ? Math.max(18, Math.round(vv.offsetTop + vv.height - toast.offsetHeight - 92))
+      : Math.max(18, window.innerHeight - toast.offsetHeight - 110);
+    toast.style.top = `${top}px`;
+  }
+
+  function showMuseToast(message, tone = "error", duration = 2700) {
+    ensureMuseToastStyle();
+    let toast = document.getElementById("cmw-toast");
+    if (!toast) {
+      toast = document.createElement("div");
+      toast.id = "cmw-toast";
+      toast.setAttribute("role", "status");
+      toast.setAttribute("aria-live", "polite");
+      document.body.appendChild(toast);
+    }
+
+    if (museToastTimer) clearTimeout(museToastTimer);
+    toast.dataset.tone = tone;
+    toast.textContent = String(message || "처리 중 오류가 발생했어요.\n잠시 후 다시 시도해주세요.");
+    toast.classList.remove("show");
+    void toast.offsetWidth;
+    positionMuseToast(toast);
+    toast.classList.add("show");
+
+    const reposition = () => positionMuseToast(toast);
+    window.visualViewport?.addEventListener("resize", reposition, { once: true });
+    window.visualViewport?.addEventListener("scroll", reposition, { once: true });
+
+    museToastTimer = setTimeout(() => {
+      toast.classList.remove("show");
+      museToastTimer = 0;
+      setTimeout(() => {
+        if (toast && !toast.classList.contains("show")) toast.remove();
+      }, 260);
+    }, Math.max(2000, Math.min(3000, Number(duration) || 2700)));
+  }
+
+  function humanizeMuseError(error) {
+    const raw = String(error?.message || error || "").trim();
+    const lower = raw.toLowerCase();
+
+    if (/\b429\b/.test(lower) || lower.includes("resource exhausted") || lower.includes("resource_exhausted") || lower.includes("quota") || lower.includes("rate limit") || lower.includes("too many requests")) {
+      return "AI 서버가 현재 혼잡하거나 요청 한도에 도달했어요.\n잠시 후 다시 시도해주세요.";
+    }
+    if (/\b(500|502|503|504)\b/.test(lower) || lower.includes("internal server") || lower.includes("service unavailable") || lower.includes("server error") || lower.includes("overloaded")) {
+      return "AI 서버에 일시적인 문제가 발생했어요.\n잠시 후 다시 시도해주세요.";
+    }
+    if (/\b401\b/.test(lower) || lower.includes("unauthenticated") || lower.includes("invalid api key") || lower.includes("api key not valid") || lower.includes("authentication")) {
+      return "API 인증에 실패했어요.\n설정에서 API 키를 확인해주세요.";
+    }
+    if (/\b403\b/.test(lower) || lower.includes("permission denied") || lower.includes("permission_denied") || lower.includes("forbidden")) {
+      return "API 사용 권한이 없어요.\nAPI 키와 프로젝트 권한을 확인해주세요.";
+    }
+    if (/\b404\b/.test(lower) || lower.includes("model not found") || lower.includes("not found")) {
+      return "선택한 AI 모델을 찾을 수 없어요.\n모델 설정을 확인해주세요.";
+    }
+    if (lower.includes("fetch") || lower.includes("network") || lower.includes("failed to fetch") || lower.includes("네트워크")) {
+      return "네트워크 연결에 문제가 있어요.\n연결 상태를 확인한 뒤 다시 시도해주세요.";
+    }
+    if (lower.includes("timeout") || lower.includes("timed out") || lower.includes("deadline exceeded")) {
+      return "서버 응답이 지연되고 있어요.\n잠시 후 다시 시도해주세요.";
+    }
+    if (lower.includes("응답 분석 실패") || lower.includes("json") || lower.includes("parse")) {
+      return "서버 응답을 읽지 못했어요.\n잠시 후 다시 시도해주세요.";
+    }
+    if (lower.includes("api 키") || lower.includes("api key") || lower.includes("키를 먼저")) {
+      return "API 키가 설정되어 있지 않아요.\n설정에서 API 키를 입력해주세요.";
+    }
+    if (lower.includes("safety") || lower.includes("blocked") || lower.includes("finish_reason")) {
+      return "AI가 이번 요청을 처리하지 못했어요.\n표현을 조금 바꿔 다시 시도해주세요.";
+    }
+    return "처리 중 오류가 발생했어요.\n잠시 후 다시 시도해주세요.";
+  }
+
+  function showMuseError(error, context = "") {
+    console.error(`[Crack Muse Writer] ${context || "오류"}`, error);
+    showMuseToast(humanizeMuseError(error), "error", 2700);
+  }
 
   // 읽기 전용 참고자료 연동. 아래 캐시는 Muse 요청용 복사본만 보관하며
   // Crack 단기·장기 기억과 에리 로어 DB에는 어떤 쓰기 작업도 하지 않는다.
@@ -1020,6 +1158,40 @@
         .crack-history-widget { display: none; align-items: center; gap: 8px; background: var(--bg_elevated_primary); border: 1px solid var(--border); border-radius: 12px; padding: 4px 10px; font-size: 13px; font-weight: bold; color: var(--text_primary); }
         .crack-history-btn { cursor: pointer; color: var(--text_secondary); transition: 0.2s; user-select: none; }
         .crack-history-btn:hover { color: var(--text_brand); transform: scale(1.1); }
+
+        /* v5.2.17 모바일: 생성 히스토리(◀ 2/2 ▶)를 전송줄 레이아웃에서 분리.
+           번역/마법/전송 버튼의 가로폭을 침범하지 않고 버튼줄 바로 위에 띄우며,
+           v5.2.16보다 살짝 왼쪽으로 조정하고 배경을 더 투명하게 표시한다. */
+        @media (max-width: 768px), (pointer: coarse) {
+          #crack-pure-send-left-group { position: relative; overflow: visible; }
+          #crack-pure-send-left-group .crack-history-widget {
+            position: absolute;
+            right: -32px;
+            bottom: calc(100% + 7px);
+            z-index: 40;
+            gap: 5px;
+            padding: 2px 7px;
+            min-height: 24px;
+            border-radius: 9999px;
+            font-size: 12px;
+            line-height: 1;
+            white-space: nowrap;
+            box-sizing: border-box;
+            background: rgba(28,28,32,.48);
+            background: color-mix(in srgb, var(--bg_elevated_primary) 48%, transparent);
+            border-color: rgba(255,255,255,.10);
+            -webkit-backdrop-filter: blur(4px);
+            backdrop-filter: blur(4px);
+            box-shadow: 0 3px 9px rgba(0,0,0,.12);
+          }
+          #crack-pure-send-left-group .crack-history-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 15px;
+            min-height: 20px;
+          }
+        }
 
         #crack-ai-panel { position: fixed; top: 80px; right: 30px; z-index: 999999; width: min(440px, 92vw); max-height: 85vh; background-color: var(--bg_screen); border: 1px solid var(--border); border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); color: var(--text_primary); font-family: var(--font-sans); display: none; flex-direction: column; overflow: hidden; }
 
@@ -3829,8 +4001,10 @@
       console.error("[Crack Muse Writer] 설정 저장 실패", error);
       saveButton.textContent = "❌ 저장 실패";
       restoreButtonLater(2800);
-      alert(
-        `설정을 저장하지 못했습니다.\n\n${error?.message || error}\n\n기존 설정은 가능한 범위에서 복구했습니다.`,
+      showMuseToast(
+        "설정을 저장하지 못했어요.\n기존 설정은 가능한 범위에서 복구했어요.",
+        "error",
+        2700,
       );
     }
   };
@@ -5465,7 +5639,7 @@ ${styleInstruction}`);
       event.stopPropagation();
 
       const chatInput = getChatInput();
-      if (!chatInput) return alert("채팅 입력창을 찾을 수 없습니다.");
+      if (!chatInput) return showMuseToast("채팅 입력창을 찾을 수 없어요.\n페이지를 새로고침한 뒤 다시 시도해주세요.", "warning", 2700);
 
       const baseText = chatInput.tagName === "TEXTAREA"
         ? chatInput.value
@@ -5473,7 +5647,7 @@ ${styleInstruction}`);
       const mode = GM_getValue(getTransConfigKey("mode"), "only");
 
       if (mode === "only" && !baseText.trim()) {
-        return alert("번역할 텍스트를 입력창에 먼저 적어주세요.\n(빈 입력으로 이어쓰기+번역을 원하면 번역 탭에서 '집필 후 번역'을 선택하세요.)");
+        return showMuseToast("번역할 텍스트를 먼저 입력해주세요.\n빈 입력으로 이어쓰려면 ‘집필 후 번역’을 선택해주세요.", "warning", 2700);
       }
       if (tBtn.disabled) return;
 
@@ -5505,7 +5679,7 @@ ${styleInstruction}`);
         updateChatInputFromHistory();
         if (generatedHistory.length > 1) hWidget.style.display = "flex";
       } catch (error) {
-        alert(error.message);
+        showMuseError(error, "번역 요청 실패");
       } finally {
         tBtn.disabled = false;
         tBtn.removeAttribute("aria-busy");
@@ -5611,7 +5785,7 @@ ${styleInstruction}`);
       e.preventDefault();
 
       const chatInput = getChatInput();
-      if (!chatInput) return alert("채팅 입력창을 찾을 수 없습니다.");
+      if (!chatInput) return showMuseToast("채팅 입력창을 찾을 수 없어요.\n페이지를 새로고침한 뒤 다시 시도해주세요.", "warning", 2700);
       if (gBtn.classList.contains("gen")) return;
       const baseText = chatInput.tagName === "TEXTAREA" ? chatInput.value : chatInput.innerText;
       gBtn.classList.add("gen");
@@ -5625,7 +5799,7 @@ ${styleInstruction}`);
         updateChatInputFromHistory();
         if (generatedHistory.length > 1) hWidget.style.display = "flex";
       } catch (err) {
-        alert(err.message);
+        showMuseError(err, "AI 생성 실패");
       } finally {
         stopLoaderMotion();
         gBtn.removeAttribute("aria-busy");
