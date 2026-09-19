@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽 Wish RP Manager
 // @namespace    local.rp.context.manager
-// @version      2.4.1
+// @version      2.4.4
 // @description  Crack RP용 컨텍스트 주입·인지·자동 장기기억·자료집·Crack 요약 메모리·전체 재구축을 하나로 관리합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -30,12 +30,16 @@
 
 (function () {
   'use strict';
+  // 2.4.4: 45,000자 이하는 전체 주입, 초과 시에만 AI 선별하는 원래 규칙을 복원.
+  // 선별 전체 대기는 25초로 제한하고 실패 시 로컬 순위로 이어 보내 무한 전송 대기를 차단.
+  // 2.4.3: ISO·상대시점·작품 고유 달력 표기의 저장 회귀를 수정.
+  // 실제 Crack 메시지 API 우선, 유휴 호환 감시 지연, 주입 확인 실패 상태 표시를 추가.
   // 2.3.7: 3.3.47의 설정 저장 확인·모델 보존·돋보기·인물명 해석을 선별 반영.
   // 지침은 2.3 출력 형식에 맞춰 정돈. 기존 스키마·근거 검증·백업·복구·잠금은 유지.
   // 설정 화면만 간소화하며 저장된 주기·선별 조합·기억·요약 데이터는 전환하지 않음.
  let WUI=null;
 
-  const SCRIPT_VERSION = '2.4.1';
+  const SCRIPT_VERSION = '2.4.4';
   const RUNTIME_KEY = '__WISH_RP_MANAGER_V1__';
   const RELOAD_GUARD_KEY = `WISH_RP_clean_reload_${SCRIPT_VERSION}`;
   const previousRuntime = window[RUNTIME_KEY];
@@ -515,18 +519,25 @@
       }catch(_){}
     }
 
-    function startDomPart(){
+    function activateCompatDomPart(){
+      // 에리 Refiner가 실제로 있을 때만 전역 characterData 감시를 켭니다.
+      // Refiner가 없는 설치에서는 스트리밍 텍스트 변경을 Wish가 매번 관찰할 이유가 없습니다.
+      if(!wrapRefiner())return false;
       startScopedObserver();
-      wrapRefiner();
       sweepExistingMarkdown();
       setTimeout(sweepExistingMarkdown,300);
       setTimeout(sweepExistingMarkdown,1200);
+      return true;
+    }
+
+    function startDomPart(){
+      activateCompatDomPart();
     }
 
     // Refiner가 늦게 로드되거나 SPA 이동 중 함수를 교체해도 새 함수를 다시 감쌉니다.
     wrapRefiner();
-    setInterval(()=>{if(!document.hidden)wrapRefiner()},15000);
-    document.addEventListener("visibilitychange",()=>{if(!document.hidden){wrapRefiner();sweepExistingMarkdown()}},{passive:true});
+    setInterval(()=>{if(!document.hidden&&!observer)activateCompatDomPart();else if(!document.hidden)wrapRefiner()},15000);
+    document.addEventListener("visibilitychange",()=>{if(!document.hidden){if(!observer)activateCompatDomPart();else{wrapRefiner();sweepExistingMarkdown()}}},{passive:true});
     if(document.documentElement)startDomPart();
     else document.addEventListener("DOMContentLoaded",startDomPart,{once:true});
   }();
@@ -1475,6 +1486,13 @@
     room.autoLogPinnedKeys = Array.isArray(room.autoLogPinnedKeys) ? [...new Set(room.autoLogPinnedKeys.map(String))] : [];
     room.autoLogExcludedKeys = Array.isArray(room.autoLogExcludedKeys) ? [...new Set(room.autoLogExcludedKeys.map(String))] : [];
     room.manualLogSelectedKeys = Array.isArray(room.manualLogSelectedKeys) ? [...new Set(room.manualLogSelectedKeys.map(String))] : [];
+    const legacyDateUpgrade=restoreLegacyDateFallbacks(logSummary.content);
+    if(legacyDateUpgrade.restored){
+      const oldBlocks=parseDatedLogBlocks(logSummary.content);
+      logSummary.content=legacyDateUpgrade.text;
+      remapLogSelectionKeysByIndex(room,oldBlocks,parseDatedLogBlocks(logSummary.content));
+      if(room.aiAppliedContent?.logSummary)room.aiAppliedContent.logSummary=aiHashTiny(logSummary.content);
+    }
 
     room.activeLorePackIds = Array.isArray(room.activeLorePackIds) ? [...new Set(room.activeLorePackIds.map(String).filter(Boolean))] : [];
     room.speechRelations = normalizeSpeechRelations(room.speechRelations);
@@ -2033,11 +2051,11 @@ const WLOG=(()=>{
     const headers = { 'Content-Type':'application/json', 'x-goog-api-key':cfg.apiKey };
     const run = async currentOptions => {
       if (AI_GEMINI_INTERACTIONS_MODELS.has(model)) {
-        const data = await aiGmRequestJson({ url:'https://generativelanguage.googleapis.com/v1beta/interactions', headers, body:buildGeminiInteractionsPayload(cfg, systemPrompt, userPrompt, currentOptions), label:'Gemini Interactions' });
+        const data = await aiGmRequestJson({ url:'https://generativelanguage.googleapis.com/v1beta/interactions', headers, body:buildGeminiInteractionsPayload(cfg, systemPrompt, userPrompt, currentOptions), timeout:Number(currentOptions.timeoutMs)||120000, label:'Gemini Interactions' });
         return normalizeInteractionResponse(data);
       }
       const payload = buildGeminiPayload(cfg, systemPrompt, userPrompt, currentOptions);
-      const data = await aiGmRequestJson({ url:`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, headers, body:payload, label:'Gemini' });
+      const data = await aiGmRequestJson({ url:`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, headers, body:payload, timeout:Number(currentOptions.timeoutMs)||120000, label:'Gemini' });
       return { text:extractGeminiCandidateText(data), raw:data };
     };
     try { return await run(options); }
@@ -2095,7 +2113,7 @@ const WLOG=(()=>{
     if (wantsJson) body.response_format = { type:'json_object' };
     let data;
     try {
-      data = await aiGmRequestJson({ url:`${baseUrl}/chat/completions`, headers:{'Content-Type':'application/json',Authorization:`Bearer ${cfg.deepSeekApiKey}`}, body, label:'DeepSeek' });
+      data = await aiGmRequestJson({ url:`${baseUrl}/chat/completions`, headers:{'Content-Type':'application/json',Authorization:`Bearer ${cfg.deepSeekApiKey}`}, body, timeout:Number(options.timeoutMs)||120000, label:'DeepSeek' });
     } catch (e) {
       const m=String(e.message||e); if (/401|403/.test(m)) throw new Error('DeepSeek 인증 오류: API Key를 확인해 주세요.'); if (/429/.test(m)) throw new Error('DeepSeek 요청 한도 초과: 잠시 후 다시 시도해 주세요.'); throw e;
     }
@@ -2106,17 +2124,27 @@ const WLOG=(()=>{
     return { text, raw:data };
   }
 
+  async function withAiTimeout(promise, timeoutMs, label='AI 요청') {
+    const ms=Math.max(0,Number(timeoutMs)||0);if(!ms)return await promise;
+    let timer;
+    try{return await Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>{const error=new Error(`${label} 제한 시간 ${Math.ceil(ms/1000)}초를 넘었습니다.`);error.code='AI_TIMEOUT';reject(error);},ms);})]);}
+    finally{if(timer)clearTimeout(timer);}
+  }
+
   async function callAiProvider(settings, systemPrompt, userPrompt, options={}) {
     const cfg = normalizeAiSettings(settings);
     return await WLOG.run((options.operationLabel||WLOG.current()?.operation||'보조 AI 요청')+' · AI 응답 기다리는 중',async()=>{
     if (!isAiProviderReady(cfg)) throw new Error(`${getAiProviderLabel(cfg.provider)} 연결 정보가 비어 있습니다.`);
-    let result;
-    if (cfg.provider === 'deepseek') result = await callDeepSeekAi(cfg, systemPrompt, userPrompt, options);
-    else if (cfg.provider === 'firebase') {
+    const invoke=async()=>{
+    if (cfg.provider === 'deepseek') return await callDeepSeekAi(cfg, systemPrompt, userPrompt, options);
+    if (cfg.provider === 'firebase') {
       // Firebase AI Logic SDK 경로는 endpoint별 JSON Schema 지원 차이를 피하고 기존 의미 검증을 유지합니다.
       const firebaseOptions = {...options}; delete firebaseOptions.responseJsonSchema;
-      result = await callFirebaseAi(cfg, systemPrompt, userPrompt, firebaseOptions);
-    } else result = await callGoogleAiStudio(cfg, systemPrompt, userPrompt, options);
+      return await callFirebaseAi(cfg, systemPrompt, userPrompt, firebaseOptions);
+    }
+    return await callGoogleAiStudio(cfg, systemPrompt, userPrompt, options);
+    };
+    const result=await withAiTimeout(invoke(),options.timeoutMs,options.operationLabel||'보조 AI 요청');
     return { ...result, text:cleanAiGeneratedText(result.text),diagnostic:{provider:cfg.provider,model:getAiSelectedModel(cfg),finishReason:String(result.raw?.candidates?.[0]?.finishReason||result.raw?.choices?.[0]?.finish_reason||'')} };
     },{provider:cfg.provider,model:getAiSelectedModel(cfg)});
   }
@@ -2487,8 +2515,10 @@ const ExternalReplay=(()=>{
   }
 
   function logEventIdentity(block) {
-    const heading = String(block?.heading || '').normalize('NFKC').replace(/\s+/g,' ').trim().toLowerCase();
-    return block?.isUnknown ? heading : `${block?.dateKey || ''}|${String(block?.events || '').normalize('NFKC').replace(/\s+/g,' ').trim().toLowerCase()}`;
+    const event = String(block?.events || '').normalize('NFKC').replace(/\s+/g,' ').trim().toLowerCase();
+    // Manager 생성 블록은 안전한 전각 구분자를 쓰므로, 구분자 차이만으로 같은
+    // 날짜 미상 사건이 새 항목으로 중복되지 않게 의미 필드로 비교한다.
+    return block?.isUnknown ? `unknown|${event}` : `${block?.dateKey || ''}|${event}`;
   }
 
   function isAiNoChange(value) {
@@ -3128,7 +3158,7 @@ function wishApplyReferencesDelta(db,data){if(!data||!Array.isArray(data.upsert)
         stateText.trim()?[{id:'state_raw',title:'기존 현재상태',body:stateText}]:[],
       events:logs.length?[
         ...(logText.slice(0,logs[0].sourceStart??0).trim()?[{id:'event_prefix',order:0,date:{kind:'unknown',display:'날짜 미상'},title:'기존 기록 머리말',summary:logText.slice(0,logs[0].sourceStart).trim(),keywords:[]}]:[]),
-        ...logs.map((b,i)=>({id:'event_'+i,order:i+1,date:{kind:b.isUnknown?'unknown':'custom',display:b.fullDate||'날짜 미상'},title:b.events||'사건',summary:b.body,keywords:[]}))]:
+        ...logs.map((b,i)=>({id:'event_'+i,order:i+1,date:{kind:b.dateKind|| (b.isUnknown?'unknown':'custom'),display:b.fullDate||'날짜 미상'},title:b.events||'사건',summary:b.body,keywords:[]}))]:
         logText.trim()?[{id:'event_raw',order:1,date:{kind:'unknown',display:'날짜 미상'},title:'기존 기록',summary:logText,keywords:[]}]:[],
       references:refs,characters:room.slots.filter(s=>s.group==='character'),extras:room.slots.filter(s=>s.group==='extra'&&s.enabled),
       people:cog.actors.filter(a=>!a.archived&&(!a.automatic||cog.state.catalog?.actors?.includes(a.id))).map(a=>({id:a.id,name:a.name,aliases:a.aliases||[],isPlayer:a.isPlayer,manual:!a.automatic})),
@@ -3248,9 +3278,8 @@ function wishApplyReferencesDelta(db,data){if(!data||!Array.isArray(data.upsert)
   }
   function renderEvents(events) {
     return events.map(e=>{
-      const title=String(e.title).replace(/[\[\]\r\n]/g,' '),date=String(e.date?.display||'날짜 미상').replace(/[\[\]\r\n]/g,' ');
-      const candidate='['+date+'-'+title+']\n'+e.summary;
-      return parseDatedLogBlocks(candidate).length?candidate:'[날짜 미상-'+title+']\n시점='+date+'\n'+e.summary;
+      const date=String(e.date?.display||'날짜 미상');
+      return formatDatedLogHeading(date,e.title)+'\n'+e.summary;
     }).join('\n\n');
   }
   function stage(room,cog,packs,p,req,data) {
@@ -4262,26 +4291,68 @@ JSON 파일을 생성하기 전 내부적으로 확인한다. 이것은 빠진 �
     return (h >>> 0).toString(36);
   }
 
+  function looksLikeCustomLogDate(value) {
+    const text = String(value || '').normalize('NFKC').trim();
+    if (!text) return false;
+    return /(?:\d\s*(?:년|월|일|시|분|초|주|개월|세기|기|력|째)|오늘|어제|그제|내일|모레|당일|그날|다음\s*날|전날|직전|직후|이후|이전|사흘|나흘|며칠|아침|오전|오후|저녁|밤|새벽|정오|무렵|시점|계절|봄|여름|가을|겨울|축제|즉위|재위|창세|개국|제국력|왕국력|성력|마력|황력)/iu.test(text);
+  }
+
+  function formatDatedLogHeading(date, title) {
+    const safeDate = String(date || '날짜 미상').replace(/[\[\]\r\n]+/g, ' ').trim() || '날짜 미상';
+    const safeTitle = String(title || '사건').replace(/[\[\]\r\n]+/g, ' ').trim() || '사건';
+    // 날짜와 사건명 모두 하이픈을 포함할 수 있으므로 Manager가 만드는 새 블록은
+    // 명시적인 전각 구분자를 사용한다. 기존 "날짜-사건" 형식은 계속 읽는다.
+    return `[${safeDate}｜${safeTitle}]`;
+  }
+
+  function restoreLegacyDateFallbacks(value) {
+    let text=normalizeLineBreaks(String(value||''));
+    const blocks=parseDatedLogBlocks(text),replacements=[];
+    for(const block of blocks){
+      if(!block.isUnknown)continue;
+      const legacy=String(block.body||'').match(/^시점\s*=\s*([^\n]{1,120})(?:\n|$)/);
+      const date=String(legacy?.[1]||'').replace(/[\[\]\r\n]+/g,' ').trim();
+      if(!date||/^날짜\s*(?:미상|미정|불명|없음)$/u.test(date))continue;
+      const body=String(block.body||'').slice(legacy[0].length).trim();
+      const raw=`${formatDatedLogHeading(date,block.events||'사건')}${body?`\n${body}`:''}${block.sourceEnd<text.length?'\n\n':''}`;
+      replacements.push({start:block.sourceStart,end:block.sourceEnd,raw});
+    }
+    for(const row of replacements.sort((a,b)=>b.start-a.start))text=text.slice(0,row.start)+row.raw+text.slice(row.end);
+    return {text,restored:replacements.length};
+  }
+
   function parseDatedLogBlocks(text) {
     const src = normalizeLineBreaks(text);
-    // 기본 양력형·연도-only([2026년-사건])와 작품 고유 표기인 BC206·기원전 206년·AD714도 날짜 블록으로 인식합니다.
-    // 제목 전체를 먼저 읽고 날짜 부분만 검증해, 일반 [소제목]은 날짜로 잘못 잡지 않습니다.
+    // 기본 양력형·ISO·연도-only·공인 연호뿐 아니라 명시적인 상대시점/작품 고유 달력도 보존한다.
+    // 임의 [소제목-제목] 오인식을 줄이기 위해 자유형 날짜는 전각 구분자이거나 시간 표현일 때만 허용한다.
     const re = /^[ \t]*\[([^\]\n]+)\][ \t]*$/gm;
     const hits = [];
     let m;
     while ((m = re.exec(src))) {
       const inner = String(m[1] || '').trim();
       const standard = inner.match(/^((?:(\d{1,6})년[ \t]*)?(\d{1,2})월[ \t]*(\d{1,2})일)(?:[ \t]*[-–—|｜][ \t]*(.+))?$/);
+      const iso = inner.match(/^((\d{4,6})-(\d{2})-(\d{2}))(?:[ \t]*(?:[|｜–—]|-)[ \t]*(.+))?$/);
       const yearOnly = inner.match(/^((\d{1,6})년)(?:[ \t]*[-–—|｜][ \t]*(.+))?$/);
       const unknown = inner.match(/^(날짜[ \t]*(미상|미정|불명|없음))(?:[ \t]*[-–—|｜][ \t]*(.+))?$/);
       const eraNamePattern = 'B\\.?[ \\t]*C\\.?(?:[ \\t]*E\\.?)?|A\\.?[ \\t]*D\\.?|C\\.?[ \\t]*E\\.?|기원전|서기';
       const eraRe = new RegExp(`^((${eraNamePattern})[ \\t]*(\\d{1,6})(?:년)?(?:[ \\t]*(\\d{1,2})월[ \\t]*(\\d{1,2})일)?(?:[ \\t]*[~～](?:[ \\t]*(?:${eraNamePattern}[ \\t]*)?\\d{1,6}(?:년)?(?:[ \\t]*\\d{1,2}월[ \\t]*\\d{1,2}일)?)?)?)(?:[ \\t]*[-–—|｜][ \\t]*(.+))?$`, 'i');
       const era = inner.match(eraRe);
-      if (!standard && !yearOnly && !unknown && !era) continue;
+      const explicitCustom = inner.match(/^(.+?)[ \t]*[|｜][ \t]*(.+)$/);
+      const dashedCustom = inner.match(/^(.+?)[ \t]*[-–—][ \t]*(.+)$/);
+      const custom = !standard && !iso && !yearOnly && !unknown && !era
+        ? (explicitCustom || (dashedCustom && looksLikeCustomLogDate(dashedCustom[1]) ? dashedCustom : null))
+        : null;
+      if (!standard && !iso && !yearOnly && !unknown && !era && !custom) continue;
 
       const isUnknown = !!unknown;
       const isYearOnly = !!yearOnly;
-      const isSpecialDate = !!era;
+      const isCustomDate = !!custom;
+      const isSpecialDate = !!era || isCustomDate;
+      const dateKind = standard ? (standard[2] ? 'exact' : 'month_day')
+        : iso ? 'exact'
+          : yearOnly ? 'year'
+            : unknown ? 'unknown'
+              : era ? 'era' : 'custom';
       let fullDate = '';
       let year = null;
       let month = null;
@@ -4296,6 +4367,13 @@ JSON 파일을 생성하기 전 내부적으로 확인한다. 이것은 빠진 �
         day = Number(standard[4]);
         sortYear = year;
         events = String(standard[5] || '').trim();
+      } else if (iso) {
+        fullDate = iso[1];
+        year = Number(iso[2]);
+        month = Number(iso[3]);
+        day = Number(iso[4]);
+        sortYear = year;
+        events = String(iso[5] || '').trim();
       } else if (yearOnly) {
         fullDate = yearOnly[1];
         year = Number(yearOnly[2]);
@@ -4305,7 +4383,7 @@ JSON 파일을 생성하기 전 내부적으로 확인한다. 이것은 빠진 �
         fullDate = `날짜 ${unknown[2]}`;
         unknownLabel = fullDate;
         events = String(unknown[3] || '').trim();
-      } else {
+      } else if (era) {
         fullDate = String(era[1] || '').trim();
         const eraName = String(era[2] || '').replace(/[.\s]/g, '').toUpperCase();
         const eraYear = Number(era[3]);
@@ -4314,6 +4392,9 @@ JSON 파일을 생성하기 전 내부적으로 확인한다. 이것은 빠진 �
         month = era[4] ? Number(era[4]) : null;
         day = era[5] ? Number(era[5]) : null;
         events = String(era[6] || '').trim();
+      } else {
+        fullDate = String(custom[1] || '').trim();
+        events = String(custom[2] || '').trim();
       }
       hits.push({
         index: m.index,
@@ -4328,6 +4409,8 @@ JSON 파일을 생성하기 전 내부적으로 확인한다. 이것은 빠진 �
         isUnknown,
         isYearOnly,
         isSpecialDate,
+        isCustomDate,
+        dateKind,
         events,
         heading: m[0].trim(),
         headingRaw: m[0],
@@ -4340,7 +4423,9 @@ JSON 파일을 생성하기 전 내부적으로 확인한다. 이것은 빠진 �
       const raw = `${h.heading}${body ? `\n${body}` : ''}`;
       const dateKey = h.isUnknown
         ? `unknown-${i}-${simpleHash(h.heading)}`
-        : h.isSpecialDate
+        : h.isCustomDate
+          ? `custom-${String(h.fullDate || '').normalize('NFKC').toLowerCase().replace(/\s+/g, '')}`
+          : h.isSpecialDate
           ? `era-${String(h.fullDate || '').toLowerCase().replace(/\s+/g, '')}`
           : h.isYearOnly
             ? `year-${h.year}-${simpleHash(h.events || h.heading)}`
@@ -5143,11 +5228,12 @@ JSON 파일을 생성하기 전 내부적으로 확인한다. 이것은 빠진 �
       const raw=messageTextOf(current);
       if(expectedCurrentText!==null?raw!==expectedCurrentText:normalizeLineBreaks(stripOurContextBlock(raw).text).trimEnd()!==normalizeLineBreaks(stripOurContextBlock(nextText).text).trimEnd())throw new Error('주입 준비 중 AI 원문이 바뀌었습니다. 최신 원문으로 다시 확인해 주세요.');
     }
-    // Primary endpoint verified by existing Crack scripts.
+    // 실제 Crack 조사 자료에서 관찰된 v3 메시지 PATCH를 먼저 사용합니다.
+    // 구형 contents-api 경로는 호환 fallback으로만 남겨 전송 전 타임아웃 누적을 막습니다.
     const candidates = [
+      `https://crack-api.wrtn.ai/crack-gen/v3/chats/${chatId}/messages/${messageId}`,
       `https://contents-api.wrtn.ai/character-chat/v3/chats/${chatId}/messages/${messageId}`,
       `https://contents-api.wrtn.ai/character-chat/character-chats/${chatId}/messages/${messageId}`,
-      `https://crack-api.wrtn.ai/crack-gen/v3/chats/${chatId}/messages/${messageId}`,
     ];
     let lastErr = null;
     for (const url of candidates) {
@@ -5216,6 +5302,8 @@ JSON 파일을 생성하기 전 내부적으로 확인한다. 이것은 빠진 �
         autoType:'cognition', recallReason:cognitionSnapshot.status || '인지 자동 정리',
       });
     }
+    // 실제 carrier까지 합쳐 45,000자 이하면 켜진 기억을 모두 넣고,
+    // 초과할 때만 일반 날짜로그·자료 후보를 선별한다.
     out.push(...allFitRecallItems(room, ctx));
     return out;
   }
@@ -5256,6 +5344,7 @@ JSON 파일을 생성하기 전 내부적으로 확인한다. 이것은 빠진 �
     }
   }
   const allFitRankCache=new Map();
+  const RECALL_SELECTION_TIMEOUT_MS=25000;
   function allFitLimit(room) { return 45000; }
   function allFitRequired(item) {
     return !['log','lore'].includes(injectionCadenceKind(item))||['pinned-log','manual-log','pinned-lore'].includes(item.autoType);
@@ -5298,11 +5387,14 @@ async function chooseAllFitItems(room, items, original, query='') {
     if(cfg.semantic||cfg.selector){
       try{
         if(!isAiProviderReady(settings))throw Error('보조 AI 연결 없음');
+        const selectionDeadline=Date.now()+RECALL_SELECTION_TIMEOUT_MS;
         const batches=[];let batch=[],chars=0;
         for(const row of payload){const n=JSON.stringify(row).length;if(n>120000)throw Error('단일 후보가 AI 선별 입력 한도를 넘습니다.');if(batch.length&&(batch.length>=48||chars+n>120000)){batches.push(batch);batch=[];chars=0;}batch.push(row);chars+=n;}if(batch.length)batches.push(batch);
         const scores=[];
         for(const candidates of batches){
-          const result=await callAiProvider(settings,RECALL_233_GUIDE,JSON.stringify({mode:cfg,query:String(query).slice(-8000),scene_context:{previous_answer_tail:stripAutomationNoise(original,true).slice(-6000),current_state_excerpt:String(room.slots?.find(s=>s.id==='currentState')?.content||'').slice(0,5000),scope:'읽기 전용 일부 문맥 · 신규 사실 생성 금지'},candidates}),{responseMimeType:'application/json',maxOutputTokens:4096,operationLabel:cfg.semantic&&cfg.selector?'관련 기억 찾기·우선순위 정하기':cfg.semantic?'표현이 다른 기억 찾기':'기억 우선순위 정하기'});
+          const remaining=selectionDeadline-Date.now();
+          if(remaining<=0)throw Error(`주입 후보 AI 선별이 ${Math.ceil(RECALL_SELECTION_TIMEOUT_MS/1000)}초를 넘어 로컬 선별로 전환합니다.`);
+          const result=await callAiProvider(settings,RECALL_233_GUIDE,JSON.stringify({mode:cfg,query:String(query).slice(-8000),scene_context:{previous_answer_tail:stripAutomationNoise(original,true).slice(-6000),current_state_excerpt:String(room.slots?.find(s=>s.id==='currentState')?.content||'').slice(0,5000),scope:'읽기 전용 일부 문맥 · 신규 사실 생성 금지'},candidates}),{responseMimeType:'application/json',maxOutputTokens:4096,timeoutMs:remaining,operationLabel:cfg.semantic&&cfg.selector?'관련 기억 찾기·우선순위 정하기':cfg.semantic?'표현이 다른 기억 찾기':'기억 우선순위 정하기'});
           const data=WLOG.parseJson(result.text,'주입 후보 선별',result.diagnostic),valid=new Set(candidates.map(x=>x.id)),seen=new Set();
           if(!data||Object.keys(data).some(k=>k!=='scores')||!Array.isArray(data.scores)||data.scores.length!==candidates.length)throw Error('후보 개수가 맞지 않는 AI 결과');
           for(const row of data.scores){if(!row||Object.keys(row).some(k=>!['id','relevance','related'].includes(k))||!valid.has(row.id)||seen.has(row.id)||!Number.isInteger(row.relevance)||row.relevance<0||row.relevance>100||typeof row.related!=='boolean')throw Error('유효하지 않은 AI 후보 선별');seen.add(row.id);scores.push(row);}
@@ -5582,9 +5674,9 @@ async function chooseAllFitItems(room, items, original, query='') {
 
     if (first.raw !== nextText) {
       const candidates = [
+        `https://crack-api.wrtn.ai/crack-gen/v3/chats/${rid}/messages/${messageId}`,
         `https://contents-api.wrtn.ai/character-chat/v3/chats/${rid}/messages/${messageId}`,
         `https://contents-api.wrtn.ai/character-chat/character-chats/${rid}/messages/${messageId}`,
-        `https://crack-api.wrtn.ai/crack-gen/v3/chats/${rid}/messages/${messageId}`,
       ];
       let lastErr = null, patched = false;
       for (const url of candidates) {
@@ -6016,12 +6108,15 @@ async function chooseAllFitItems(room, items, original, query='') {
 
   function wishImportDateHeader(date) {
     const d=date||{};
+    const display=String(d.display||'').replace(/[\[\]\r\n]+/g,' ').trim();
+    // AI가 원문에서 확정한 표기를 정규화 과정에서 다시 쓰지 않는다.
+    // 구조화 필드는 검증/정렬용이고 display는 실제 저장 제목의 원문 표기다.
+    if(d.kind!=='unknown'&&display)return display;
     if(d.kind==='exact')return `${d.year}년 ${d.month}월 ${d.day}일`;
     if(d.kind==='month_day')return `${d.month}월 ${d.day}일`;
-    if(d.kind==='era' && /^(BC|BCE|AD|CE|기원전|서기)$/i.test(String(d.era)))return `${d.era}${d.year}${d.month&&d.day?` ${d.month}월 ${d.day}일`:''}`;
+    if(d.kind==='era')return String(`${d.era||''}${d.year??''}${d.month&&d.day?` ${d.month}월 ${d.day}일`:''}`).trim()||'날짜 미상';
     if(d.kind==='year')return `${d.year}년`;
-    if(d.kind==='custom')return String(d.display||d.custom_key||'날짜 미상').replace(/[\[\]\r\n]+/g,' ').trim()||'날짜 미상';
-    if(d.kind==='era')return String(d.display||`${d.era||''}${d.year??''}`).replace(/[\[\]\r\n]+/g,' ').trim()||'날짜 미상';
+    if(d.kind==='custom')return String(d.custom_key||'날짜 미상').replace(/[\[\]\r\n]+/g,' ').trim()||'날짜 미상';
     return '날짜 미상';
   }
 
@@ -6029,14 +6124,9 @@ async function chooseAllFitItems(room, items, original, query='') {
     const blocks = [...(data?.memory?.timeline?.blocks || [])].sort((a,b) => Number(a.order||0)-Number(b.order||0));
     return blocks.map(block => {
       const date = block.date || {};
-      const rawHeader = wishImportDateHeader(date);
-      const supportedEra=date.kind==='era'&&/^(BC|BCE|AD|CE|기원전|서기)$/i.test(String(date.era||''));
-      const needsFallback=date.kind==='custom'||(date.kind==='era'&&!supportedEra);
-      const header = needsFallback?'날짜 미상':rawHeader;
       const title = String(block.title || '사건').replace(/[\r\n\[\]]+/g,' ').trim();
-      let summary = normalizeLineBreaks(String(block.summary || '')).trim();
-      if(needsFallback&&rawHeader&&rawHeader!=='날짜 미상')summary=`시점=${rawHeader}\n${summary}`;
-      return `[${header}-${title}]\n${summary}`;
+      const summary = normalizeLineBreaks(String(block.summary || '')).trim();
+      return `${formatDatedLogHeading(wishImportDateHeader(date),title)}\n${summary}`;
     }).join('\n\n').trim();
   }
 
@@ -9219,7 +9309,7 @@ const SummaryChanges=(()=>{
     return dot;
   }
 
-  async function geminiEmbedTexts(texts, room, taskType = 'RETRIEVAL_DOCUMENT') {
+  async function geminiEmbedTexts(texts, room, taskType = 'RETRIEVAL_DOCUMENT', timeout = 120000) {
     const cfg = loadAiSettings();
     if (!cfg.apiKey) throw new Error('의미 검색에는 AI 설정의 Gemini API Key가 필요합니다. DeepSeek/Firebase를 쓰는 경우에도 임베딩용 Key만 추가해 주세요.');
     const list = (texts || []).map(x => String(x || '').trim()).filter(Boolean);
@@ -9230,7 +9320,7 @@ const SummaryChanges=(()=>{
     if (list.length === 1) {
       const body = {content:{parts:[{text:list[0]}]},outputDimensionality:dimensions};
       if (model.includes('embedding-001')) body.taskType = taskType;
-      const data = await aiGmRequestJson({url:`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:embedContent`,headers,body,label:'Gemini 의미 검색'});
+      const data = await aiGmRequestJson({url:`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:embedContent`,headers,body,timeout,label:'Gemini 의미 검색'});
       const vector = data?.embedding?.values || data?.embeddings?.[0]?.values;
       if (!Array.isArray(vector)) throw new Error('임베딩 결과가 비어 있습니다.');
       return [normalizeEmbeddingVector(vector)];
@@ -9240,7 +9330,7 @@ const SummaryChanges=(()=>{
       if (model.includes('embedding-001')) request.taskType = taskType;
       return request;
     });
-    const data = await aiGmRequestJson({url:`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:batchEmbedContents`,headers,body:{requests},label:'Gemini 의미 검색'});
+    const data = await aiGmRequestJson({url:`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:batchEmbedContents`,headers,body:{requests},timeout,label:'Gemini 의미 검색'});
     if (!Array.isArray(data?.embeddings) || data.embeddings.length !== list.length) throw new Error('배치 임베딩 결과 개수가 맞지 않습니다.');
     return data.embeddings.map(item => normalizeEmbeddingVector(item?.values));
   }
@@ -9322,7 +9412,9 @@ const SummaryChanges=(()=>{
     if (!hasLore && !hasLogs) return null;
     const key = `${room.loreConfig.embeddingModel}|${room.loreConfig.embeddingDimensions}|${aiHashTiny(clean)}`;
     if (LORE_QUERY_VECTOR_CACHE.has(key)) return LORE_QUERY_VECTOR_CACHE.get(key);
-    const vector = (await geminiEmbedTexts([clean], room, 'RETRIEVAL_QUERY'))[0] || null;
+    // USER 전송 경로에서는 의미 검색 장애가 메시지 전송 자체를 오래 막지 않게 짧게 실패하고
+    // 호출자가 키워드 기반 로컬 선택으로 계속 진행합니다. 인덱스 생성은 기본 120초를 유지합니다.
+    const vector = (await geminiEmbedTexts([clean], room, 'RETRIEVAL_QUERY', 5000))[0] || null;
     if (LORE_QUERY_VECTOR_CACHE.size > 30) LORE_QUERY_VECTOR_CACHE.clear();
     if (vector) LORE_QUERY_VECTOR_CACHE.set(key, vector);
     return vector;
@@ -9475,8 +9567,18 @@ const SummaryChanges=(()=>{
 
   async function refreshHybridRecallBeforeSend(room, queryText) {
     if (!room?.pending) return;
-    room.autoRecallContextText=String(queryText||room.autoRecallContextText||'');
-    refreshAllFitRecall(room);
+    const query = String(queryText || '').trim() || String(room.autoRecallContextText || '');
+    room.autoRecallContextText=query;
+    let vector = null, semanticError = '';
+    try { vector = await semanticQueryVector(room, query); }
+    catch (error) { semanticError = String(error.message || error); }
+    const logSlot=(room.slots||[]).find(slot=>slot.id==='logSummary'), blocks=parseDatedLogBlocks(logSlot?.content||'');
+    const logScores=semanticLogScores(room,blocks,vector);
+    addAutoRelatedLogsToPending(room,query,logScores);
+    const loreCount=replaceLorePendingItems(room,query,vector);
+    const relatedLogCount=(room.pending.items||[]).filter(item=>item?.autoType==='related-log').length;
+    room.lastLoreSearch={at:Date.now(),queryHash:aiHashTiny(query),semanticUsed:!!vector,semanticError,matchedLore:loreCount,matchedLogs:relatedLogCount};
+    delete room.pending.selection;
   }
 
   const WISH_LORE_CONVERSION_SCHEMA = {
@@ -9862,6 +9964,8 @@ const SummaryChanges=(()=>{
     p.verified = ok;
     p.verifiedAt = ok ? Date.now() : null;
     p.serverChars = text.length;
+    if(ok){delete p.lastSyncError;delete p.lastSyncErrorAt;}
+    else{p.lastSyncError='서버 메시지에서 현재 Wish 주입 블록을 확인하지 못했습니다.';p.lastSyncErrorAt=Date.now();}
     await saveRoom(room);
     if (room.chatId === state.currentChatId) state.currentRoom = room;
     return { verified: ok, text, serverChars: text.length };
@@ -10497,7 +10601,7 @@ const SummaryChanges=(()=>{
       const liveQuery=String(state.recallDraftByApiChatId.get(rid)||messageTextOf(latestUserText)||room.autoRecallContextText||'').slice(-12000);
       if(liveQuery.trim()){
         room.autoRecallContextText=liveQuery;
-        // Full-fit candidates are rebuilt below; no AI/embedding request before measuring.
+        // 전체 후보는 아래에서 재구성하고, carrier 포함 45,000자 초과일 때만 AI 선별한다.
       }
     }
     if(reason!=='before-send'&&reason!=='before-reroll')room.autoRecallContextText=frame.messages.slice(0,APP.autoScanMessageLimit).map(m=>stripAutomationNoise(messageTextOf(m),true)).reverse().join('\n\n').slice(-12000);
@@ -10509,7 +10613,8 @@ const SummaryChanges=(()=>{
     if(p.baselineAssistantId!==latestId){await refreshAutomaticMemories(room,frame.messages);refreshAutoRecentLogsToPending(room);}
     p.baselineAssistantId=latestId;p.latestUserId=frame.latestUserId;
     replaceSpeechPendingItem(room);
-    ensureDirectReleasePendingItems(room,p);refreshAllFitRecall(room);applyQuickItemSuppression(p);
+    ensureDirectReleasePendingItems(room,p);refreshAllFitRecall(room);
+    applyQuickItemSuppression(p);
     // 현재상태/인지/날짜로그/자료집은 유지턴으로 만료시키지 않고, 주입 ON/OFF만 적용합니다.
     for(const item of p.items||[])item.totalTurns=0;
     for(const item of p.items||[])item.usedTurns=countItemUserTurns(item,frame,p);
@@ -10551,7 +10656,7 @@ const SummaryChanges=(()=>{
     }
     const verification=raw===injected?{verified:true,serverChars:raw.length}:await verifyInjectedCarrier(room,next,injected);
     if(!verification.verified)throw new Error('이전 AI 주입을 서버에서 확인하지 못했습니다. 복구 정보는 보존했습니다.');
-    next.verified=true;next.verifiedAt=Date.now();next.serverChars=verification.serverChars;room.pending=next;
+    next.verified=true;next.verifiedAt=Date.now();next.serverChars=verification.serverChars;delete next.lastSyncError;delete next.lastSyncErrorAt;room.pending=next;
     // 새 carrier가 이미 검증됐으므로 이후 이전 carrier 정리가 실패해도 매턴 주입은 유지됩니다.
     const cleanupCarrier=previousCarrier||next.previousCarrierCleanup,cleanupIds=Array.isArray(next.cleanupCarrierMessageIds)?next.cleanupCarrierMessageIds:[];
     if(cleanupCarrier?.messageId||cleanupIds.length){
@@ -10648,6 +10753,7 @@ const SummaryChanges=(()=>{
         await checkPendingRoom(room);
       } catch (e) {
         console.warn('[RP매니저] pending check failed:', room.chatId, e);
+        if(room?.pending){room.pending.lastSyncError=String(e?.message||e);room.pending.lastSyncErrorAt=Date.now();renderModalIfOpen();}
       }
     } finally {
       state.recovering = false;
@@ -10657,7 +10763,7 @@ const SummaryChanges=(()=>{
   function nextRecoveryDelay() {
     if (generationGates.has(String(apiChatIdOf(state.currentRoom)||''))) return APP.activePollMs;
     if (document.hidden) return APP.backgroundPollMs;
-    if (state.currentRoom?.pending) return APP.activePollMs;
+    if (state.currentRoom?.pending) return state.currentRoom.pending.verified ? APP.idlePollMs : APP.activePollMs;
     if (state.currentRoom?.autoCharacterDetection || state.currentRoom?.autoLogRecallEnabled) return APP.idleAutoScanMs;
     return APP.idlePollMs;
   }
@@ -14111,7 +14217,7 @@ function createWishUI(AD) {
     return `<section class="m3-cap" data-key="cap"><div class="m3-cap-top"><div class="m3-cap-lab">${I.verified ? '서버 저장 확인된 주입량' : I.matchesSaved ? '서버 확인 전 주입량' : '갱신 전 후보 예상량'}</div><div class="m3-cap-num"><span data-count="${tot}">${fmt(tot)}</span></div><div class="m3-cap-den">/ ${fmt(max)}자 · ${Math.round(tot / max * 100)}%</div></div>
     ${capMeter()}
     <div class="m3-legend">${GKEYS.filter(k => g[k]).map(k => `<span style="--m3-c:${COL[k]}"><b></b>${KLABEL[k]}<em>${fmt(g[k])}</em></span>`).join('')}</div>
-    <p class="m3-muted" data-key="selection-threshold">${tot>max?'45,000자 초과 · 갱신 시 선별 필요 · 확정 주입량 아님':!I.matchesSaved?'현재 후보는 45,000자 이하 · 갱신 시 최종 계산':Number(I.selection?.fullTotal)>max?'선별 전 '+fmt(I.selection.fullTotal)+'자 → '+(I.verified?'확인된 주입 ':'확인 대기 ')+fmt(tot)+'자 · '+(I.selection.method==='ai'?'AI 후보 선별':I.selection.method==='local-fallback'?'AI 실패 후 로컬 선별':'로컬 선별')+' · 제외 '+Number(I.selection.omitted||0)+'개':Number(I.selection?.omitted)>0?'저장된 선별 결과 · 제외 '+Number(I.selection.omitted)+'개':'45,000자 이하 · 전체 포함'}${!I.hasOriginal?' · AI 원문 합산 전 예상':''}${I.restored?' · 서버 복원 후 재계산 대기':''}</p>
+    <p class="m3-muted" data-key="selection-threshold">${tot>max?'45,000자 초과 · 갱신 시 선별 필요 · 확정 주입량 아님':!I.matchesSaved?'현재 후보는 45,000자 이하 · 갱신 시 최종 계산':Number(I.selection?.fullTotal)>max?'선별 전 '+fmt(I.selection.fullTotal)+'자 → '+(I.verified?'확인된 주입 ':'확인 대기 ')+fmt(tot)+'자 · '+(I.selection.method==='ai'?'AI 후보 선별':I.selection.method==='local-fallback'?'AI 25초 초과/실패 후 로컬 선별':'로컬 선별')+' · 제외 '+Number(I.selection.omitted||0)+'개':Number(I.selection?.omitted)>0?'저장된 선별 결과 · 제외 '+Number(I.selection.omitted)+'개':'45,000자 이하 · 전체 포함'}${!I.hasOriginal?' · AI 원문 합산 전 예상':''}${I.restored?' · 서버 복원 후 재계산 대기':''}</p>
     </section>`;
   }
   function injRows() {
@@ -14123,9 +14229,9 @@ function createWishUI(AD) {
   }
   function vCheck(){const m=V.memory,c=V.cog,u=V.unified||{},I=V.inj;
  const tile=(kind,label,count,total,on,action)=>{const left=Math.max(0,total-count),done=Math.min(1,count/Math.max(1,total));return '<div class="m3-tile" data-key="home-'+kind+'">'+ring(done,COL[kind])+ '<div class="m3-txt"><div class="m3-k">'+label+'</div><div class="m3-v">'+(on?left+'<small>턴 뒤</small>':'일시정지')+'</div><div class="m3-ts">미처리 확정 '+count+'/'+total+'턴</div></div>'+(V.job?'':btn('지금 정리',action,{cls:'quiet mini'}))+'</div>';};
- const status=I.armed?(I.verified?'<span class="m3-home-verification ok">'+ic('check')+'서버 저장 확인됨 · 최신 AI 바로 이전 답변에 숨김 주입</span>':'<span class="m3-home-verification">'+ic('clock')+'서버 저장 확인 중…</span>'):'<span class="m3-muted">주입 대기</span>';
+ const status=I.armed?(I.verified?'<span class="m3-home-verification ok">'+ic('check')+'서버 저장 확인됨 · 최신 AI 바로 이전 답변에 숨김 주입</span>':I.error?'<span class="m3-home-verification" style="color:var(--m3-bad,#ef7d86)">'+ic('alert')+'주입 확인 실패 · 서버 재검증 필요</span>':'<span class="m3-home-verification">'+ic('clock')+'서버 저장 확인 중…</span>'):'<span class="m3-muted">주입 대기</span>';
  const fresh=V.fresh?.show?'<section class="m3-panel m3-focus" data-key="home-fresh"><b>'+esc(V.fresh.title||'새 방 시작 설정')+'</b><p>'+esc(V.fresh.desc||'')+'</p>'+btn('나중에','freshSkip',{cls:'quiet mini'})+btn('적용','freshApply',{cls:'primary mini'})+'</section>':'';
- return '<div class="m3-pagehead" data-key="home-head"><h2>확인 '+help(helpSections([['전달량','AI 원문과 주입 지침을 포함합니다. 한도 안이면 켜진 기억을 모두 넣고 초과하면 설정한 방식으로 선택합니다.'],['공통 안내·서식','연속성·인지 안내와 항목 제목, 구분자, 숨김 표식의 실제 길이입니다. 기억 본문은 각 분류에 따로 셉니다.'],['서버 저장 확인','현재 표시 내용과 저장된 주입본이 일치하고 서버 검증까지 끝났을 때만 확인됨으로 표시합니다. 복원 직후에는 전체 후보를 표시할 수 있으며, 실제 주입량은 다시 선별·검증한 뒤 확정됩니다.']]))+'</h2>'+status+'<span class="m3-auto-control m3-actions">'+btn('함께 정리','unifiedAll',{cls:'primary mini',dis:!!V.job})+btn(u.enabled?'자동 정리 일시정지':'자동 정리 시작','unifiedToggle',{cls:'quiet mini',icon:u.enabled?'pause':'play'})+'</span></div>'+fresh+capCard()+
+ return '<div class="m3-pagehead" data-key="home-head"><h2>확인 '+help(helpSections([['전달량','AI 원문과 주입 지침을 포함합니다. 한도 안이면 켜진 기억을 모두 넣고 초과하면 설정한 방식으로 선택합니다.'],['공통 안내·서식','연속성·인지 안내와 항목 제목, 구분자, 숨김 표식의 실제 길이입니다. 기억 본문은 각 분류에 따로 셉니다.'],['서버 저장 확인','현재 표시 내용과 저장된 주입본이 일치하고 서버 검증까지 끝났을 때만 확인됨으로 표시합니다. 확인 실패가 표시되면 오류가 끝없이 숨겨지지 않으며 서버 재검증으로 다시 시도할 수 있습니다.']]))+'</h2>'+status+'<span class="m3-auto-control m3-actions">'+btn('함께 정리','unifiedAll',{cls:'primary mini',dis:!!V.job})+btn(u.enabled?'자동 정리 일시정지':'자동 정리 시작','unifiedToggle',{cls:'quiet mini',icon:u.enabled?'pause':'play'})+'</span></div>'+fresh+capCard()+
  '<div class="m3-tiles" data-key="home-tiles">'+tile('log','기억 · 현재상태 · 날짜별 · 자료',m.committed,m.target,m.enabled,'unifiedMemory')+tile('cog','인지 · 호칭·말투',u.observePending||0,c.every,c.auto,'cogRe')+'</div>'+
  '<p class="m3-muted" data-key="auto-pause-scope">자동 정리 시작·일시정지는 모든 방의 기억·인물에 적용됩니다. 요약·백업·기억 주입은 각 설정을 따릅니다.</p>'+
  (u.error?'<section class="m3-panel m3-alert" data-key="home-error"><b>작업 확인</b><p>'+esc(u.error)+'</p>'+btn('다시 시도','unifiedRetry',{cls:'mini'})+'</section>':'')+
@@ -14248,12 +14354,12 @@ function createWishUI(AD) {
   function vSettings(){const u=V.unified||{},q=V.recall||{};
     const mode=q.semantic?(q.selector?'both':'semantic'):(q.selector?'priority':'local');
     const autoHelp=helpSections([['모든 방 공통','주기 저장을 누르면 기억·인물 묶음의 켜짐과 주기가 기존 방과 새 방에 함께 적용됩니다. 정리한 위치와 기억 내용은 방마다 유지합니다.'],['턴 계산','1턴은 USER 메시지와 AI 답변 한 쌍입니다. 리롤은 같은 턴이며 최신 1턴은 다음 답변 뒤 확정됩니다.'],['함께 처리','두 묶음의 주기가 겹치면 같은 AI 요청으로 처리합니다. 요약 메모리와 주입 후보 선별은 별도 설정입니다.']]);
-    const recallHelp=helpSections([['45,000자 기준','AI 원문과 안내문까지 한도 이하면 켜진 기억을 전부 넣습니다. 초과할 때만 아래 선택 방식이 작동합니다.'],['보호할 기억','현재상태·인지·호칭·켜진 캐릭터/OOC·고정 자료를 보호하고 일반 사건·자료는 카드 단위로 고릅니다.'],['AI 연결 실패','AI 선별에 실패하면 기본 순서로 대신 선택합니다.']]);
+    const recallHelp=helpSections([['45,000자 기준','AI 원문과 안내문까지 한도 이하면 켜진 기억을 전부 넣습니다. 초과할 때만 아래 선택 방식이 작동합니다.'],['보호할 기억','현재상태·인지·호칭·켜진 캐릭터/OOC·고정 자료를 보호하고 일반 사건·자료는 카드 단위로 고릅니다.'],['전송 대기 상한','AI 선별은 모든 후보 배치를 합쳐 최대 25초만 기다립니다. 시간 초과 또는 연결 실패 시 기본 순서로 대신 골라 전송을 계속합니다.']]);
     const advanced=`<section class="m3-panel" data-key="error-log-settings"><b class="m3-title-help">실패·주의 기록</b><p class="m3-muted">최근 작업 오류와 주의 사항을 확인합니다. API 키와 RP 원문은 기록하지 않습니다.</p><div class="m3-actions m3-topgap">${btn('실패 기록 보기','errorLogs',{cls:'mini',icon:'doc'})}</div></section><section class="m3-panel" data-key="automation-baseline"><b class="m3-title-help">자동 시작점 ${help('아직 정리하지 않은 과거 대화를 건너뛰고 이후 새 대화부터 셉니다. 저장된 기억·인지·자료는 유지합니다. 과거 내용을 다시 읽으려면 전체 재구축을 사용하세요.')}</b><p class="m3-muted">이 방의 미처리 대화를 건너뛰고 지금부터 새 대화를 셉니다. 저장된 기억·인지·자료는 유지합니다.</p><div class="m3-actions m3-topgap">${btn('지금으로 맞추기','memoryBase',{cls:'mini',icon:'clock'})}</div></section>`;
     return pageHead('설정')+
-      `<section class="m3-panel"><b class="m3-title-help">보조 AI 연결 ${help('기억·인물 정리, 요약, 주입 후보 선별에 같은 연결을 사용합니다. 별도 검색 API 키는 필요 없습니다.')}</b><p>${esc([V.ai.providerLabel,V.ai.model].filter(Boolean).join(' · '))}</p>${btn('연결 · 모델','api',{cls:'mini'})}</section>`+
+      `<section class="m3-panel"><b class="m3-title-help">보조 AI 연결 ${help('기억·인물 정리, 요약, 45,000자 초과 시 주입 후보 선별에 같은 연결을 사용합니다. 별도 검색 API 키는 필요 없습니다.')}</b><p>${esc([V.ai.providerLabel,V.ai.model].filter(Boolean).join(' · '))}</p>${btn('연결 · 모델','api',{cls:'mini'})}</section>`+
       `<section class="m3-panel" data-key="automation-settings"><div class="m3-panel-head"><b class="m3-title-help">자동 정리 ${help(autoHelp)}</b>${btn('주기 저장','unifiedSave',{cls:'mini'})}</div><p class="m3-muted m3-scope-hint">모든 방 공통 · 저장한 주기와 켜짐 설정 적용</p>${tog('기억 묶음','unified.memoryEnabled',u.memoryEnabled,'현재상태 · 날짜별 사건 · 자료')}${step('기억 정리 주기','unified.memoryEvery',u.memoryEvery,{max:100,unit:'턴마다'})}${tog('인물 묶음','unified.observeEnabled',u.observeEnabled,'인지 · 호칭 · 말투 · 은폐')}${step('인물 정리 주기','unified.observeEvery',u.observeEvery,{max:100,unit:'턴마다'})}</section>`+
-      `<section class="m3-panel" data-key="recall-settings"><div class="m3-panel-head"><b class="m3-title-help">한도 초과 시 기억 선택 ${help(recallHelp)}</b>${btn('선별 설정 저장','recallSave',{cls:'mini'})}</div><div class="m3-setting-row m3-recall-mode"><label for="wish-recall-mode">선택 방식</label>${selc('recall.mode',mode,[['local','기본 순서로 선택'],['priority','AI로 중요한 순서 선택'],['both','AI로 관련 기억 찾고 선택'],['semantic','관련 기억만 찾기 · 기본 순서 유지']],'m3-select',' id="wish-recall-mode" aria-label="한도 초과 시 기억 선택"')}</div><p class="m3-muted">45,000자 이하는 전부 전달 · 선별 AI 호출 없음</p>${helpToggle('표현이 달라도 기억 찾기','recall.semantic',q.semantic,'별칭·유사 표현·사건의 원인과 후속 관계를 함께 찾습니다. 확실한 관련 후보와 기본 검색의 직접 일치 후보를 남깁니다.')}${helpToggle('AI로 우선순위 정하기','recall.selector',q.selector,'현재 질문·미해결 약속·위험과 직접 연결된 후보부터 선택합니다. 두 옵션을 켜도 같은 후보 배치에서 함께 판단하며, 후보가 많으면 나누어 요청합니다.')}</section>`+
+      `<section class="m3-panel" data-key="recall-settings"><div class="m3-panel-head"><b class="m3-title-help">한도 초과 시 기억 선택 ${help(recallHelp)}</b>${btn('선별 설정 저장','recallSave',{cls:'mini'})}</div><div class="m3-setting-row m3-recall-mode"><label for="wish-recall-mode">선택 방식</label>${selc('recall.mode',mode,[['local','기본 순서로 선택'],['priority','AI로 중요한 순서 선택'],['both','AI로 관련 기억 찾고 선택'],['semantic','관련 기억만 찾기 · 기본 순서 유지']],'m3-select',' id="wish-recall-mode" aria-label="한도 초과 시 기억 선택"')}</div><p class="m3-muted">45,000자 이하는 전부 전달 · 초과 시 AI 선별은 전체 최대 25초 · 시간 초과/실패 시 로컬 선별 후 전송 계속</p>${helpToggle('표현이 달라도 기억 찾기','recall.semantic',q.semantic,'별칭·유사 표현·사건의 원인과 후속 관계를 함께 찾습니다. 확실한 관련 후보와 기본 검색의 직접 일치 후보를 남깁니다.')}${helpToggle('AI로 우선순위 정하기','recall.selector',q.selector,'현재 질문·미해결 약속·위험과 직접 연결된 후보부터 선택합니다. 두 옵션을 켜도 같은 후보 배치에서 함께 판단하며, 후보가 많으면 나누어 요청하되 전체 25초 상한을 공유합니다.')}</section>`+
       advanced;
   }
   const NAV = [['check', '확인', 'inbox'], ['memory', '기억', 'memory'], ['summary', '요약', 'doc'], ['lore', '자료집', 'book'], ['cognition', '인물', 'people'], ['tools', '자료 관리', 'tools'], ['settings', '설정', 'set']];
@@ -14431,7 +14537,7 @@ function createWishUI(AD) {
   function jobLabel() { if (V.job) return V.job.label || '결과 확인 중'; if (S.jobs.length) return S.jobs[S.jobs.length - 1].label; if (isRunning(V.bulk)) return '전체 재구축 · ' + bulkMain(V.bulk); return ''; }
   function vFoot() {
     const a = V.inj.armed, v = V.inj.verified;
-    return `<button type="button" class="m3-inject ${a ? 'on' : ''}" data-act="${a ? 'release' : 'arm'}"><span class="m3-dot"></span>${a ? '주입 해제' : '주입 시작'}</button>${btn('미리보기', 'preview', { cls: 'mini', icon: 'eye' })}${a ? btn('서버 재검증', 'reverify', { cls: 'quiet mini', icon: 'refresh', feat: 'reverify' }) : ''}<span class="m3-state">${a ? (v ? `서버 저장 확인됨 · ${fmt(V.inj.total)}자` : `서버 저장 확인 중${dots}`) : '주입 꺼짐 · 기억은 그대로'}</span>`;
+    return `<button type="button" class="m3-inject ${a ? 'on' : ''}" data-act="${a ? 'release' : 'arm'}"><span class="m3-dot"></span>${a ? '주입 해제' : '주입 시작'}</button>${btn('미리보기', 'preview', { cls: 'mini', icon: 'eye' })}${a ? btn('서버 재검증', 'reverify', { cls: 'quiet mini', icon: 'refresh', feat: 'reverify' }) : ''}<span class="m3-state">${a ? (v ? `서버 저장 확인됨 · ${fmt(V.inj.total)}자` : V.inj.error ? '주입 확인 실패 · 재검증 필요' : `서버 저장 확인 중${dots}`) : '주입 꺼짐 · 기억은 그대로'}</span>`;
   }
   function vOverlay() {
     const nl = navList(), idx = Math.max(0, nl.findIndex(t => t[0] === S.tab)), badge = { check: V.reviews.length, cognition: V.reviews.length };
@@ -14839,7 +14945,7 @@ function WUIInjectionView(room, candidates) {
  const hasOriginal=!!pending?.messageId&&!!original;
  const matchesSaved=hasOriginal&&!!block&&block===pending?.contextBlock;
  const verified=matchesSaved&&pending?.verified===true&&total<=allFitLimit(room);
- return {armed:!!pending,verified,total,max:allFitLimit(room),groups,items:plan,hasCarrier:!!pending?.messageId,hasOriginal,matchesSaved,selection:matchesSaved?pending.selection||null:null,restored:!!pending?.cloudRestoredAt&&!matchesSaved};
+ return {armed:!!pending,verified,total,max:allFitLimit(room),groups,items:plan,hasCarrier:!!pending?.messageId,hasOriginal,matchesSaved,selection:matchesSaved?pending.selection||null:null,error:String(pending?.lastSyncError||''),restored:!!pending?.cloudRestoredAt&&!matchesSaved};
 }
 
 function WUIReadModel(){let D,S,room,items;const opened=new Set(),dateLabel=v=>v?new Date(v).toLocaleString('ko-KR'):'';
@@ -14885,7 +14991,7 @@ async function WUISaveEditor(d){return await WLOG.run("편집 내용 검증·저
  if(d.type==='guide'){set('ed-body',x.text);}
  else if(d.type==='eSlot'){set('ed-title',x.title);set('ed-body',x.content);set('ed-alias',x.aliases);}
  else if(d.type==='eState'){set('ed-title',x.title);set('ed-body',x.body);}
- else if(d.type==='eLog'){const block=parseDatedLogBlocks(state.currentRoom.slots.find(s=>s.id==='logSummary')?.content||'')[ed.index];let heading=block?.heading||d.originalHeading;if(String(x.title)!==String(block?.events||'')||String(x.date)!==String(d.originalDate||''))heading='['+String(x.date||'날짜 미상')+(x.title?' - '+x.title:'')+']';if(parseDatedLogBlocks(heading+'\n'+String(x.body||'')).length!==1)throw Error('날짜 형식을 확인해 주세요. 예: 2026년 9월 18일');set('ed-title',heading);set('ed-body',x.body);}
+ else if(d.type==='eLog'){const block=parseDatedLogBlocks(state.currentRoom.slots.find(s=>s.id==='logSummary')?.content||'')[ed.index];let heading=block?.heading||d.originalHeading;if(String(x.title)!==String(block?.events||'')||String(x.date)!==String(d.originalDate||''))heading=formatDatedLogHeading(x.date||'날짜 미상',x.title||'사건');if(parseDatedLogBlocks(heading+'\n'+String(x.body||'')).length!==1)throw Error('날짜 형식을 확인해 주세요. 예: 2026년 9월 18일');set('ed-title',heading);set('ed-body',x.body);}
  else if(d.type==='eSpeech'){action='speech-save';for(const [key,value] of Object.entries({speaker:x.speaker,target:x.target,address:x.address,register:x.reg,note:x.note}))set('speech-'+key,value);}
  else if(d.type==='eSum'){action='summary-card-save';set('summary-title',x.title);set('summary-body',x.body);}
  else if(d.type==='ePack'){action='lore-pack-save';set('lore-pack-name',x.name);set('lore-pack-description',x.desc);}
