@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽 Wish RP Manager
 // @namespace    local.rp.context.manager
-// @version      2.4.6
+// @version      2.4.7
 // @description  Crack RP용 컨텍스트 주입·인지·자동 장기기억·자료집·Crack 요약 메모리·전체 재구축을 하나로 관리합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -30,6 +30,9 @@
 
 (function () {
   'use strict';
+  // 2.4.7: 최근·관련 기억만 먼저 고르는 하이브리드 회수를 복원하고 에리식 임베딩 의미검색을 다시 연결.
+  // 보조 AI 재검토는 제한된 후보에만, 전송 직전이 아닌 시작·응답 완료 뒤에 실행합니다.
+  // 40,000자 안전선과 서버 500 시 36,000자 1회 축소 규칙은 그대로 유지합니다.
   // 2.4.6: 서버 저장 안전선을 40,000자로 낮추고, 500일 때 36,000자로 1회 축소 재시도.
   // 후보·저장 로그는 그대로 보존하며 실제 carrier에 들어가는 선택본만 줄입니다.
   // 2.4.5: 서버 재검증을 전체 재계산에서 분리하고, 실제 Crack PATCH 경로 우선·직접 반영 검증·해제 오류 표시를 추가.
@@ -42,7 +45,7 @@
   // 설정 화면만 간소화하며 저장된 주기·선별 조합·기억·요약 데이터는 전환하지 않음.
  let WUI=null;
 
-  const SCRIPT_VERSION = '2.4.6';
+  const SCRIPT_VERSION = '2.4.7';
   const RUNTIME_KEY = '__WISH_RP_MANAGER_V1__';
   const RELOAD_GUARD_KEY = `WISH_RP_clean_reload_${SCRIPT_VERSION}`;
   const previousRuntime = window[RUNTIME_KEY];
@@ -1507,7 +1510,11 @@
     room.loreConfig = room.loreConfig && typeof room.loreConfig === 'object' ? room.loreConfig : {};
     room.loreConfig.version = 1;
     room.loreConfig.enabled = room.loreConfig.enabled !== false;
-    room.loreConfig.semanticEnabled = false; // 전체 포함/보조 AI 선별로 대체; 별도 임베딩 자동 호출 없음
+    // 2.4.6은 이 값을 매 로드마다 false로 덮어썼으므로, 최초 2.4.7 마이그레이션에서
+    // 에리식 의미검색을 한 번 복구합니다. 이후 사용자가 끈 선택은 그대로 존중합니다.
+    const hybridRecallUpgrade=Number(room.hybridRecallRevision||0)<1;
+    room.loreConfig.semanticEnabled = hybridRecallUpgrade ? true : room.loreConfig.semanticEnabled !== false;
+    room.hybridRecallRevision=1;
     room.loreConfig.maxEntries = normalizeIntegerRange(room.loreConfig.maxEntries, APP.defaultLoreEntries, 1, 10);
     room.loreConfig.budgetChars = normalizeIntegerRange(room.loreConfig.budgetChars, APP.defaultLoreBudgetChars, 800, 12000);
     room.loreConfig.embeddingModel = String(room.loreConfig.embeddingModel || APP.loreEmbeddingModel);
@@ -4754,7 +4761,7 @@ JSON 파일을 생성하기 전 내부적으로 확인한다. 이것은 빠진 �
     };
   }
 
-  function collectLogRecallCandidates(room, contextText = '', semanticScores = null) {
+  function collectLogRecallCandidates(room, contextText = '', semanticScores = null, relatedCandidateLimit = null) {
     const slot = (room.slots || []).find(s => s.id === 'logSummary');
     if (!slot?.enabled || !String(slot.content || '').trim()) return [];
     const blocks = parseDatedLogBlocks(slot.content);
@@ -4791,7 +4798,11 @@ JSON 파일을 생성하기 전 내부적으로 확인한다. 이것은 빠진 �
       const skip = new Set([...excludedKeys, ...occupied, ...recent.map(b => b.key)]);
       const relatedCount = Math.max(1, Math.min(4, Number(room.autoLogRelatedBlocks) || APP.defaultRelatedLogBlocks));
       const relatedCandidates = scoreRelatedLogBlocks(eligibleAuto, contextText, skip, room, semanticScores);
-      const relatedScored = relatedCandidates.slice(0, relatedCount);
+      const requestedCandidateCount = Number(relatedCandidateLimit);
+      const candidateCount = Number.isFinite(requestedCandidateCount) && requestedCandidateCount > 0
+        ? Math.max(relatedCount, Math.floor(requestedCandidateCount))
+        : relatedCount;
+      const relatedScored = relatedCandidates.slice(0, candidateCount);
       for (let relatedIndex = 0; relatedIndex < relatedScored.length; relatedIndex++) {
         const scored = relatedScored[relatedIndex];
         put(makeLogRecallItem(scored.block, slot, 'related-log', '관련로그', relatedLogReason(scored), {
@@ -5001,6 +5012,7 @@ JSON 파일을 생성하기 전 내부적으로 확인한다. 이것은 빠진 �
       speechRelations: [],
       speechConfig: { version:1, enabled:true },
       loreConfig: { version:1, enabled:true, semanticEnabled:true, maxEntries:APP.defaultLoreEntries, budgetChars:APP.defaultLoreBudgetChars, embeddingModel:APP.loreEmbeddingModel, embeddingDimensions:APP.loreEmbeddingDimensions, semanticThreshold:APP.loreSemanticThreshold },
+      hybridRecallRevision: 1,
       loreAutomation: { version:1, enabled:AUTO_LORE_DEFAULTS.enabled, intervalTurns:AUTO_LORE_DEFAULTS.intervalTurns, readTurns:AUTO_LORE_DEFAULTS.readTurns, initialized:false, lastProcessedMessageId:'', lastRunAt:0, lastStatus:'', lastError:'', failureCount:0, paused:false },
       logSemanticIndex: [],
       createdAt: nowIso(),
@@ -5318,46 +5330,24 @@ JSON 파일을 생성하기 전 내부적으로 확인한다. 이것은 빠진 �
         autoType:'cognition', recallReason:cognitionSnapshot.status || '인지 자동 정리',
       });
     }
-    // 실제 carrier까지 합쳐 서버 안전선(기본 40,000자) 이하면 켜진 기억을 모두 넣고,
-    // 초과할 때만 일반 날짜로그·자료 후보를 선별한다.
-    out.push(...allFitRecallItems(room, ctx));
+    // 전체 저장소는 그대로 두고, carrier에는 최근·관련 로그와 관련 자료만 먼저 고릅니다.
+    // 임베딩 의미검색은 비동기 갱신 경로에서 같은 후보를 보강합니다.
+    const budget = Number.isFinite(Number(contextBudget)) ? Number(contextBudget) : contextBudgetForPreview(room);
+    out.push(...allFitRecallItems(room, ctx, out, budget));
     return out;
   }
 
 
-  // 2.2.4: enumerate first; only select after measuring the entire carrier.
-  function allFitRecallItems(room, query = '') {
-    const out=[], slot=(room.slots||[]).find(s=>s.id==='logSummary');
-    if(slot?.enabled && String(slot.content||'').trim()) {
-      const blocks=parseDatedLogBlocks(slot.content), excluded=new Set((room.autoLogExcludedKeys||[]).map(String));
-      const pinned=new Set((room.autoLogPinnedKeys||[]).map(String)), manual=new Set((room.manualLogSelectedKeys||[]).map(String));
-      const scores=new Map(scoreRelatedLogBlocks(blocks,query,new Set(),room,null).map(x=>[x.block.key,x.score]));
-      for(const b of blocks) {
-        if(excluded.has(b.key))continue;
-        if(!room.autoLogRecallEnabled&&!pinned.has(b.key)&&!manual.has(b.key))continue;
-        const type=pinned.has(b.key)?'pinned-log':manual.has(b.key)?'manual-log':'all-log';
-        out.push(makeLogRecallItem(b,slot,type,'날짜로그',type==='all-log'?'전체 포함 후보':'사용자 선택',{score:scores.get(b.key)||0}));
-      }
-      if(!blocks.length && room.autoLogRecallEnabled)out.push({slotId:'logSummary',sourceSlotId:'logSummary',title:slot.title||'날짜로그',group:'log-auto',content:String(slot.content).trim(),autoType:'whole-log',totalTurns:0,usedTurns:0});
-    }
-    if(room.loreConfig?.enabled!==false) {
-      const scores=new Map(scoreLoreEntries(room,query,null).map(x=>[x.pack.scopeId+':'+x.entry.id,x]));
-      for(const pack of activeLorePacks(room))for(const entry of pack.entries||[]) {
-        if(!entry.enabled||entry.type==='speech'||entry.speechRule)continue;
-        const row=scores.get(pack.scopeId+':'+entry.id)||{pack,entry,score:Number(entry.priority||0)*.18,keywordScore:0,anchor:entry.anchor===true};
-        const item=makeLorePendingItem(row,'full');if(item.content)out.push(item);
-      }
-    }
-    return out;
-  }
-  function refreshAllFitRecall(room) {
-    const p=room.pending;if(!p)return;
-    const previous=new Map((p.items||[]).map(i=>[pendingItemIdentity(i),i]));
-    p.items=(p.items||[]).filter(i=>!['log','lore'].includes(injectionCadenceKind(i)));
-    for(const item of allFitRecallItems(room,room.autoRecallContextText||'')) {
-      const old=previous.get(pendingItemIdentity(item));
-      p.items.push({...item,totalTurns:0,usedTurns:0,turnStartUserId:old?.turnStartUserId||p.latestUserId||p.turnStartUserId});
-    }
+  // v2.4.7: 2.1 계열의 bounded recall을 복원합니다. 모든 로그·자료를 carrier 후보로
+  // 직렬화하지 않고, 최근/고정/직접 선택과 현재 맥락 관련 항목만 최종 서식으로 만듭니다.
+  function allFitRecallItems(room, query = '', baseItems = [], contextBudget = null, semanticVector = null) {
+    const limit = Number.isFinite(Number(contextBudget)) ? Number(contextBudget) : contextBudgetForPreview(room);
+    const logSlot=(room.slots||[]).find(slot=>slot.id==='logSummary');
+    const blocks=parseDatedLogBlocks(logSlot?.content||'');
+    const semanticScores=semanticLogScores(room,blocks,semanticVector);
+    const logs=logRecallItems(room,query,baseItems,limit,semanticScores);
+    const lore=loreRecallItems(room,query,[...baseItems,...logs],limit,semanticVector);
+    return [...logs,...lore];
   }
   const allFitRankCache=new Map();
   const RECALL_SELECTION_TIMEOUT_MS=25000;
@@ -9430,6 +9420,17 @@ const SummaryChanges=(()=>{
     }
   }
 
+  function semanticQueryCacheKey(room, query) {
+    const clean = stripAutomationNoise(String(query || ''), true).trim().slice(-4000);
+    if (!clean || room?.loreConfig?.semanticEnabled === false) return '';
+    return `${room.loreConfig.embeddingModel}|${room.loreConfig.embeddingDimensions}|${aiHashTiny(clean)}`;
+  }
+
+  function cachedSemanticQueryVector(room, query) {
+    const key=semanticQueryCacheKey(room,query);
+    return key ? (LORE_QUERY_VECTOR_CACHE.get(key)||null) : null;
+  }
+
   async function semanticQueryVector(room, query) {
     const clean = stripAutomationNoise(String(query || ''), true).trim().slice(-4000);
     if (!clean || room?.loreConfig?.semanticEnabled === false) return null;
@@ -9438,7 +9439,7 @@ const SummaryChanges=(()=>{
     const logSlot=(room.slots||[]).find(slot=>slot.id==='logSummary');
     const hasLogs=parseDatedLogBlocks(logSlot?.content||'').some(block=>{const row=logRows.get(String(block.key));return Array.isArray(row?.vector)&&row.sourceHash===logBlockSemanticHash(block)&&row.model===room.loreConfig.embeddingModel&&Number(row.dimensions)===Number(room.loreConfig.embeddingDimensions);});
     if (!hasLore && !hasLogs) return null;
-    const key = `${room.loreConfig.embeddingModel}|${room.loreConfig.embeddingDimensions}|${aiHashTiny(clean)}`;
+    const key = semanticQueryCacheKey(room,clean);
     if (LORE_QUERY_VECTOR_CACHE.has(key)) return LORE_QUERY_VECTOR_CACHE.get(key);
     // USER 전송 경로에서는 의미 검색 장애가 메시지 전송 자체를 오래 막지 않게 짧게 실패하고
     // 호출자가 키워드 기반 로컬 선택으로 계속 진행합니다. 인덱스 생성은 기본 120초를 유지합니다.
@@ -9582,10 +9583,122 @@ const SummaryChanges=(()=>{
     return lore.length;
   }
 
+  const HYBRID_REVIEW_TIMEOUT_MS=15000;
+  const hybridReviewCache=new Map();
+
+  function hybridRecallDirectMatch(room,item) {
+    const threshold=Number(room?.loreConfig?.semanticThreshold||APP.loreSemanticThreshold);
+    return Number(item?.recallKeywordScore??item?.recallCoreScore??0)>0
+      || Number(item?.recallSemanticScore||0)>=threshold;
+  }
+
+  async function reviewHybridRecallCandidates(room,query,items,{allowAi=false}={}) {
+    const rows=(items||[]).filter(item=>item?.autoType==='related-log'||item?.autoType==='related-lore').slice(0,24);
+    const cfg=recallSelectionSettings(room),settings=loadAiSettings();
+    const local={method:'local',error:'',scores:new Map(),cfg};
+    if(!allowAi||!(cfg.semantic||cfg.selector)||rows.length<2)return local;
+    if(!isAiProviderReady(settings))return {...local,method:'local-fallback',error:'보조 AI 연결 없음'};
+    const payload=rows.map((item,id)=>({
+      id,
+      title:String(item.title||''),
+      kind:injectionCadenceKind(item),
+      text:String(item.content||'').slice(0,4000),
+      local_match:hybridRecallDirectMatch(room,item),
+    }));
+    const key=JSON.stringify(['hybrid-v1',cfg,String(query||'').slice(-8000),payload,settings.provider,getAiSelectedModel(settings)]);
+    const cached=hybridReviewCache.get(key);
+    if(cached)return cached;
+    try{
+      const result=await callAiProvider(settings,RECALL_233_GUIDE,JSON.stringify({
+        mode:cfg,
+        query:String(query||'').slice(-8000),
+        scene_context:{current_state_excerpt:String(room.slots?.find(slot=>slot.id==='currentState')?.content||'').slice(0,5000),scope:'로컬·임베딩 검색으로 좁힌 후보만 재검토'},
+        candidates:payload,
+      }),{responseMimeType:'application/json',maxOutputTokens:2048,timeoutMs:HYBRID_REVIEW_TIMEOUT_MS,operationLabel:'선택된 기억 AI 재검토'});
+      const data=WLOG.parseJson(result.text,'선택된 기억 AI 재검토',result.diagnostic),valid=new Set(payload.map(row=>row.id)),seen=new Set(),scores=new Map();
+      if(!data||Object.keys(data).some(name=>name!=='scores')||!Array.isArray(data.scores)||data.scores.length!==payload.length)throw Error('후보 개수가 맞지 않는 AI 결과');
+      for(const row of data.scores){
+        if(!row||Object.keys(row).some(name=>!['id','relevance','related'].includes(name))||!valid.has(row.id)||seen.has(row.id)||!Number.isInteger(row.relevance)||row.relevance<0||row.relevance>100||typeof row.related!=='boolean')throw Error('유효하지 않은 AI 후보 재검토 결과');
+        seen.add(row.id);scores.set(pendingItemIdentity(rows[row.id]),{relevance:row.relevance,related:row.related});
+      }
+      const reviewed={method:'ai-review',error:'',scores,cfg};
+      hybridReviewCache.set(key,reviewed);while(hybridReviewCache.size>12)hybridReviewCache.delete(hybridReviewCache.keys().next().value);
+      return reviewed;
+    }catch(error){
+      WLOG.fail('선택된 기억 AI 재검토',error,{stage:'로컬·임베딩 순위 유지'});
+      return {...local,method:'local-fallback',error:String(error?.message||error)};
+    }
+  }
+
+  function orderHybridReviewedCandidates(room,items,review) {
+    const rows=[...(items||[])],cfg=review?.cfg||recallSelectionSettings(room),scores=review?.scores||new Map();
+    let eligible=rows;
+    if(review?.method==='ai-review'&&cfg.semantic){
+      eligible=rows.filter(item=>hybridRecallDirectMatch(room,item)||scores.get(pendingItemIdentity(item))?.related===true);
+    }
+    if(review?.method==='ai-review'&&cfg.selector){
+      eligible.sort((a,b)=>Number(scores.get(pendingItemIdentity(b))?.relevance||0)-Number(scores.get(pendingItemIdentity(a))?.relevance||0)
+        ||Number(b.recallScore||0)-Number(a.recallScore||0));
+    }
+    return eligible;
+  }
+
+  function fitHybridLoreItems(room,baseItems,candidates,contextBudget) {
+    const contextLimit=Number.isFinite(Number(contextBudget))?Number(contextBudget):contextBudgetForPreview(room);
+    const loreLimit=Math.min(Number(room?.loreConfig?.budgetChars||APP.defaultLoreBudgetChars),contextLimit);
+    const selected=[];let used=0;
+    for(const source of candidates||[]){
+      let item={...source,_loreLevels:source._loreLevels?{...source._loreLevels}:undefined};
+      let level=item.autoType==='pinned-lore'?'full':'compact';
+      let content=String(item._loreLevels?.[level]||item.content||'').trim();
+      if(!content)continue;
+      if(used+content.length>loreLimit){level='micro';content=String(item._loreLevels?.micro||'').trim();}
+      if(!content||used+content.length>loreLimit)continue;
+      item.content=content;item.compressionLevel=level;
+      if(buildContextBlockFromItems([...baseItems,...selected,item]).length>contextLimit)continue;
+      selected.push(item);used+=content.length;
+    }
+    return selected;
+  }
+
+  async function refreshHybridRecall(room,queryText,{allowAi=false,allowSemanticNetwork=true}={}) {
+    const pending=room?.pending;if(!pending)return {logs:0,lore:0,semanticUsed:false,reviewMethod:'local'};
+    const query=String(queryText||'').trim()||String(room.autoRecallContextText||'');
+    let vector=allowSemanticNetwork?null:cachedSemanticQueryVector(room,query),semanticError='';
+    if(allowSemanticNetwork){try{vector=await semanticQueryVector(room,query);}catch(error){semanticError=String(error?.message||error);}}
+    const logSlot=(room.slots||[]).find(slot=>slot.id==='logSummary'),blocks=parseDatedLogBlocks(logSlot?.content||'');
+    const semanticScores=semanticLogScores(room,blocks,vector);
+    const logTarget=Math.max(1,Math.min(4,Number(room.autoLogRelatedBlocks)||APP.defaultRelatedLogBlocks));
+    const logCandidates=collectLogRecallCandidates(room,query,semanticScores,Math.max(8,logTarget*3));
+    const fixedLogs=logCandidates.filter(item=>item.autoType!=='related-log');
+    const relatedLogs=logCandidates.filter(item=>item.autoType==='related-log');
+
+    const loreScored=room.loreConfig?.enabled===false?[]:scoreLoreEntries(room,query,vector);
+    const loreAnchors=loreScored.filter(row=>row.anchor).map((row,index)=>makeLorePendingItem(row,'full',index+1,loreScored.length)).filter(item=>item.content);
+    const loreTarget=Math.max(1,Math.min(10,Number(room.loreConfig?.maxEntries)||APP.defaultLoreEntries));
+    const relatedLore=loreScored.filter(row=>!row.anchor).slice(0,Math.max(8,loreTarget*3)).map((row,index)=>makeLorePendingItem(row,'compact',index+1,loreScored.length)).filter(item=>item.content);
+    const review=await reviewHybridRecallCandidates(room,query,[...relatedLogs,...relatedLore],{allowAi});
+    const chosenLogs=orderHybridReviewedCandidates(room,relatedLogs,review).slice(0,logTarget);
+    const chosenLore=orderHybridReviewedCandidates(room,relatedLore,review).slice(0,loreTarget);
+
+    const previous=new Map((pending.items||[]).map(item=>[pendingItemIdentity(item),item]));
+    const base=(pending.items||[]).filter(item=>!['log','lore'].includes(injectionCadenceKind(item)));
+    const budget=Math.max(0,allFitLimit(room)-String(pending.originalText||'').length-2);
+    const logs=fitLogItemsToBudget(room,base,[...fixedLogs,...chosenLogs],budget);
+    const lore=fitHybridLoreItems(room,[...base,...logs],[...loreAnchors,...chosenLore],budget);
+    const recalled=[...logs,...lore].map(item=>{
+      const old=previous.get(pendingItemIdentity(item));
+      return {...item,totalTurns:0,usedTurns:0,turnStartUserId:old?.turnStartUserId||pending.latestUserId||pending.turnStartUserId};
+    });
+    pending.items=[...base,...recalled];
+    room.lastLoreSearch={at:Date.now(),queryHash:aiHashTiny(query),semanticUsed:!!vector,semanticError,matchedLore:lore.length,matchedLogs:logs.filter(item=>item.autoType==='related-log').length,reviewMethod:review.method,reviewError:review.error};
+    return {logs:logs.length,lore:lore.length,semanticUsed:!!vector,semanticError,reviewMethod:review.method,reviewError:review.error};
+  }
+
   async function syncLoreMutation(room, reason = 'lore-change') {
     if (!room?.pending) return '';
     try {
-      replaceLorePendingItems(room, room.autoRecallContextText || '', null);
+      await refreshHybridRecall(room,room.autoRecallContextText||'',{allowAi:false,allowSemanticNetwork:false});
       await syncPendingCarrier(room, reason);
       return '';
     } catch (error) {
@@ -9594,19 +9707,12 @@ const SummaryChanges=(()=>{
   }
 
   async function refreshHybridRecallBeforeSend(room, queryText) {
-    if (!room?.pending) return;
-    const query = String(queryText || '').trim() || String(room.autoRecallContextText || '');
+    if (!room?.pending) return null;
+    const query=String(queryText||'').trim()||String(room.autoRecallContextText||'');
     room.autoRecallContextText=query;
-    let vector = null, semanticError = '';
-    try { vector = await semanticQueryVector(room, query); }
-    catch (error) { semanticError = String(error.message || error); }
-    const logSlot=(room.slots||[]).find(slot=>slot.id==='logSummary'), blocks=parseDatedLogBlocks(logSlot?.content||'');
-    const logScores=semanticLogScores(room,blocks,vector);
-    addAutoRelatedLogsToPending(room,query,logScores);
-    const loreCount=replaceLorePendingItems(room,query,vector);
-    const relatedLogCount=(room.pending.items||[]).filter(item=>item?.autoType==='related-log').length;
-    room.lastLoreSearch={at:Date.now(),queryHash:aiHashTiny(query),semanticUsed:!!vector,semanticError,matchedLore:loreCount,matchedLogs:relatedLogCount};
+    const result=await refreshHybridRecall(room,query,{allowAi:false,allowSemanticNetwork:true});
     delete room.pending.selection;
+    return result;
   }
 
   const WISH_LORE_CONVERSION_SCHEMA = {
@@ -10667,19 +10773,25 @@ const SummaryChanges=(()=>{
       const liveQuery=String(state.recallDraftByApiChatId.get(rid)||messageTextOf(latestUserText)||room.autoRecallContextText||'').slice(-12000);
       if(liveQuery.trim()){
         room.autoRecallContextText=liveQuery;
-        // 전체 후보는 아래에서 재구성하고, carrier 포함 서버 안전선 초과일 때만 AI 선별한다.
       }
     }
     if(reason!=='before-send'&&reason!=='before-reroll')room.autoRecallContextText=frame.messages.slice(0,APP.autoScanMessageLimit).map(m=>stripAutomationNoise(messageTextOf(m),true)).reverse().join('\n\n').slice(-12000);
     const latestId=String(messageIdOf(frame.latest)||'');
     const newId=String(messageIdOf(frame.carrier)||'');
+    const carrierChanged=p.baselineAssistantId!==latestId;
     // 새 carrier를 먼저 PATCH·검증한 뒤 이전 carrier를 치웁니다. 중간 갱신 오류가 나도
     // 마지막으로 검증된 주입을 서버에서 먼저 없애지 않는 원자적 handoff입니다.
     const previousCarrier=p.messageId&&p.messageId!==newId?{messageId:String(p.messageId),originalText:String(p.originalText||''),contextBlock:String(p.contextBlock||''),verified:!!p.verified,verifiedAt:Number(p.verifiedAt||0),...(p.previousCarrierCleanup?.messageId?{previousCarrierCleanup:structuredClone(p.previousCarrierCleanup)}:{}),...(Array.isArray(p.cleanupCarrierMessageIds)&&p.cleanupCarrierMessageIds.length?{cleanupCarrierMessageIds:[...p.cleanupCarrierMessageIds]}:{})}:null;
-    if(p.baselineAssistantId!==latestId){await refreshAutomaticMemories(room,frame.messages);refreshAutoRecentLogsToPending(room);}
+    if(carrierChanged){await refreshAutomaticMemories(room,frame.messages);refreshAutoRecentLogsToPending(room);}
     p.baselineAssistantId=latestId;p.latestUserId=frame.latestUserId;
     replaceSpeechPendingItem(room);
-    ensureDirectReleasePendingItems(room,p);refreshAllFitRecall(room);
+    ensureDirectReleasePendingItems(room,p);
+    if(reason==='start'||reason==='before-send'||reason==='before-reroll'||carrierChanged){
+      // USER 전송 직전에는 네트워크 의미검색·생성형 AI 재검토를 기다리지 않습니다.
+      // 입력 중/이전 갱신에서 준비된 임베딩이 있으면 사용하고, 없으면 로컬 키워드 결과로 즉시 진행합니다.
+      const beforeSend=reason==='before-send'||reason==='before-reroll';
+      await refreshHybridRecall(room,room.autoRecallContextText||'',{allowAi:!beforeSend,allowSemanticNetwork:!beforeSend});
+    }
     applyQuickItemSuppression(p);
     // 현재상태/인지/날짜로그/자료집은 유지턴으로 만료시키지 않고, 주입 ON/OFF만 적용합니다.
     for(const item of p.items||[])item.totalTurns=0;
@@ -10707,7 +10819,9 @@ const SummaryChanges=(()=>{
     if(!original)throw new Error('주입 대상 원문이 비어 있습니다.');
     const sourceStamp=allFitSourceStamp(room);
     const candidateItems=active;
-    let selection=await chooseAllFitItems(room,candidateItems,original,room.autoRecallContextText||'',{forceLocal:reason==='manual-recovery'});
+    // 관련 후보는 앞 단계에서 이미 에리 의미검색과 선택적 AI 재검토를 마쳤습니다.
+    // 최종 40k/36k 맞춤은 네트워크 없는 결정적 로컬 순서만 사용합니다.
+    let selection=await chooseAllFitItems(room,candidateItems,original,room.autoRecallContextText||'',{forceLocal:true});
     if(room.pending!==p||allFitSourceStamp(room)!==sourceStamp)throw Error('선별 중 기억 또는 설정이 변경되어 재적용을 보류했습니다. 다음 확인 때 새 자료로 다시 계산합니다.');
     active=selection.items;
     let block=buildContextBlockFromItems(active),injected=buildInjectedMessage(original,block);
@@ -10725,7 +10839,7 @@ const SummaryChanges=(()=>{
         const fallbackLimit=carrierFallbackLimit(room);
         if(!isServerPatch500(error)||injected.length<=fallbackLimit)throw error;
         status(`서버 저장 한도 재조정 중 · ${fallbackLimit.toLocaleString()}자`,false);
-        selection=await chooseAllFitItems(room,candidateItems,original,room.autoRecallContextText||'',{forceLocal:reason==='manual-recovery',limit:fallbackLimit});
+        selection=await chooseAllFitItems(room,candidateItems,original,room.autoRecallContextText||'',{forceLocal:true,limit:fallbackLimit});
         if(room.pending!==next||allFitSourceStamp(room)!==sourceStamp)throw Error('서버 재시도 준비 중 기억 또는 설정이 변경되어 재적용을 보류했습니다.');
         active=selection.items;block=buildContextBlockFromItems(active);injected=buildInjectedMessage(original,block);
         if(injected.length>fallbackLimit)throw new Error('서버 재시도용 주입 내용이 안전 한도를 넘습니다. 고정 항목을 줄여 주세요.');
@@ -13433,6 +13547,18 @@ merge는 같은 인지 질문을 가리키는 명백한 중복 정보에만 사�
     const detail=event.detail||{},rid=String(detail.apiChatId||'');
     if(rid&&detail.raw)void completed(rid,detail.raw);
   });
+  const semanticDraftPrefetchState=new Map();
+  const prefetchSemanticDraft=debounce(async()=>{
+    const rid=currentChat(),currentRoom=state.currentRoom,query=String(state.recallDraftByApiChatId.get(rid)||'').trim();
+    if(!rid||!currentRoom?.pending||String(apiChatIdOf(currentRoom)||'')!==rid||query.length<4||currentRoom.loreConfig?.semanticEnabled===false)return;
+    if(cachedSemanticQueryVector(currentRoom,query))return;
+    const previous=semanticDraftPrefetchState.get(rid)||{};
+    if(previous.running||Date.now()-Number(previous.at||0)<5000)return;
+    semanticDraftPrefetchState.set(rid,{running:true,at:Date.now()});
+    try{await semanticQueryVector(currentRoom,query);}
+    catch(error){console.info('[Wish] 입력 의미검색 미리 준비 실패 · 전송 시 로컬 검색 사용',String(error?.message||error));}
+    finally{semanticDraftPrefetchState.set(rid,{running:false,at:Date.now()});}
+  },1400);
   const updateDraftContext = debounce(async () => {
     const rid=currentChat(),composer=findCrackComposer();
     if(!rid || !composer)return;
@@ -13440,6 +13566,7 @@ merge는 같은 인지 질문을 가리키는 명백한 중복 정보에만 사�
     if(!draft.trim()){contextInput.delete(rid);state.recallDraftByApiChatId.delete(rid);await refreshCognitionContextSnapshot(rid,'현재 인지 안내').catch(()=>{});return;}
     contextInput.set(rid,draft.slice(-12000));
     state.recallDraftByApiChatId.set(rid,draft.slice(-12000));
+    prefetchSemanticDraft();
     await refreshCognitionContextSnapshot(rid,'현재 입력 관련 인지 안내').catch(()=>{});
   },650);
   document.addEventListener('input',event=>{
@@ -14302,7 +14429,7 @@ function createWishUI(AD) {
     return `<section class="m3-cap" data-key="cap"><div class="m3-cap-top"><div class="m3-cap-lab">${I.verified ? '서버 저장 확인된 주입량' : I.matchesSaved ? '서버 확인 전 주입량' : '갱신 전 후보 예상량'}</div><div class="m3-cap-num"><span data-count="${tot}">${fmt(tot)}</span></div><div class="m3-cap-den">/ ${fmt(max)}자 · ${Math.round(tot / max * 100)}%</div></div>
     ${capMeter()}
     <div class="m3-legend">${GKEYS.filter(k => g[k]).map(k => `<span style="--m3-c:${COL[k]}"><b></b>${KLABEL[k]}<em>${fmt(g[k])}</em></span>`).join('')}</div>
-    <p class="m3-muted" data-key="selection-threshold">${tot>max?fmt(max)+'자 초과 · 갱신 시 선별 필요 · 확정 주입량 아님':!I.matchesSaved?'현재 후보는 '+fmt(max)+'자 이하 · 갱신 시 최종 계산':Number(I.selection?.fullTotal)>max?'선별 전 '+fmt(I.selection.fullTotal)+'자 → '+(I.verified?'확인된 주입 ':'확인 대기 ')+fmt(tot)+'자 · '+(method.includes('server-backoff')?'서버 500 후 36,000자 안전 축소':method==='ai'?'AI 후보 선별':method==='local-fallback'?'AI 25초 초과/실패 후 로컬 선별':'로컬 선별')+' · 제외 '+Number(I.selection.omitted||0)+'개':Number(I.selection?.omitted)>0?'저장된 선별 결과 · 제외 '+Number(I.selection.omitted)+'개':fmt(max)+'자 이하 · 전체 포함'}${!I.hasOriginal?' · AI 원문 합산 전 예상':''}${I.restored?' · 서버 복원 후 재계산 대기':''}</p>
+    <p class="m3-muted" data-key="selection-threshold">${tot>max?fmt(max)+'자 초과 · 갱신 시 최종 맞춤 필요 · 확정 주입량 아님':!I.matchesSaved?'최근·관련 후보 계산 완료 · 갱신 시 최종 계산':Number(I.selection?.fullTotal)>max?'하이브리드 후보 '+fmt(I.selection.fullTotal)+'자 → '+(I.verified?'확인된 주입 ':'확인 대기 ')+fmt(tot)+'자 · '+(method.includes('server-backoff')?'서버 500 후 36,000자 안전 축소':'로컬 안전선 맞춤')+' · 제외 '+Number(I.selection.omitted||0)+'개':Number(I.selection?.omitted)>0?'저장된 안전선 맞춤 · 제외 '+Number(I.selection.omitted)+'개':'최근·관련 기억 선택 완료 · '+fmt(max)+'자 안전선 이내'}${!I.hasOriginal?' · AI 원문 합산 전 예상':''}${I.restored?' · 서버 복원 후 재계산 대기':''}</p>
     </section>`;
   }
   function injRows() {
@@ -14360,7 +14487,7 @@ function createWishUI(AD) {
     const t = [['state', '현재상태'], ['log', '날짜로그'], ['char', '캐릭터'], ['extra', '기타·OOC']].filter(([k]) => k !== 'speech' || has('speech'));
     if (!t.some(x => x[0] === S.mem)) S.mem = 'state';
     const sub = { state: mState, log: mLog, speech: mSpeech, char: mChar, extra: mExtra }[S.mem]();
-    return `${pageHead('기억 '+help(helpSections([['전체 포함','AI 원문과 안내문을 합쳐 40,000자 이하면 켜진 기억을 모두 포함합니다.'],['한도 초과','일반 날짜로그·자료를 설정한 방식으로 선별합니다. 현재상태·인지·호칭과 고정 기억은 보호합니다.'],['서버 500','40,000자 저장도 거부되면 같은 관련도 순위로 36,000자까지 한 번만 줄여 다시 시도합니다.'],['날짜로그 표시','카드 오른쪽은 호출 방식과 현재 주입 여부입니다. 주입 전에는 예정 상태로 표시하며 실제 전송 시 달라질 수 있습니다.']])), '<span class="m3-actions">'+(has('search') ? btn('검색', 'search', { cls: 'quiet mini', icon: 'search' }) : '')+btn('설정','nav',{arg:'settings',cls:'quiet mini',icon:'set'})+btn('기억 묶음 정리','unifiedMemory',{cls:'mini',icon:'spark'})+'</span>')}${tabs(t, S.mem, 'memSub')}<div class="m3-sub" data-key="mem-${S.mem}">${sub}</div>`;
+    return `${pageHead('기억 '+help(helpSections([['하이브리드 회수','전체 기억은 저장소에 보존하고, 최근 기억과 현재 맥락에 관련된 날짜로그·자료만 골라 주입합니다.'],['오래된 기억','에리식 의미검색과 키워드 검색이 전체 과거 기록에서 오래된 사건을 다시 찾습니다.'],['보조 AI 재검토','설정한 경우 제한된 후보만 응답 완료 뒤 재검토하며, USER 전송 직전에는 기다리지 않습니다.'],['안전선','40,000자 안전선은 유지하고 서버 500이면 같은 선택본을 36,000자까지 한 번만 줄입니다.']])), '<span class="m3-actions">'+(has('search') ? btn('검색', 'search', { cls: 'quiet mini', icon: 'search' }) : '')+btn('설정','nav',{arg:'settings',cls:'quiet mini',icon:'set'})+btn('기억 묶음 정리','unifiedMemory',{cls:'mini',icon:'spark'})+'</span>')}${tabs(t, S.mem, 'memSub')}<div class="m3-sub" data-key="mem-${S.mem}">${sub}</div>`;
   }
 
   /* ───────── 8. 화면: 요약 메모리 ───────── */
@@ -14389,7 +14516,7 @@ function createWishUI(AD) {
     const Lr=V.lore,packs=Lr.packs,groups=new Map();
     let total=0,on=0;
     for(const p of packs)for(const e of p.entries||[]){total++;if(p.active&&e.on!==false)on++;const type=e.type||'other';if(!groups.has(type))groups.set(type,[]);groups.get(type).push({p,e});}
-    const guide=helpSections([['전체와 팩별 설정','자료집 전체는 모든 팩의 주입을 한 번에 켜고 끕니다. 이 팩 포함은 해당 팩만 선택합니다. 전체를 꺼도 팩별 선택은 유지됩니다.'],['자료집 역할','세계관·아이템·복장·장소·조직·실제 대사 등 반복해서 참고할 내용을 보관합니다. 현재상태·날짜별 사건과 함께 정리하며 수동·보호 자료는 유지합니다.'],['주입 범위','사용 중인 팩의 켜진 자료를 포함합니다. AI 원문과 안내문까지 40,000자 이하면 전부 넣고, 초과하면 설정한 방식으로 선별합니다.'],['팩 관리','팩은 자료를 보관·공유하는 묶음입니다. 상단의 팩별 관리 카드에서 사용 여부, 추가, 편집, 내보내기를 관리합니다.'],['외부 재구축','TXT와 자료 지침을 외부 AI에 전달한 뒤 결과 JSON 하나를 가져오면 이 방의 자동 자료를 교체합니다. 일반·수동 보호 자료는 유지됩니다.']]);
+    const guide=helpSections([['전체와 팩별 설정','자료집 전체는 모든 팩의 주입을 한 번에 켜고 끕니다. 이 팩 포함은 해당 팩만 선택합니다. 전체를 꺼도 팩별 선택은 유지됩니다.'],['자료집 역할','세계관·아이템·복장·장소·조직·실제 대사 등 반복해서 참고할 내용을 보관합니다. 현재상태·날짜별 사건과 함께 정리하며 수동·보호 자료는 유지합니다.'],['주입 범위','사용 중인 팩의 켜진 자료 전체는 보존하고, 앵커와 현재 RP에 관련된 자료를 설정 개수·예산 안에서 골라 주입합니다.'],['팩 관리','팩은 자료를 보관·공유하는 묶음입니다. 상단의 팩별 관리 카드에서 사용 여부, 추가, 편집, 내보내기를 관리합니다.'],['외부 재구축','TXT와 자료 지침을 외부 AI에 전달한 뒤 결과 JSON 하나를 가져오면 이 방의 자동 자료를 교체합니다. 일반·수동 보호 자료는 유지됩니다.']]);
     const manager=packs.map(p=>`<section class="m3-panel" data-key="pack-manage-${esc(p.id)}"><div class="m3-toolbar"><div class="m3-control-copy"><b>${esc(p.name)}</b><small class="m3-muted">${(p.entries||[]).length}개${p.auto?' · 이 방 전용 자동 팩':''}</small></div>${chip('이 팩 포함','pack.active:'+p.id,p.active)}</div><p class="m3-muted">${esc(p.desc||'이 팩에 자료를 추가하거나 이름·설명을 편집합니다. 사용을 끄면 이 방의 참고 대상에서 빠집니다.')}</p><div class="m3-actions m3-topgap">${btn('자료 추가','enNew',{arg:p.id,cls:'mini',icon:'plus'})}${btn('팩 편집','packEdit',{arg:p.id,cls:'mini',icon:'edit'})}${btn('팩 내보내기','packExport',{arg:p.id,cls:'mini',icon:'down',feat:'packExport'})}</div></section>`).join('')||empty('자료집 팩이 없습니다.');
     const order=['item','world','outfit','place','organization','faction','ability','rule','key_quote','speech','character','event','other'];
     const entries=[...groups].sort(([a],[b])=>(order.includes(a)?order.indexOf(a):99)-(order.includes(b)?order.indexOf(b):99)).map(([type,rows])=>`<section class="m3-date-group" data-key="lore-type-${esc(type)}"><div class="m3-date-head"><b>${esc(L.lore[type]||type)}</b><small>${rows.length}개</small></div>${rows.map(({p,e})=>{const sp=e.speech,content=sp?`${sp.speaker} → ${sp.target}: “${sp.address}” · ${L.reg[sp.reg]||sp.reg||''}${sp.note?' · '+sp.note:''}`:e.full||e.compact||e.micro||'';return card('entry-'+p.id+'-'+e.id,esc(e.name),esc(p.name)+(e.prot?' · 수동 보호':e.auto?' · 자동':''),`<p>${esc(content)}</p>${(e.triggers||[]).length?`<div class="m3-aka">${e.triggers.map(t=>tag(esc(t))).join('')}</div>`:''}`,btn('편집','enEdit',{arg:p.id+'|'+e.id,cls:'mini',icon:'edit'}),tag(!Lr.enabled?'자료집 꺼짐':!p.active?'팩 꺼짐':e.on===false?'사용 안 함':e.anchor?'항상 참고':'사용 중',Lr.enabled&&p.active&&e.on!==false?'ok':''));}).join('')}</section>`).join('');
@@ -14440,12 +14567,12 @@ function createWishUI(AD) {
   function vSettings(){const u=V.unified||{},q=V.recall||{};
     const mode=q.semantic?(q.selector?'both':'semantic'):(q.selector?'priority':'local');
     const autoHelp=helpSections([['모든 방 공통','주기 저장을 누르면 기억·인물 묶음의 켜짐과 주기가 기존 방과 새 방에 함께 적용됩니다. 정리한 위치와 기억 내용은 방마다 유지합니다.'],['턴 계산','1턴은 USER 메시지와 AI 답변 한 쌍입니다. 리롤은 같은 턴이며 최신 1턴은 다음 답변 뒤 확정됩니다.'],['함께 처리','두 묶음의 주기가 겹치면 같은 AI 요청으로 처리합니다. 요약 메모리와 주입 후보 선별은 별도 설정입니다.']]);
-    const recallHelp=helpSections([['40,000자 안전선','AI 원문과 안내문까지 안전선 이하면 켜진 기억을 전부 넣습니다. 초과할 때만 아래 선택 방식이 작동합니다.'],['보호할 기억','현재상태·인지·호칭·켜진 캐릭터/OOC·고정 자료를 보호하고 일반 사건·자료는 카드 단위로 고릅니다.'],['서버 500 축소','40,000자 저장도 거부되면 같은 관련도 순위를 재사용해 36,000자까지 한 번만 줄입니다.'],['전송 대기 상한','AI 선별은 모든 후보 배치를 합쳐 최대 25초만 기다립니다. 시간 초과 또는 연결 실패 시 기본 순서로 대신 골라 전송을 계속합니다.']]);
+    const recallHelp=helpSections([['기본 회수','최근 날짜와 키워드·에리 의미검색으로 찾은 관련 날짜/자료만 먼저 고릅니다. 전체 저장 기억은 삭제되지 않습니다.'],['보조 AI 재검토','선택한 경우 로컬·의미검색으로 좁힌 후보만 다시 봅니다. 응답 완료 뒤 준비하며 USER 전송 직전에는 AI를 기다리지 않습니다.'],['보호할 기억','현재상태·인지·호칭·켜진 캐릭터/OOC·고정 자료를 보호하고 일반 사건·자료는 카드 단위로 고릅니다.'],['안전선','40,000자 안전선과 서버 500 시 36,000자 1회 축소 규칙은 그대로 유지합니다.']]);
     const advanced=`<section class="m3-panel" data-key="error-log-settings"><b class="m3-title-help">실패·주의 기록</b><p class="m3-muted">최근 작업 오류와 주의 사항을 확인합니다. API 키와 RP 원문은 기록하지 않습니다.</p><div class="m3-actions m3-topgap">${btn('실패 기록 보기','errorLogs',{cls:'mini',icon:'doc'})}</div></section><section class="m3-panel" data-key="automation-baseline"><b class="m3-title-help">자동 시작점 ${help('아직 정리하지 않은 과거 대화를 건너뛰고 이후 새 대화부터 셉니다. 저장된 기억·인지·자료는 유지합니다. 과거 내용을 다시 읽으려면 전체 재구축을 사용하세요.')}</b><p class="m3-muted">이 방의 미처리 대화를 건너뛰고 지금부터 새 대화를 셉니다. 저장된 기억·인지·자료는 유지합니다.</p><div class="m3-actions m3-topgap">${btn('지금으로 맞추기','memoryBase',{cls:'mini',icon:'clock'})}</div></section>`;
     return pageHead('설정')+
-      `<section class="m3-panel"><b class="m3-title-help">보조 AI 연결 ${help('기억·인물 정리, 요약, 40,000자 초과 시 주입 후보 선별에 같은 연결을 사용합니다. 별도 검색 API 키는 필요 없습니다.')}</b><p>${esc([V.ai.providerLabel,V.ai.model].filter(Boolean).join(' · '))}</p>${btn('연결 · 모델','api',{cls:'mini'})}</section>`+
+      `<section class="m3-panel"><b class="m3-title-help">보조 AI 연결 ${help('기억·인물 정리, 요약, 선택된 주입 후보 재검토에 같은 연결을 사용합니다. 에리 임베딩 의미검색은 Gemini API Key가 준비된 경우 사용합니다.')}</b><p>${esc([V.ai.providerLabel,V.ai.model].filter(Boolean).join(' · '))}</p>${btn('연결 · 모델','api',{cls:'mini'})}</section>`+
       `<section class="m3-panel" data-key="automation-settings"><div class="m3-panel-head"><b class="m3-title-help">자동 정리 ${help(autoHelp)}</b>${btn('주기 저장','unifiedSave',{cls:'mini'})}</div><p class="m3-muted m3-scope-hint">모든 방 공통 · 저장한 주기와 켜짐 설정 적용</p>${tog('기억 묶음','unified.memoryEnabled',u.memoryEnabled,'현재상태 · 날짜별 사건 · 자료')}${step('기억 정리 주기','unified.memoryEvery',u.memoryEvery,{max:100,unit:'턴마다'})}${tog('인물 묶음','unified.observeEnabled',u.observeEnabled,'인지 · 호칭 · 말투 · 은폐')}${step('인물 정리 주기','unified.observeEvery',u.observeEvery,{max:100,unit:'턴마다'})}</section>`+
-      `<section class="m3-panel" data-key="recall-settings"><div class="m3-panel-head"><b class="m3-title-help">한도 초과 시 기억 선택 ${help(recallHelp)}</b>${btn('선별 설정 저장','recallSave',{cls:'mini'})}</div><div class="m3-setting-row m3-recall-mode"><label for="wish-recall-mode">선택 방식</label>${selc('recall.mode',mode,[['local','기본 순서로 선택'],['priority','AI로 중요한 순서 선택'],['both','AI로 관련 기억 찾고 선택'],['semantic','관련 기억만 찾기 · 기본 순서 유지']],'m3-select',' id="wish-recall-mode" aria-label="한도 초과 시 기억 선택"')}</div><p class="m3-muted">40,000자 이하는 전부 전달 · 초과 시 AI 선별은 전체 최대 25초 · 서버 500이면 같은 순위로 36,000자까지 1회 축소</p>${helpToggle('표현이 달라도 기억 찾기','recall.semantic',q.semantic,'별칭·유사 표현·사건의 원인과 후속 관계를 함께 찾습니다. 확실한 관련 후보와 기본 검색의 직접 일치 후보를 남깁니다.')}${helpToggle('AI로 우선순위 정하기','recall.selector',q.selector,'현재 질문·미해결 약속·위험과 직접 연결된 후보부터 선택합니다. 두 옵션을 켜도 같은 후보 배치에서 함께 판단하며, 후보가 많으면 나누어 요청하되 전체 25초 상한을 공유합니다.')}</section>`+
+      `<section class="m3-panel" data-key="recall-settings"><div class="m3-panel-head"><b class="m3-title-help">선택된 기억 AI 재검토 ${help(recallHelp)}</b>${btn('재검토 설정 저장','recallSave',{cls:'mini'})}</div><div class="m3-setting-row m3-recall-mode"><label for="wish-recall-mode">재검토 방식</label>${selc('recall.mode',mode,[['local','에리·키워드 결과만 사용'],['priority','AI로 후보 순서 재검토'],['both','AI로 관련성·순서 재검토'],['semantic','AI로 관련성만 재검토']],'m3-select',' id="wish-recall-mode" aria-label="선택된 기억 AI 재검토"')}</div><p class="m3-muted">전체 기억 → 최근·관련 후보 제한 → 선택적 AI 재검토 · USER 전송 직전에는 AI 호출 없음 · 40,000/36,000자 안전선 유지</p>${helpToggle('AI로 관련성 재확인','recall.semantic',q.semantic,'에리·키워드 검색 후보 중 문맥상 무관한 후보를 보조 AI가 다시 확인합니다. 에리 임베딩 의미검색 자체는 이 설정과 별도로 유지됩니다.')}${helpToggle('AI로 우선순위 정하기','recall.selector',q.selector,'현재 질문·미해결 약속·위험과 직접 연결된 제한 후보부터 배치합니다. 실패하면 에리·키워드 순위를 그대로 사용합니다.')}</section>`+
       advanced;
   }
   const NAV = [['check', '확인', 'inbox'], ['memory', '기억', 'memory'], ['summary', '요약', 'doc'], ['lore', '자료집', 'book'], ['cognition', '인물', 'people'], ['tools', '자료 관리', 'tools'], ['settings', '설정', 'set']];
@@ -15097,7 +15224,7 @@ async function WUIDeleteMemory(kind,id){
  if(kind==='state'){const slot=room.slots.find(s=>s.id==='currentState'),rows=parseCurrentStateSections(slot?.content||'');if(!slot||!rows[Number(id)])return false;rows.splice(Number(id),1);slot.content=buildCurrentStateText(rows);}
  else if(kind==='log'){const slot=room.slots.find(s=>s.id==='logSummary'),rows=parseDatedLogBlocks(slot?.content||''),row=rows.find(b=>String(b.index)===String(id));if(!slot||!row)return false;slot.content=slot.content.slice(0,row.sourceStart)+slot.content.slice(row.sourceEnd);pruneLogSelectionKeys(room,parseDatedLogBlocks(slot.content));}
  else {const slot=room.slots.find(s=>s.id===id&&['character','extra'].includes(s.group));if(!slot)return false;if(slot.group==='character')room.deletedCharacterKeys=[...new Set([...(room.deletedCharacterKeys||[]),libraryItemKey(slot)])];room.slots=room.slots.filter(s=>s.id!==id);}
- if(room.pending){ensureDirectReleasePendingItems(room,room.pending);refreshAllFitRecall(room);applyQuickItemSuppression(room.pending);}
+ if(room.pending){ensureDirectReleasePendingItems(room,room.pending);applyQuickItemSuppression(room.pending);}
  try{await saveRoom(room);}catch(e){room.slots=before.slots;room.pending=before.pending;room.autoLogPinnedKeys=before.pins;room.manualLogSelectedKeys=before.manual;room.autoLogExcludedKeys=before.excluded;room.deletedCharacterKeys=before.deleted;throw e;}
  await WUISyncMemoryEdit(room);notify('기억 카드를 삭제했습니다.','success');renderModalIfOpen();return true;
 }
@@ -15173,7 +15300,7 @@ WUI_ADAPTER.bind['recall.mode']=value=>{
 for(const name of ['semantic','selector'])WUI_ADAPTER.bind['recall.'+name]=value=>{WUISettingsDraft()['recall.'+name]=!!value;};
  WUI_ADAPTER.act.recallSave=async()=>{const room=state.currentRoom,draft=WUISettingsDraft(),before=room.recallSelection,values=WUI_ADAPTER.vm().recall;
   room.recallSelection={semantic:!!values.semantic,selector:!!values.selector};try{await saveRoom(room);}catch(e){room.recallSelection=before;throw e;}
-  delete draft['recall.semantic'];delete draft['recall.selector'];allFitRankCache.clear();notify('후보 선별 설정을 저장했습니다. 다음 주입 계산부터 적용합니다.','success');};
+  delete draft['recall.semantic'];delete draft['recall.selector'];allFitRankCache.clear();hybridReviewCache.clear();notify('기억 재검토 설정을 저장했습니다. 다음 후보 갱신부터 적용합니다.','success');};
  for(const [key,field] of [['pol.char','characterEvery'],['pol.extra','extraEvery'],['cogInclude','cognitionEvery']])WUI_ADAPTER.bind[key]=async value=>{
   const room=state.currentRoom,before=room.injectionPolicy[field];room.injectionPolicy[field]=value?1:0;
   try{await saveRoom(room);}catch(e){room.injectionPolicy[field]=before;throw e;}
