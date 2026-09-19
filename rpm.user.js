@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽 Wish RP Manager
 // @namespace    local.rp.context.manager
-// @version      2.4.4
+// @version      2.4.5
 // @description  Crack RP용 컨텍스트 주입·인지·자동 장기기억·자료집·Crack 요약 메모리·전체 재구축을 하나로 관리합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -30,6 +30,7 @@
 
 (function () {
   'use strict';
+  // 2.4.5: 서버 재검증을 전체 재계산에서 분리하고, 실제 Crack PATCH 경로 우선·직접 반영 검증·해제 오류 표시를 추가.
   // 2.4.4: 45,000자 이하는 전체 주입, 초과 시에만 AI 선별하는 원래 규칙을 복원.
   // 선별 전체 대기는 25초로 제한하고 실패 시 로컬 순위로 이어 보내 무한 전송 대기를 차단.
   // 2.4.3: ISO·상대시점·작품 고유 달력 표기의 저장 회귀를 수정.
@@ -39,7 +40,7 @@
   // 설정 화면만 간소화하며 저장된 주기·선별 조합·기억·요약 데이터는 전환하지 않음.
  let WUI=null;
 
-  const SCRIPT_VERSION = '2.4.4';
+  const SCRIPT_VERSION = '2.4.5';
   const RUNTIME_KEY = '__WISH_RP_MANAGER_V1__';
   const RELOAD_GUARD_KEY = `WISH_RP_clean_reload_${SCRIPT_VERSION}`;
   const previousRuntime = window[RUNTIME_KEY];
@@ -5163,7 +5164,7 @@ JSON 파일을 생성하기 전 내부적으로 확인한다. 이것은 빠진 �
   // Crack API
   // ---------------------------------------------------------------------------
 
-  function apiRequest(method, url, body = undefined) {
+  function apiRequest(method, url, body = undefined, options = {}) {
     const token = getCookie('access_token');
     if (!token) return Promise.reject(new Error('로그인 토큰을 찾지 못했습니다. 페이지를 새로고침해 주세요.'));
 
@@ -5179,7 +5180,7 @@ JSON 파일을 생성하기 전 내부적으로 확인한다. 이것은 빠진 �
           'wrtn-locale': 'ko-KR',
         },
         data: body === undefined ? undefined : JSON.stringify(body),
-        timeout: 20000,
+        timeout: Math.max(1000, Math.min(120000, Number(options.timeoutMs) || 20000)),
         onload: res => {
           let parsed = null;
           try { parsed = res.responseText ? JSON.parse(res.responseText) : null; } catch (_) {}
@@ -5228,23 +5229,34 @@ JSON 파일을 생성하기 전 내부적으로 확인한다. 이것은 빠진 �
       const raw=messageTextOf(current);
       if(expectedCurrentText!==null?raw!==expectedCurrentText:normalizeLineBreaks(stripOurContextBlock(raw).text).trimEnd()!==normalizeLineBreaks(stripOurContextBlock(nextText).text).trimEnd())throw new Error('주입 준비 중 AI 원문이 바뀌었습니다. 최신 원문으로 다시 확인해 주세요.');
     }
-    // 실제 Crack 조사 자료에서 관찰된 v3 메시지 PATCH를 먼저 사용합니다.
-    // 구형 contents-api 경로는 호환 fallback으로만 남겨 전송 전 타임아웃 누적을 막습니다.
+    // 폴더의 Crack shared-core/번역기 레퍼런스가 실제 편집에 사용하는 contents-api v3를 우선합니다.
+    // crack-gen은 조회에는 쓰이지만 PATCH 2xx 뒤 본문이 바뀌지 않는 경우가 있어 성공 응답만 믿지 않습니다.
     const candidates = [
-      `https://crack-api.wrtn.ai/crack-gen/v3/chats/${chatId}/messages/${messageId}`,
-      `https://contents-api.wrtn.ai/character-chat/v3/chats/${chatId}/messages/${messageId}`,
-      `https://contents-api.wrtn.ai/character-chat/character-chats/${chatId}/messages/${messageId}`,
+      ['contents v3',`https://contents-api.wrtn.ai/character-chat/v3/chats/${chatId}/messages/${messageId}`],
+      ['crack-gen v3',`https://crack-api.wrtn.ai/crack-gen/v3/chats/${chatId}/messages/${messageId}`],
+      ['contents legacy',`https://contents-api.wrtn.ai/character-chat/character-chats/${chatId}/messages/${messageId}`],
     ];
-    let lastErr = null;
-    for (const url of candidates) {
+    const errors=[],deadline=Date.now()+30000,left=()=>Math.max(0,deadline-Date.now());
+    for (const [label,url] of candidates) {
+      if(left()<=0){errors.push('전체 PATCH 복구 제한 시간 30초 초과');break;}
       try {
-        await apiRequest('PATCH', url, { message: nextText });
-        return true;
+        await apiRequest('PATCH', url, { message: nextText }, {timeoutMs:Math.min(8000,left())});
+        // 일부 endpoint는 2xx를 반환하고도 실제 메시지를 바꾸지 않는다. GET으로 직접 확인한
+        // 경우에만 성공으로 끝내며, 미반영이면 다음 호환 endpoint를 시도한다.
+        let observed='';
+        for(let attempt=0;attempt<2;attempt++){
+          if(left()<=0)throw new Error('PATCH 반영 확인 제한 시간 30초 초과');
+          if(attempt)await sleep(Math.min(300,left()));
+          const checked=await apiRequest('GET',`https://crack-api.wrtn.ai/crack-gen/v3/chats/${chatId}/messages/${messageId}`,undefined,{timeoutMs:Math.min(6000,left())});
+          observed=messageTextOf(checked?.data||checked||{});
+          if(normalizeLineBreaks(observed)===normalizeLineBreaks(nextText))return true;
+        }
+        errors.push(`${label}: 성공 응답 뒤 서버 본문 미반영`);
       } catch (e) {
-        lastErr = e;
+        errors.push(`${label}: ${String(e?.message||e)}`);
       }
     }
-    throw lastErr || new Error('메시지 PATCH 실패');
+    throw new Error(`메시지 PATCH 실패 · ${errors.join(' / ')}`);
   }
 
   async function fetchRoomMeta(chatId) {
@@ -5371,12 +5383,13 @@ const RECALL_233_GUIDE = `너는 장기 RP용 기억 검색기이자 후보 우�
 - 현재상태·인지·호칭·칭호·켜진 캐릭터/OOC·고정 자료는 Manager가 보호한다. 일반 날짜별 사건·자료 후보만 평가한다. 후보에 담긴 비밀을 다른 인물이 안다고 바꾸거나 현재 호칭·칭호 규칙을 과거 자료로 대체하지 않는다.
 - 모든 제공 후보 ID에 대해 딱 한 번씩 0~100 정수 relevance와 boolean related를 반환한다. 배치가 달라도 동일한 척도를 사용한다. 제공되지 않은 ID와 별도 본문은 만들지 않는다.
 - JSON {"scores":[{"id":0,"relevance":90,"related":true}]}만 반환한다.`;
-async function chooseAllFitItems(room, items, original, query='') {
+async function chooseAllFitItems(room, items, original, query='', options={}) {
   const limit=allFitLimit(room),size=xs=>buildInjectedMessage(original,buildContextBlockFromItems(xs)).length,total=size(items);
   if(total<=45000)return {items,method:'all-fit',total,fullTotal:total,omitted:0,error:''};
   const required=items.filter(allFitRequired),optional=items.filter(i=>!allFitRequired(i));
   if(size(required)>limit)throw Error('현재상태·인지·호칭·켜진 캐릭터/OOC·고정 자료와 AI 원문만으로 '+limit.toLocaleString()+'자를 넘습니다. 고정 항목을 줄여 주세요. 원문과 저장 기억은 삭제하지 않았습니다.');
-  const cfg=recallSelectionSettings(room),settings=loadAiSettings();
+  // 수동 서버 복구는 같은 AI 장애를 다시 기다리지 않고 결정적인 로컬 순서로 재구성한다.
+  const cfg=options.forceLocal?{semantic:false,selector:false}:recallSelectionSettings(room),settings=loadAiSettings();
   const local=optional.map((item,id)=>({item,id})).sort((a,b)=>Number(b.item.recallScore||0)-Number(a.item.recallScore||0)||Number(b.item.logIndex||0)-Number(a.item.logIndex||0));
   const direct=item=>Number(item.recallKeywordScore??item.recallScore??0)>0;
   const payload=local.map(({item,id})=>({id,title:String(item.title||''),kind:injectionCadenceKind(item),text:String(item.content||''),local_match:direct(item)}));
@@ -9890,6 +9903,18 @@ const SummaryChanges=(()=>{
 
 
   const carrierOperations = new Map();
+  const manualCarrierActions = new Map();
+
+  function runManualCarrierAction(room,label,work) {
+    const key=String(apiChatIdOf(room)||room?.chatId||'');
+    const running=manualCarrierActions.get(key);
+    if(running)throw new Error(`${running.label} 이미 진행 중입니다. 완료 또는 오류 표시를 기다려 주세요.`);
+    let task;
+    task=WLOG.run(label,work).finally(()=>{if(manualCarrierActions.get(key)?.task===task)manualCarrierActions.delete(key);renderModalIfOpen();});
+    manualCarrierActions.set(key,{label,task,at:Date.now()});
+    renderModalIfOpen();
+    return task;
+  }
 
   const storageWrites=new Map(),roomLeases=new Map();
   async function withRoomExclusive(rid,work) {
@@ -9948,27 +9973,45 @@ const SummaryChanges=(()=>{
     return { verified: false, serverChars: lastText.length, text: lastText };
   }
 
-  async function reverifyPending(room) {
+  function reverifyPending(room) {
+    return runManualCarrierAction(room,'서버 재검증 중',()=>withCarrierOperation(room,async()=>{
+      try{return await reverifyPendingUnlocked(room);}
+      catch(error){if(room.pending){room.pending.lastSyncError=`서버 재검증 실패: ${String(error?.message||error)}`;room.pending.lastSyncErrorAt=Date.now();await saveRoom(room).catch(()=>{});renderModalIfOpen();}throw error;}
+    }));
+  }
+
+  async function reverifyPendingUnlocked(room) {
     const rid=String(apiChatIdOf(room)||''),gate=generationGates.get(rid);
     if(gate){const recovery=await recoverGenerationGate(rid,gate);if(recovery.pending)throw new Error('AI 생성 또는 리롤이 아직 진행 중입니다. 완료 후 서버 재검증을 눌러 주세요.');}
     const frame=stableFrame(await fetchRecentMessages(rid,50));
     if(frame.trailingUser)throw new Error('서버에 답변 대기 중인 USER가 있습니다. 생성 완료 또는 취소 후 확인해 주세요.');
-    if(room.pending)await withCarrierOperation(room,()=>reconcileStableCarrier(room,'manual-recovery',frame));
-    const p = room.pending;
+    let p = room.pending;
     if (!p) throw new Error('현재 예약된 임시 주입이 없습니다.');
+    // 실패 당시 아직 carrier/contextBlock이 만들어지지 않았다면 AI 없이 로컬 순서로 한 번만 복구한다.
+    if(!p.messageId||!p.contextBlock){await reconcileStableCarrier(room,'manual-recovery',frame);p=room.pending;}
+    if(!p?.messageId||!p?.contextBlock)throw new Error('재검증할 저장 주입본이 없습니다. 주입을 해제한 뒤 다시 시작해 주세요.');
     const current = await fetchMessage(apiChatIdOf(room), p.messageId);
     if (!current) throw new Error('carrier AI 메시지를 서버에서 다시 읽지 못했습니다.');
-    const text = messageTextOf(current);
-    const stripped = stripOurContextBlock(text);
-    const ok = stripped.found && normalizeLineBreaks(stripped.text) === normalizeLineBreaks(String(p.originalText || '').replace(/\s+$/, ''));
-    p.verified = ok;
-    p.verifiedAt = ok ? Date.now() : null;
-    p.serverChars = text.length;
-    if(ok){delete p.lastSyncError;delete p.lastSyncErrorAt;}
-    else{p.lastSyncError='서버 메시지에서 현재 Wish 주입 블록을 확인하지 못했습니다.';p.lastSyncErrorAt=Date.now();}
+    const text=messageTextOf(current),stripped=stripOurContextBlock(text);
+    // 서버에 마커가 없으면 현재 가시 본문을 원문으로 삼고, 저장해 둔 contextBlock만 재부착한다.
+    // 마커가 있더라도 Refiner 등이 가시 본문을 고쳤을 수 있으므로 서버의 최신 가시 본문을 보존한다.
+    const original=String(stripped.found?stripped.text:text).replace(/\s+$/,'');
+    if(!original)throw new Error('carrier AI 원문이 비어 있어 안전하게 재검증할 수 없습니다.');
+    const expected=buildInjectedMessage(original,p.contextBlock);
+    let verification;
+    if(normalizeLineBreaks(text)===normalizeLineBreaks(expected))verification={verified:true,serverChars:text.length};
+    else{
+      await patchMessage(rid,p.messageId,expected,text);
+      verification=await verifyInjectedCarrier(room,{...p,originalText:original},expected,2);
+    }
+    if(!verification.verified)throw new Error('저장 주입본을 다시 적용했지만 서버 본문과 일치하지 않습니다.');
+    p.originalText=original;p.originalChars=original.length;p.carrierChars=expected.length;p.verified=true;p.verifiedAt=Date.now();p.serverChars=verification.serverChars;
+    delete p.lastSyncError;delete p.lastSyncErrorAt;
+    savePendingBackup(room.chatId,p);
     await saveRoom(room);
     if (room.chatId === state.currentChatId) state.currentRoom = room;
-    return { verified: ok, text, serverChars: text.length };
+    sanitizeRenderedContextSoon();scheduleMessageInjectionMagnifier(40);
+    return { verified:true,text:expected,serverChars:verification.serverChars,repaired:normalizeLineBreaks(text)!==normalizeLineBreaks(expected) };
   }
 
   
@@ -10640,7 +10683,7 @@ const SummaryChanges=(()=>{
     const raw=messageTextOf(live),stripped=stripOurContextBlock(raw),original=stripped.found?stripped.text:raw;
     if(!original)throw new Error('주입 대상 원문이 비어 있습니다.');
     const sourceStamp=allFitSourceStamp(room);
-    const selection=await chooseAllFitItems(room,active,original,room.autoRecallContextText||'');
+    const selection=await chooseAllFitItems(room,active,original,room.autoRecallContextText||'',{forceLocal:reason==='manual-recovery'});
     if(room.pending!==p||allFitSourceStamp(room)!==sourceStamp)throw Error('선별 중 기억 또는 설정이 변경되어 재적용을 보류했습니다. 다음 확인 때 새 자료로 다시 계산합니다.');
     active=selection.items;
     const block=buildContextBlockFromItems(active),injected=buildInjectedMessage(original,block);
@@ -10691,7 +10734,11 @@ const SummaryChanges=(()=>{
   }
 
   function restorePending(room, reason = 'manual') {
-    return withCarrierOperation(room,()=>restorePendingUnlocked(room,reason));
+    const execute=()=>withCarrierOperation(room,async()=>{
+      try{return await restorePendingUnlocked(room,reason);}
+      catch(error){if(room.pending){room.pending.lastSyncError=`주입 해제 실패: ${String(error?.message||error)}`;room.pending.lastSyncErrorAt=Date.now();await saveRoom(room).catch(()=>{});renderModalIfOpen();}throw error;}
+    });
+    return reason==='manual'?runManualCarrierAction(room,'주입 해제 중',execute):execute();
   }
 
   async function restorePendingUnlocked(room, reason = 'manual') {
@@ -14232,6 +14279,7 @@ function createWishUI(AD) {
  const status=I.armed?(I.verified?'<span class="m3-home-verification ok">'+ic('check')+'서버 저장 확인됨 · 최신 AI 바로 이전 답변에 숨김 주입</span>':I.error?'<span class="m3-home-verification" style="color:var(--m3-bad,#ef7d86)">'+ic('alert')+'주입 확인 실패 · 서버 재검증 필요</span>':'<span class="m3-home-verification">'+ic('clock')+'서버 저장 확인 중…</span>'):'<span class="m3-muted">주입 대기</span>';
  const fresh=V.fresh?.show?'<section class="m3-panel m3-focus" data-key="home-fresh"><b>'+esc(V.fresh.title||'새 방 시작 설정')+'</b><p>'+esc(V.fresh.desc||'')+'</p>'+btn('나중에','freshSkip',{cls:'quiet mini'})+btn('적용','freshApply',{cls:'primary mini'})+'</section>':'';
  return '<div class="m3-pagehead" data-key="home-head"><h2>확인 '+help(helpSections([['전달량','AI 원문과 주입 지침을 포함합니다. 한도 안이면 켜진 기억을 모두 넣고 초과하면 설정한 방식으로 선택합니다.'],['공통 안내·서식','연속성·인지 안내와 항목 제목, 구분자, 숨김 표식의 실제 길이입니다. 기억 본문은 각 분류에 따로 셉니다.'],['서버 저장 확인','현재 표시 내용과 저장된 주입본이 일치하고 서버 검증까지 끝났을 때만 확인됨으로 표시합니다. 확인 실패가 표시되면 오류가 끝없이 숨겨지지 않으며 서버 재검증으로 다시 시도할 수 있습니다.']]))+'</h2>'+status+'<span class="m3-auto-control m3-actions">'+btn('함께 정리','unifiedAll',{cls:'primary mini',dis:!!V.job})+btn(u.enabled?'자동 정리 일시정지':'자동 정리 시작','unifiedToggle',{cls:'quiet mini',icon:u.enabled?'pause':'play'})+'</span></div>'+fresh+capCard()+
+ (I.error?'<section class="m3-panel m3-alert" data-key="injection-error"><b>주입 복구 필요</b><p style="white-space:pre-wrap;overflow-wrap:anywhere">'+esc(I.error)+'</p><div class="m3-actions m3-topgap">'+btn('저장본으로 재검증','reverify',{cls:'mini',icon:'refresh',dis:!!V.job})+btn('주입 해제','release',{cls:'danger mini',icon:'close',dis:!!V.job})+'</div></section>':'')+
  '<div class="m3-tiles" data-key="home-tiles">'+tile('log','기억 · 현재상태 · 날짜별 · 자료',m.committed,m.target,m.enabled,'unifiedMemory')+tile('cog','인지 · 호칭·말투',u.observePending||0,c.every,c.auto,'cogRe')+'</div>'+
  '<p class="m3-muted" data-key="auto-pause-scope">자동 정리 시작·일시정지는 모든 방의 기억·인물에 적용됩니다. 요약·백업·기억 주입은 각 설정을 따릅니다.</p>'+
  (u.error?'<section class="m3-panel m3-alert" data-key="home-error"><b>작업 확인</b><p>'+esc(u.error)+'</p>'+btn('다시 시도','unifiedRetry',{cls:'mini'})+'</section>':'')+
@@ -14536,8 +14584,8 @@ function createWishUI(AD) {
   }
   function jobLabel() { if (V.job) return V.job.label || '결과 확인 중'; if (S.jobs.length) return S.jobs[S.jobs.length - 1].label; if (isRunning(V.bulk)) return '전체 재구축 · ' + bulkMain(V.bulk); return ''; }
   function vFoot() {
-    const a = V.inj.armed, v = V.inj.verified;
-    return `<button type="button" class="m3-inject ${a ? 'on' : ''}" data-act="${a ? 'release' : 'arm'}"><span class="m3-dot"></span>${a ? '주입 해제' : '주입 시작'}</button>${btn('미리보기', 'preview', { cls: 'mini', icon: 'eye' })}${a ? btn('서버 재검증', 'reverify', { cls: 'quiet mini', icon: 'refresh', feat: 'reverify' }) : ''}<span class="m3-state">${a ? (v ? `서버 저장 확인됨 · ${fmt(V.inj.total)}자` : V.inj.error ? '주입 확인 실패 · 재검증 필요' : `서버 저장 확인 중${dots}`) : '주입 꺼짐 · 기억은 그대로'}</span>`;
+    const a = V.inj.armed, v = V.inj.verified, busy=!!V.job;
+    return `<button type="button" class="m3-inject ${a ? 'on' : ''}" data-act="${a ? 'release' : 'arm'}"${busy?' disabled':''}><span class="m3-dot"></span>${a ? '주입 해제' : '주입 시작'}</button>${btn('미리보기', 'preview', { cls: 'mini', icon: 'eye' })}${a ? btn('서버 재검증', 'reverify', { cls: 'quiet mini', icon: 'refresh', feat: 'reverify', dis:busy }) : ''}<span class="m3-state">${a ? (v ? `서버 저장 확인됨 · ${fmt(V.inj.total)}자` : V.inj.error ? '주입 확인 실패 · 재검증 필요' : `서버 저장 확인 중${dots}`) : '주입 꺼짐 · 기억은 그대로'}</span>`;
   }
   function vOverlay() {
     const nl = navList(), idx = Math.max(0, nl.findIndex(t => t[0] === S.tab)), badge = { check: V.reviews.length, cognition: V.reviews.length };
@@ -15029,6 +15077,8 @@ const WUI_ACTION_MAP={arm:'arm',release:'release',reverify:'reverify',cogRe:'cog
 const WUI_ADAPTER={isChatPath:path=>!!getChatIdFromPath(path),vm:WUIReadModel,act:Object.fromEntries(Object.entries(WUI_ACTION_MAP).map(([name,action])=>[name,async arg=>{const room=state.currentRoom,key=String(apiChatIdOf(room)),before={...(WUICache.settings.get(key)||{})};const ok=await WUIInvoke(action,arg);if(ok){WUIClearSavedDraft(key,name,before);WUIRefreshSettings();}return ok;}])),bind:{},save:WUISaveEditor,remove:WUIRemoveEditor,
  onOpen(){void WUIOnOpen().catch(e=>notify(e.message,'error'));},onClose(){state.modal=null;},onNav(tab,sub){state.v2Tab=tab;state.v2MemoryView=tab==='cognition'?'cog-'+(sub==='review'?'reviews':'facts'):sub==='char'?'character':sub||state.v2MemoryView;if(tab==='summary')void loadSummaryMemoryView(state.currentRoom,{force:true}).catch(e=>notify(e.message,'error'));v2ScheduleAsyncRefresh(state.currentRoom);},onRoute(){WUICache.settings.clear();},loadLayout(){try{return JSON.parse(localStorage.getItem('wish-m3-layout')||'null');}catch{return null;}},saveLayout(layout){localStorage.setItem('wish-m3-layout',JSON.stringify(layout));},copy:copyPlainText};
 Object.assign(WUI_ADAPTER.act,{
+ release:()=>restorePending(state.currentRoom,'manual'),
+ reverify:async()=>{const result=await reverifyPending(state.currentRoom);notify(result.repaired?'저장된 주입본을 서버에 복구하고 재검증했습니다.':'서버 재검증 성공 ✓','success',5000);renderModalIfOpen();return result;},
  memoryBase:WUIResetMemoryBaseline,
  spSourceEdit:id=>{const x=resolvedSpeechRelations(state.currentRoom).find(r=>r.id===id);if(x?.sourcePackId)return WUIEditor('entry',x.sourceEntryId,{pack:x.sourcePackId});},spSourceDel:id=>{const x=resolvedSpeechRelations(state.currentRoom).find(r=>r.id===id);if(x?.sourcePackId)return WUIInvoke('lore-entry-delete','',{}, {type:'lore-entry',packId:x.sourcePackId,entryId:x.sourceEntryId});},
 
