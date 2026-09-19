@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽 Wish RP Manager
 // @namespace    local.rp.context.manager
-// @version      2.4.0
+// @version      2.4.1
 // @description  Crack RP용 컨텍스트 주입·인지·자동 장기기억·자료집·Crack 요약 메모리·전체 재구축을 하나로 관리합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -35,7 +35,7 @@
   // 설정 화면만 간소화하며 저장된 주기·선별 조합·기억·요약 데이터는 전환하지 않음.
  let WUI=null;
 
-  const SCRIPT_VERSION = '2.4.0';
+  const SCRIPT_VERSION = '2.4.1';
   const RUNTIME_KEY = '__WISH_RP_MANAGER_V1__';
   const RELOAD_GUARD_KEY = `WISH_RP_clean_reload_${SCRIPT_VERSION}`;
   const previousRuntime = window[RUNTIME_KEY];
@@ -5720,7 +5720,7 @@ async function chooseAllFitItems(room, items, original, query='') {
   }
 
 
-  function openContextPreviewDialog(room,items){return WUI.openSheet('viewer',{text:room.pending?.contextBlock||buildContextBlockFromItems(items),desc:room.pending?'현재 주입 데이터':'주입 후보 원문'});}
+  function openContextPreviewDialog(room,items){const view=WUIInjectionView(room,items);return WUI.openSheet('viewer',{text:buildContextBlockFromItems(safeMemoryItems(room,items)),desc:view.verified?'서버 저장 확인된 주입 원문':'주입 후보 원문 · 서버 반영 확인 전',candidate:!view.verified});}
 
   function backupRoomSummary(room) {
     const slots = Array.isArray(room?.slots) ? room.slots : [];
@@ -13997,8 +13997,8 @@ function createWishUI(AD) {
   const clone = o => JSON.parse(JSON.stringify(o ?? null));
 
   /* ───────── 2. 분류 색 · 라벨 (V.labels로 덮어쓸 수 있음) ───────── */
-  const COL = { state: '#7f9fd8', speech: '#6fb0c2', cog: '#7ab7a4', char: '#d394b1', extra: '#b992c0', lore: '#929ad0', log: '#d5a86a', guide: '#9aa3b4', orig: '#7e8796', summary: '#c49a82' };
-  const KLABEL = { state: '현재상태', speech: '호칭·말투', cog: '인지', char: '캐릭터', extra: '기타·OOC', lore: '자료집', log: '날짜로그', guide: '공통 안내', orig: '기존 AI 답변' };
+  const COL = { state: '#7f9fd8', speech: '#6fb0c2', cog: '#7ab7a4', char: '#d394b1', extra: '#b992c0', lore: '#929ad0', log: '#d5a86a', misc: '#a99caa', guide: '#9aa3b4', orig: '#7e8796', summary: '#c49a82' };
+  const KLABEL = { state: '현재상태', speech: '호칭·말투', cog: '인지', char: '캐릭터', extra: '기타·OOC', lore: '자료집', log: '날짜로그', misc: '기타 기억', guide: '공통 안내·서식', orig: '기존 AI 답변' };
   const L = { reg: { honorific: '존댓말', banmal: '반말', mixed: '상황별 혼용', other: '기타' },
     lore: { world: '세계관', item: '아이템', outfit: '복장', key_quote: '핵심 대사', ability: '능력', speech: '호칭·말투', place: '장소', organization: '조직', faction: '세력', rule: '규칙', character: '인물', event: '사건', other: '기타' },
     fact: { identity: '정체', plan: '계획', event: '사건', relationship: '관계', location: '장소', object: '물건', secret: '비밀', other: '기타' },
@@ -14097,9 +14097,9 @@ function createWishUI(AD) {
   const SP = '<span class="m3-sp"></span>';
 
   /* ───────── 6. 화면: 확인 ───────── */
-  const GKEYS = ['state', 'speech', 'cog', 'char', 'extra', 'lore', 'log', 'guide', 'orig'];
+  const GKEYS = ['state', 'speech', 'cog', 'char', 'extra', 'lore', 'log', 'misc', 'guide', 'orig'];
   function capMeter() {
-    const g=V.inj.groups,max=V.inj.max||45000;let used=0;const marks=[];
+    const g=V.inj.groups,max=Math.max(V.inj.max||45000,V.inj.total||0);let used=0;const marks=[];
     const bars=GKEYS.map(k=>{const n=Math.max(0,Number(g[k])||0),pct=n/max*100,mid=(used+n/2)/max*100;used+=n;
       if(n&&pct<.6)marks.push(`<b style="left:clamp(0px,calc(${mid}% - 1.5px),calc(100% - 3px));background:${COL[k]}" data-tip="${KLABEL[k]} ${fmt(n)}자 · 작은 비중의 위치 표시"></b>`);
       return `<i class="${n?'':'z'}" style="width:${pct}%;background:${COL[k]}" data-tip="${KLABEL[k]} ${fmt(n)}자"></i>`;
@@ -14108,15 +14108,15 @@ function createWishUI(AD) {
   }
   function capCard() {
     const I = V.inj, g = I.groups, max = I.max || 45000, tot = I.total;
-    return `<section class="m3-cap" data-key="cap"><div class="m3-cap-top"><div class="m3-cap-lab">${I.armed ? '현재 주입 중' : '다음 주입 예정'} · 이번 턴에 AI가 받는 컨텍스트</div><div class="m3-cap-num"><span data-count="${tot}">${fmt(tot)}</span></div><div class="m3-cap-den">/ ${fmt(max)}자 · ${Math.round(tot / max * 100)}%</div></div>
+    return `<section class="m3-cap" data-key="cap"><div class="m3-cap-top"><div class="m3-cap-lab">${I.verified ? '서버 저장 확인된 주입량' : I.matchesSaved ? '서버 확인 전 주입량' : '갱신 전 후보 예상량'}</div><div class="m3-cap-num"><span data-count="${tot}">${fmt(tot)}</span></div><div class="m3-cap-den">/ ${fmt(max)}자 · ${Math.round(tot / max * 100)}%</div></div>
     ${capMeter()}
     <div class="m3-legend">${GKEYS.filter(k => g[k]).map(k => `<span style="--m3-c:${COL[k]}"><b></b>${KLABEL[k]}<em>${fmt(g[k])}</em></span>`).join('')}</div>
-    <p class="m3-muted" data-key="selection-threshold">${I.selection&&Number(I.selection.fullTotal)>45000?'선별 전 '+fmt(I.selection.fullTotal)+'자 → 실제 전달 '+fmt(tot)+'자 · 45,000자 초과로 '+(I.selection.method==='ai'?'AI 후보 선별':I.selection.method==='local-fallback'?'AI 실패 후 로컬 선별':'로컬 선별')+' · 제외 '+Number(I.selection.omitted||0)+'개':I.selection&&Number(I.selection.omitted)>0?'이전 버전의 선별 결과 · 다음 주입 갱신 때 45,000자 기준으로 다시 계산':'45,000자 이하 · AI 후보 선별 미실행'}${!I.hasCarrier?' · AI 원문 합산 전 예상':''}</p>
+    <p class="m3-muted" data-key="selection-threshold">${tot>max?'45,000자 초과 · 갱신 시 선별 필요 · 확정 주입량 아님':!I.matchesSaved?'현재 후보는 45,000자 이하 · 갱신 시 최종 계산':Number(I.selection?.fullTotal)>max?'선별 전 '+fmt(I.selection.fullTotal)+'자 → '+(I.verified?'확인된 주입 ':'확인 대기 ')+fmt(tot)+'자 · '+(I.selection.method==='ai'?'AI 후보 선별':I.selection.method==='local-fallback'?'AI 실패 후 로컬 선별':'로컬 선별')+' · 제외 '+Number(I.selection.omitted||0)+'개':Number(I.selection?.omitted)>0?'저장된 선별 결과 · 제외 '+Number(I.selection.omitted)+'개':'45,000자 이하 · 전체 포함'}${!I.hasOriginal?' · AI 원문 합산 전 예상':''}${I.restored?' · 서버 복원 후 재계산 대기':''}</p>
     </section>`;
   }
   function injRows() {
     const items = V.inj.items; if (!items.length) return empty('켜진 항목이 없습니다.');
-    return `<div class="m3-irows">${items.map(i => `<div class="m3-irow ${i.off ? 'is-off' : ''}" data-key="ir-${esc(i.key)}">${kind(i.label || KLABEL[i.kind] || '', COL[i.kind] || COL.guide)}<span class="m3-t"><b>${esc(i.title)}</b><small>${esc(i.off ? i.offReason||'주입에서 제외' : i.why || '')}</small></span><em>${fmt(i.size)}</em></div>`).join('')}</div>`;
+    return `<div class="m3-irows">${items.map(i => `<div class="m3-irow ${i.off ? 'is-off' : ''}" data-key="ir-${esc(i.rowKey??i.key)}">${kind(i.label || KLABEL[i.kind] || '', COL[i.kind] || COL.guide)}<span class="m3-t"><b>${esc(i.title)}</b><small>${esc(i.off ? i.offReason||'주입에서 제외' : i.why || '')}</small></span><em>${fmt(i.size)}</em></div>`).join('')}</div>`;
   }
   function reviewPanel(r) {
     return `<section class="m3-panel" data-key="rv-${esc(r.id)}" style="--cc:${COL.cog}"><div class="m3-row">${kind(r.kind || '인지', COL.cog)}<b class="m3-grow">${esc(r.desc)}</b></div>${r.quote ? `<blockquote class="m3-quote">${esc(r.quote)}</blockquote>` : ''}${r.acceptLabel ? '' : '<p class="m3-muted" style="margin-top:8px">바로 확정하기 어려운 항목이라 먼저 내용을 확인합니다.</p>'}<div class="m3-row m3-card-actions">${r.acceptLabel ? btn(esc(r.acceptLabel), 'rvAccept', { arg: r.id, cls: 'primary mini', icon: 'check' }) : btn('확인하기', 'rvOpen', { arg: r.id, cls: 'mini', icon: 'eye' })}${btn('이 후보 제외', 'rvDismiss', { arg: r.id, cls: 'quiet mini' })}</div></section>`;
@@ -14125,12 +14125,12 @@ function createWishUI(AD) {
  const tile=(kind,label,count,total,on,action)=>{const left=Math.max(0,total-count),done=Math.min(1,count/Math.max(1,total));return '<div class="m3-tile" data-key="home-'+kind+'">'+ring(done,COL[kind])+ '<div class="m3-txt"><div class="m3-k">'+label+'</div><div class="m3-v">'+(on?left+'<small>턴 뒤</small>':'일시정지')+'</div><div class="m3-ts">미처리 확정 '+count+'/'+total+'턴</div></div>'+(V.job?'':btn('지금 정리',action,{cls:'quiet mini'}))+'</div>';};
  const status=I.armed?(I.verified?'<span class="m3-home-verification ok">'+ic('check')+'서버 저장 확인됨 · 최신 AI 바로 이전 답변에 숨김 주입</span>':'<span class="m3-home-verification">'+ic('clock')+'서버 저장 확인 중…</span>'):'<span class="m3-muted">주입 대기</span>';
  const fresh=V.fresh?.show?'<section class="m3-panel m3-focus" data-key="home-fresh"><b>'+esc(V.fresh.title||'새 방 시작 설정')+'</b><p>'+esc(V.fresh.desc||'')+'</p>'+btn('나중에','freshSkip',{cls:'quiet mini'})+btn('적용','freshApply',{cls:'primary mini'})+'</section>':'';
- return '<div class="m3-pagehead" data-key="home-head"><h2>확인 '+help(helpSections([['전달량','AI 원문과 주입 지침을 포함합니다. 한도 안이면 켜진 기억을 모두 넣고 초과하면 설정한 방식으로 선택합니다.'],['서버 저장 확인','현재 주입본이 서버에 저장됐는지 확인한 상태입니다.']]))+'</h2>'+status+'<span class="m3-auto-control m3-actions">'+btn('함께 정리','unifiedAll',{cls:'primary mini',dis:!!V.job})+btn(u.enabled?'자동 정리 일시정지':'자동 정리 시작','unifiedToggle',{cls:'quiet mini',icon:u.enabled?'pause':'play'})+'</span></div>'+fresh+capCard()+
+ return '<div class="m3-pagehead" data-key="home-head"><h2>확인 '+help(helpSections([['전달량','AI 원문과 주입 지침을 포함합니다. 한도 안이면 켜진 기억을 모두 넣고 초과하면 설정한 방식으로 선택합니다.'],['공통 안내·서식','연속성·인지 안내와 항목 제목, 구분자, 숨김 표식의 실제 길이입니다. 기억 본문은 각 분류에 따로 셉니다.'],['서버 저장 확인','현재 표시 내용과 저장된 주입본이 일치하고 서버 검증까지 끝났을 때만 확인됨으로 표시합니다. 복원 직후에는 전체 후보를 표시할 수 있으며, 실제 주입량은 다시 선별·검증한 뒤 확정됩니다.']]))+'</h2>'+status+'<span class="m3-auto-control m3-actions">'+btn('함께 정리','unifiedAll',{cls:'primary mini',dis:!!V.job})+btn(u.enabled?'자동 정리 일시정지':'자동 정리 시작','unifiedToggle',{cls:'quiet mini',icon:u.enabled?'pause':'play'})+'</span></div>'+fresh+capCard()+
  '<div class="m3-tiles" data-key="home-tiles">'+tile('log','기억 · 현재상태 · 날짜별 · 자료',m.committed,m.target,m.enabled,'unifiedMemory')+tile('cog','인지 · 호칭·말투',u.observePending||0,c.every,c.auto,'cogRe')+'</div>'+
  '<p class="m3-muted" data-key="auto-pause-scope">자동 정리 시작·일시정지는 모든 방의 기억·인물에 적용됩니다. 요약·백업·기억 주입은 각 설정을 따릅니다.</p>'+
  (u.error?'<section class="m3-panel m3-alert" data-key="home-error"><b>작업 확인</b><p>'+esc(u.error)+'</p>'+btn('다시 시도','unifiedRetry',{cls:'mini'})+'</section>':'')+
  (V.reviews.length?'<section class="m3-panel" data-key="home-reviews"><b>이전 검토 '+V.reviews.length+'건</b>'+V.reviews.map(reviewPanel).join('')+'</section>':'')+
- '<section class="m3-panel" data-key="home-injection"><div class="m3-row m3-sp"><b>이번 턴에 들어가는 것</b><span class="m3-muted">'+fmt(I.total)+' / '+fmt(I.max)+'자</span></div>'+injRows()+'</section>';
+ '<section class="m3-panel" data-key="home-injection"><div class="m3-row m3-sp"><b>'+(I.verified?'확인된 주입 항목':'주입 후보 · 확인 대기')+'</b><span class="m3-muted">'+fmt(I.total)+' / '+fmt(I.max)+'자</span></div>'+injRows()+'</section>';
 }
 
   /* ───────── 7. 화면: 기억 ───────── */
@@ -14140,7 +14140,7 @@ function createWishUI(AD) {
     ${secs.map((s, i) => card('st-' + s.id, `${i + 1}. ${esc(s.title)}`, `${fmt(s.size)}자`, `<p>${esc(s.body)}</p>`, btn('편집', 'stEdit', { arg: s.id, cls: 'mini', icon: 'edit' }) + btn('삭제', 'stDel', { arg: s.id, cls: 'danger mini' }), '', COL.state)).join('') || (raw.trim() ? card('st-raw', '현재상태 원문', '섹션 구분 없이 저장된 내용 · 원문 편집으로 수정', `<div style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(raw)}</div>`, '', '', COL.state) : empty('현재상태가 비어 있습니다. 지금 갱신이나 원문 편집으로 채울 수 있어요.'))}`;
   }
   function logBadges(b) {
-    const actual=V.inj.armed?(b.included?'주입 중':'이번 주입 제외'):(b.included?'주입 예정':'현재 제외');
+    const actual=V.inj.verified?(b.included?'주입 중':'이번 주입 제외'):(b.included?'주입 후보':'현재 제외');
     const mode=b.ex?'자동 제외':b.pin?'항상 호출':b.man?'직접 선택':'';
     return `<span class="m3-log-badges">${mode?tag(mode,b.ex?'':b.pin?'warn':''):''}${tag(actual,b.included?'ok':'')}</span>`;
   }
@@ -14297,10 +14297,10 @@ function createWishUI(AD) {
     /* 내장: 주입 미리보기 — V.inj.items[].content 사용 */
     preview(d) {
       const items = V.inj.items.filter(i => !i.off);
-      return sheet(d, { title: V.inj.armed ? '현재 주입 중인 구성' : '다음 주입 구성', desc: `${fmt(V.inj.total)} / ${fmt(V.inj.max)}자 · 카드 ${items.length}개 · 위에서부터 순서대로`, wide: true, body: `${capMeter()}<div class="m3-topgap">${items.map((i, n) => card('pv-' + i.key, `<span class="m3-pvn">${String(n + 1).padStart(2, '0')}</span>${esc(i.title)}`, `${fmt(i.size)}자 · ${esc(i.why || '')}`, i.content ? `<pre class="m3-block">${esc(i.content)}</pre>` : '<p class="m3-muted">본문 미리보기 없음</p>', '', kind(i.label || KLABEL[i.kind] || '', COL[i.kind] || COL.guide), COL[i.kind] || COL.guide)).join('') || empty('주입할 항목이 없습니다.')}</div>`, foot: `${btn('전체 원문', 'viewer', { cls: 'quiet mini', icon: 'eye' })}${SP}${closeBtn(d)}` });
+      return sheet(d, { title: V.inj.verified ? '서버 저장 확인된 구성' : '주입 후보 · 확인 대기', desc: `${fmt(V.inj.total)} / ${fmt(V.inj.max)}자 · 카드 ${items.length}개 · 위에서부터 순서대로`, wide: true, body: `${capMeter()}<div class="m3-topgap">${items.map((i, n) => card('pv-' + (i.rowKey??i.key), `<span class="m3-pvn">${String(n + 1).padStart(2, '0')}</span>${esc(i.title)}`, `${fmt(i.size)}자 · ${esc(i.why || '')}`, i.content ? `<pre class="m3-block">${esc(i.content)}</pre>` : '<p class="m3-muted">본문 미리보기 없음</p>', '', kind(i.label || KLABEL[i.kind] || '', COL[i.kind] || COL.guide), COL[i.kind] || COL.guide)).join('') || empty('주입할 항목이 없습니다.')}</div>`, foot: `${btn('전체 원문', 'viewer', { cls: 'quiet mini', icon: 'eye' })}${SP}${closeBtn(d)}` });
     },
     /* props: { text, desc } */
-    viewer(d) { return sheet(d, { title: '이 메시지에 들어간 Wish 주입', desc: esc(d.desc || `${fmt(String(d.text || '').length)}자`), wide: true, body: `<div class="m3-status m3-ok m3-bottomgap">${ic('check')}<span>최신 AI 답변은 건드리지 않고, 그 바로 이전 AI 답변 뒤에 숨겨 붙인 내용입니다. 사용자에게는 보이지 않습니다.</span></div><pre class="m3-block tall">${esc(d.text || '')}</pre>`, foot: `${btn('복사', 'copyText', { arg: d.id, cls: 'mini', icon: 'copy' })}${SP}${closeBtn(d)}` }); },
+    viewer(d) { return sheet(d, { title: d.candidate ? 'Wish 주입 후보 원문' : '이 메시지에 들어간 Wish 주입', desc: esc(d.desc || `${fmt(String(d.text || '').length)}자`), wide: true, body: `<div class="m3-status m3-ok m3-bottomgap">${ic('check')}<span>${d.candidate?'갱신 전 후보입니다. 한도 선별과 서버 확인 뒤 실제 주입량이 확정됩니다.':'최신 AI 답변은 건드리지 않고, 그 바로 이전 AI 답변 뒤에 숨겨 붙인 내용입니다. 사용자에게는 보이지 않습니다.'}</span></div><pre class="m3-block tall">${esc(d.text || '')}</pre>`, foot: `${btn('복사', 'copyText', { arg: d.id, cls: 'mini', icon: 'copy' })}${SP}${closeBtn(d)}` }); },
     /* 내장: ui.confirm(title, body, okLabel, fn, danger) */
     confirm(d) { return sheet(d, { title: esc(d.title), body: `<p style="color:var(--m3-fg2);line-height:1.85">${esc(d.body)}</p>`, foot: `${SP}${closeBtn(d, '취소')}${btn(esc(d.okLabel || '확인'), 'cfOk', { arg: d.id, cls: d.danger ? 'danger' : 'primary', icon: d.danger ? 'alert' : 'check' })}` }); },
     /* 내장: 무엇을 갱신할까요 → act aiUpdate('state'|'log') */
@@ -14822,6 +14822,26 @@ const WUI_FIELD_MAP={
  'sum.enabled':'summary-enabled','sum.interval':'summary-interval','sum.read':'summary-read','sum.exclude':'summary-exclude','sum.context':'summary-context','sum.max':'summary-max','sum.target':'summary-target','sum.protect':'summary-protect',
  'lore.enabled':'lore-enabled','lore.sem':'lore-semantic','lore.max':'lore-max','lore.dens':'lore-density','lore.auto.enabled':'lore-auto-enabled','lore.auto.interval':'lore-auto-interval','lore.auto.read':'lore-auto-read'};
 
+function WUIInjectionView(room, candidates) {
+ const pending=room.pending, active=safeMemoryItems(room,candidates).filter(i=>String(i.content||'').trim());
+ const groups={}, keys=new Set(active.map(pendingItemIdentity));
+ const kindOf=i=>({currentState:'state',cognition:'cog',speech:'speech',log:'log',lore:'lore',character:'char',extra:'extra'})[injectionCadenceKind(i)] || (i.sourceSlotId==='currentState'?'state':i.slotId==='__lore'?'lore':'misc');
+ const row=(i,n,off=false,isActive=true)=>({key:pendingItemIdentity(i)||String(n),rowKey:String(n),kind:kindOf(i),sourceKey:i.sourceKey||'',title:i.title||itemCategory(i),why:i.reason||remainingLabelForItem(i),size:safeForHtmlComment(String(i.content||'').trim()).length,content:i.content||'',off,offReason:off?injectionExclusionReason(room,i,isActive):''});
+ // Count every emitted occurrence; the quick-edit map intentionally deduplicates identities.
+ const plan=active.map((i,n)=>row(i,n));
+ if(pending)for(const entry of quickManageItems(pending))if(!keys.has(entry.key))plan.push(row(entry.item,plan.length,true,entry.active));
+ for(const item of plan)if(!item.off)groups[item.kind]=(groups[item.kind]||0)+item.size;
+ const block=buildContextBlockFromItems(active), original=stripOurContextBlock(String(pending?.originalText||'')).text.trimEnd();
+ const total=buildInjectedMessage(original,block).length;
+ groups.orig=original.length;
+ // Only this same block's envelope, headings, separators and instructions are overhead.
+ groups.guide=total-original.length-plan.filter(i=>!i.off).reduce((n,i)=>n+i.size,0);
+ const hasOriginal=!!pending?.messageId&&!!original;
+ const matchesSaved=hasOriginal&&!!block&&block===pending?.contextBlock;
+ const verified=matchesSaved&&pending?.verified===true&&total<=allFitLimit(room);
+ return {armed:!!pending,verified,total,max:allFitLimit(room),groups,items:plan,hasCarrier:!!pending?.messageId,hasOriginal,matchesSaved,selection:matchesSaved?pending.selection||null:null,restored:!!pending?.cloudRestoredAt&&!matchesSaved};
+}
+
 function WUIReadModel(){let D,S,room,items;const opened=new Set(),dateLabel=v=>v?new Date(v).toLocaleString('ko-KR'):'';
 function model(r){
  room=r;items=v2CurrentItems(r);const m=autoMemoryState(r),sched=memoryScheduleForRoom(r),cs=v2CognitionStatus(),cg=state.v2Cognition||{},bridge=(typeof unsafeWindow!=='undefined'?unsafeWindow:window).__WishCognitionBridge,cfg=bridge?.getSettings?.()||{},ai=WUICache.ai,p=r.injectionPolicy||{},la=autoLoreState(r),lc=r.loreConfig||{};
@@ -14841,8 +14861,8 @@ function model(r){
  ai:{...ai,model:getAiSelectedModel(ai),dsModel:getAiSelectedModel(ai)},presets:WUICache.presets.items||[],cloud:{last:cloudLastBackupLabel(),auto:false},bulk:state.v2BulkSession?{...state.v2BulkSession,segs:state.v2BulkSession.segments||[],state:({prepared:'extracting',extracting:'extracting',partial_failed:'failed',merging:'merging',ready_to_apply:'verify',applying:'apply',applied:'applied',cancelled:'cancelled',failed:'failed'})[state.v2BulkSession.state]||'failed'}:internalBulkRebuildJob?{state:'extracting',segs:[]}:null};
  S={tab:({check:'home',cognition:'cog'})[state.v2Tab]||state.v2Tab||'home',mem:state.v2MemoryView==='character'?'char':['state','log','speech','extra'].includes(state.v2MemoryView)?state.v2MemoryView:'state',cog:state.v2MemoryView==='cog-reviews'?'review':'people',open:opened,sumLoading:!state.v2SummaryLoaded||state.v2SummaryChatId!==String(apiChatIdOf(r)||''),job:summaryMemoryJob?{label:'요약할 턴·서버 카드 확인 중'}:automaticMemoryJob?{label:'현재상태·날짜별 사건 정리 중'}:automaticLoreJob?{label:'자료 카드 정리 중'}:aiUpdateRunning&&!U3.checking()?{label:'기억 작업 마무리 중'}:null};
 }
-if(!state.currentRoom||!WUICache.ai)return {};model(state.currentRoom);const r=state.currentRoom;const managed=r.pending?quickManageItems(r.pending):items.map((item,n)=>({key:pendingItemIdentity(item)||String(n),item,active:true}));const plan=managed.map(({item:i,active,key},n)=>{const kind=i.sourceSlotId==='currentState'||i.slotId==='currentState'?'state':i.sourceSlotId==='logSummary'||i.group==='log-auto'?'log':i.group==='cognition'?'cog':i.group==='character'?'char':i.group==='extra'?'extra':i.group==='speech'||i.sourceSlotId==='__speech'?'speech':i.group==='lore-auto'?'lore':'guide';return {key,kind,sourceKey:i.sourceKey||'',label:itemCategory(i),title:i.title||itemCategory(i),why:i.reason||remainingLabelForItem(i),size:String(i.content||'').length,content:i.content||'',off:!active||!items.some(x=>pendingItemIdentity(x)===pendingItemIdentity(i)),offReason:injectionExclusionReason(r,i,active)};});const groups={};for(const item of plan.filter(i=>!i.off))groups[item.kind]=(groups[item.kind]||0)+item.size;const contextChars=r.pending?.contextBlock?String(r.pending.contextBlock).length:statsForItems(items).block;const original=String(r.pending?.originalText||'');const total=r.pending?.contextBlock?buildInjectedMessage(original,r.pending.contextBlock).length:buildInjectedMessage(original,buildContextBlockFromItems(items)).length;groups.orig=original.trimEnd().length;groups.guide=(groups.guide||0)+Math.max(0,total-groups.orig-plan.filter(i=>!i.off).reduce((n,i)=>n+i.size,0));
-const rebuild=R31.get(r);const vm={cogInclude:Number(r.injectionPolicy?.cognitionEvery)>0,recall:recallSelectionSettings(r),rebuild:rebuild?{status:rebuild.status,message:rebuild.message,segments:rebuild.segments,ready:!!rebuild.draft}:null,rebuildRunning:R31.busy(),unified:U3.view(r),room:{name:D.room},version:SCRIPT_VERSION,save:{saving:state.saveStatus==='saving',at:state.lastSavedAt?new Date(state.lastSavedAt).toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'}):''},job:S.job,features:{autoDefault:false,semantic:false,density:false},inj:{armed:D.inj.armed,verified:D.inj.verified,total,max:allFitLimit(r),groups,items:plan,selection:r.pending?.selection||null,hasCarrier:!!r.pending?.messageId},defaults:{enabled:WUICache.ai.autoMemoryEnabled!==false,every:WUICache.ai.memoryMaxTurns},memory:D.memory,cog:{...D.cog,actors:D.actors,facts:D.facts.map(f=>({...f,included:f.sel}))},reviews:D.reviews.map(rv=>({...rv,acceptLabel:rv.accept})),state:{inject:D.pol.state,sections:D.state,raw:String(r.slots?.find(s=>s.id==='currentState')?.content||'')},logs:{inject:D.pol.log,blocks:D.logs.map(b=>({...b,undated:b.date==='날짜 미상',included:D.pol.log&&plan.some(i=>i.kind==='log'&&!i.off&&(i.sourceKey===b.key||i.key==='log:'+b.key))})),dupDates:duplicateLogDateGroups(r).length},speech:{on:D.speechOn,rows:D.speech},chars:{autoDetect:D.autoChar,rows:D.chars},extras:{rows:D.extras},presets:D.presets.map(p=>({...p,ret:p.retentionTurns})),sum:{...D.sum,loading:S.sumLoading},lore:D.lore,bulk:D.bulk,cloud:{device:WUICache.cloud.deviceName,enc:WUICache.cloud.encryptionEnabled,auto:WUICache.cloud.autoBackupEnabled,min:WUICache.cloud.autoBackupMinMinutes,last:cloudLastBackupLabel(),loading:WUICache.cloudLoading,list:WUICache.cloudList.map(b=>({id:b.id,when:new Date(b.createdAt||b.created_at||b.receivedAt).toLocaleString('ko-KR'),abs:'',rooms:Number(b.roomCount||b.room_count||0),size:(Number(b.sizeBytes||b.size_bytes||0)/1024).toFixed(1)+'KB',auto:isCloudAutoBackupMeta(b),dev:b.deviceName||b.device_name,mine:(b.deviceId||b.device_id)===WUICache.cloud.deviceId}))},ai:{providerLabel: getAiProviderLabel(D.ai.provider),model:D.ai.model},pol:D.pol,autoChar:D.autoChar,quickCog:D.facts.map(f=>({id:f.id,label:f.label,mode:f.mode,included:state.quickCognitionDesired.has(f.id)?state.quickCognitionDesired.get(f.id):f.sel})),recent:[D.memory.last,D.lore.auto.last].filter(Boolean),labels:{resetDesc:'현재 방의 기억·인지·이 방 전용 자동 자료를 초기화합니다. 일반 자료집은 유지됩니다.'}};
+if(!state.currentRoom||!WUICache.ai)return {};model(state.currentRoom);const r=state.currentRoom;const injection=WUIInjectionView(r,items),plan=injection.items;
+const rebuild=R31.get(r);const vm={cogInclude:Number(r.injectionPolicy?.cognitionEvery)>0,recall:recallSelectionSettings(r),rebuild:rebuild?{status:rebuild.status,message:rebuild.message,segments:rebuild.segments,ready:!!rebuild.draft}:null,rebuildRunning:R31.busy(),unified:U3.view(r),room:{name:D.room},version:SCRIPT_VERSION,save:{saving:state.saveStatus==='saving',at:state.lastSavedAt?new Date(state.lastSavedAt).toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'}):''},job:S.job,features:{autoDefault:false,semantic:false,density:false},inj:injection,defaults:{enabled:WUICache.ai.autoMemoryEnabled!==false,every:WUICache.ai.memoryMaxTurns},memory:D.memory,cog:{...D.cog,actors:D.actors,facts:D.facts.map(f=>({...f,included:f.sel}))},reviews:D.reviews.map(rv=>({...rv,acceptLabel:rv.accept})),state:{inject:D.pol.state,sections:D.state,raw:String(r.slots?.find(s=>s.id==='currentState')?.content||'')},logs:{inject:D.pol.log,blocks:D.logs.map(b=>({...b,undated:b.date==='날짜 미상',included:D.pol.log&&plan.some(i=>i.kind==='log'&&!i.off&&(i.sourceKey===b.key||i.key==='log:'+b.key))})),dupDates:duplicateLogDateGroups(r).length},speech:{on:D.speechOn,rows:D.speech},chars:{autoDetect:D.autoChar,rows:D.chars},extras:{rows:D.extras},presets:D.presets.map(p=>({...p,ret:p.retentionTurns})),sum:{...D.sum,loading:S.sumLoading},lore:D.lore,bulk:D.bulk,cloud:{device:WUICache.cloud.deviceName,enc:WUICache.cloud.encryptionEnabled,auto:WUICache.cloud.autoBackupEnabled,min:WUICache.cloud.autoBackupMinMinutes,last:cloudLastBackupLabel(),loading:WUICache.cloudLoading,list:WUICache.cloudList.map(b=>({id:b.id,when:new Date(b.createdAt||b.created_at||b.receivedAt).toLocaleString('ko-KR'),abs:'',rooms:Number(b.roomCount||b.room_count||0),size:(Number(b.sizeBytes||b.size_bytes||0)/1024).toFixed(1)+'KB',auto:isCloudAutoBackupMeta(b),dev:b.deviceName||b.device_name,mine:(b.deviceId||b.device_id)===WUICache.cloud.deviceId}))},ai:{providerLabel: getAiProviderLabel(D.ai.provider),model:D.ai.model},pol:D.pol,autoChar:D.autoChar,quickCog:D.facts.map(f=>({id:f.id,label:f.label,mode:f.mode,included:state.quickCognitionDesired.has(f.id)?state.quickCognitionDesired.get(f.id):f.sel})),recent:[D.memory.last,D.lore.auto.last].filter(Boolean),labels:{resetDesc:'현재 방의 기억·인지·이 방 전용 자동 자료를 초기화합니다. 일반 자료집은 유지됩니다.'}};
 Object.assign(vm.memory,{enabled:vm.unified.enabled&&vm.unified.memoryEnabled,committed:vm.unified.memoryPending,target:vm.unified.memoryEvery,fixed:vm.unified.memoryEvery,running:vm.unified.running,status:vm.unified.error||vm.unified.status});Object.assign(vm.cog,{auto:vm.unified.enabled&&vm.unified.observeEnabled,every:vm.unified.observeEvery});vm.job=vm.unified.running?{label:vm.unified.jobLabel||'통합 결과 확인 중'}:vm.job;
 if(R31.busy())vm.job={label:rebuild?.message||'재구축 자료 준비 중'};for(const row of vm.cloud.list){const raw=WUICache.cloudList.find(x=>x.id===row.id)||{};row.deviceId=raw.deviceId||raw.device_id||'unknown';row.version=raw.appVersion||raw.app_version||'?';row.encrypted=String(raw.crypto?.mode||'none')!=='none';}vm.cloud.ready=cloudConfigReady(loadCloudConfig());vm.cloud.hasBackup=!!WUICache.cloud.lastBackupAt;vm.cloud.error=WUICache.cloudError||'';
 const eligibility=sessionSetupEligibilityFor(r);vm.fresh=eligibility?.fresh&&WUICache.freshDismissed!==String(state.currentChatId)?{show:true,title:'새 방 시작 설정',desc:'켜진 캐릭터·OOC를 첫 AI 메시지에 적용합니다.'}:null;if(vm.bulk){vm.bulk.log=WUICache.bulkLog||[];vm.bulk.round=vm.bulk.mergeRound||0;vm.bulk.segs=vm.bulk.segs.map(s=>({...s,i:s.index,from:s.coreStartTurn,to:s.coreEndTurn}));}for(const [path,value] of Object.entries(WUISettingsDraft()))WUISetPath(vm,path,value);vm.diagnostics=WLOG.list();vm.job=WLOG.view()||vm.job;return vm;}
