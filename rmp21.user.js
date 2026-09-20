@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         🪽 Wish RP Manager
+// @name         🪽 Wish RP Manager 2.1.0
 // @namespace    local.rp.context.manager
 // @version      2.1.0
 // @description  Crack RP용 컨텍스트 주입·인지·자동 장기기억·자료집·Crack 요약 메모리·전체 재구축을 하나로 관리합니다.
