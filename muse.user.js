@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         ✨ Crack Muse Writer (AI 답변 커스텀)
 // @namespace    muse writer
-// @version      5.2.18
+// @version      5.2.19
 // @description  Crack 캐릭터챗 입력을 맥락·프로필·유저 노트·참고자료·서사 나침반에 맞춰 다듬고, 단기·장기 기억과 최신 에리 로어를 읽기 전용으로 참고하며 유저 입력 번역까지 처리하는 AI 집필 보조 도구
-// @updateURL    https://github.com/h-ap5/study/raw/refs/heads/main/muse.user.js
-// @downloadURL  https://github.com/h-ap5/study/raw/refs/heads/main/muse.user.js
-// @homepageURL  https://github.com/h-ap5/study
+// @author       chu
+// @updateURL   https://raw.githubusercontent.com/Chapchu1/crack-userscripts/main/crack-muse-writer.user.js
+// @downloadURL https://raw.githubusercontent.com/Chapchu1/crack-userscripts/main/crack-muse-writer.user.js
+// @homepageURL https://github.com/Chapchu1/crack-userscripts
 // @match        https://crack.wrtn.ai/*
 // @grant        GM_addStyle
 // @grant        GM_setValue
@@ -120,19 +121,19 @@
     const raw = String(error?.message || error || "").trim();
     const lower = raw.toLowerCase();
 
-    if (/\b429\b/.test(lower) || lower.includes("resource exhausted") || lower.includes("resource_exhausted") || lower.includes("quota") || lower.includes("rate limit") || lower.includes("too many requests")) {
+    if (/\\b429\\b/.test(lower) || lower.includes("resource exhausted") || lower.includes("resource_exhausted") || lower.includes("quota") || lower.includes("rate limit") || lower.includes("too many requests")) {
       return "AI 서버가 현재 혼잡하거나 요청 한도에 도달했어요.\n잠시 후 다시 시도해주세요.";
     }
-    if (/\b(500|502|503|504)\b/.test(lower) || lower.includes("internal server") || lower.includes("service unavailable") || lower.includes("server error") || lower.includes("overloaded")) {
+    if (/\\b(500|502|503|504)\\b/.test(lower) || lower.includes("internal server") || lower.includes("service unavailable") || lower.includes("server error") || lower.includes("overloaded")) {
       return "AI 서버에 일시적인 문제가 발생했어요.\n잠시 후 다시 시도해주세요.";
     }
-    if (/\b401\b/.test(lower) || lower.includes("unauthenticated") || lower.includes("invalid api key") || lower.includes("api key not valid") || lower.includes("authentication")) {
+    if (/\\b401\\b/.test(lower) || lower.includes("unauthenticated") || lower.includes("invalid api key") || lower.includes("api key not valid") || lower.includes("authentication")) {
       return "API 인증에 실패했어요.\n설정에서 API 키를 확인해주세요.";
     }
-    if (/\b403\b/.test(lower) || lower.includes("permission denied") || lower.includes("permission_denied") || lower.includes("forbidden")) {
+    if (/\\b403\\b/.test(lower) || lower.includes("permission denied") || lower.includes("permission_denied") || lower.includes("forbidden")) {
       return "API 사용 권한이 없어요.\nAPI 키와 프로젝트 권한을 확인해주세요.";
     }
-    if (/\b404\b/.test(lower) || lower.includes("model not found") || lower.includes("not found")) {
+    if (/\\b404\\b/.test(lower) || lower.includes("model not found") || lower.includes("not found")) {
       return "선택한 AI 모델을 찾을 수 없어요.\n모델 설정을 확인해주세요.";
     }
     if (lower.includes("fetch") || lower.includes("network") || lower.includes("failed to fetch") || lower.includes("네트워크")) {
@@ -482,6 +483,11 @@
     return `cmwReference_${kind}_${room}`;
   }
 
+  // 새 채팅방의 참고자료 빠른 반영 기본값.
+  // 방별 저장값이 아직 없는 새 방에서는 유저 노트·단기 기억·장기 기억·에리 로어를 모두 켠다.
+  // 사용자가 특정 방에서 직접 끄면 그 방의 명시적 OFF 값은 그대로 존중한다.
+  const REFERENCE_ENABLED_DEFAULT = true;
+
   function getCompassKey(kind, room = getChatRoomId()) {
     return `cmwCompass_${kind}_${room}`;
   }
@@ -548,20 +554,20 @@
   }
 
   function isLongMemoryReferenceEnabled(room = getChatRoomId()) {
-    return GM_getValue(getReferenceKey("longMemoryEnabled", room), false) === true;
+    return GM_getValue(getReferenceKey("longMemoryEnabled", room), REFERENCE_ENABLED_DEFAULT) === true;
   }
 
   function isShortMemoryReferenceEnabled(room = getChatRoomId()) {
-    return GM_getValue(getReferenceKey("shortMemoryEnabled", room), false) === true;
+    return GM_getValue(getReferenceKey("shortMemoryEnabled", room), REFERENCE_ENABLED_DEFAULT) === true;
   }
 
   function isEriLoreReferenceEnabled(room = getChatRoomId()) {
-    return GM_getValue(getReferenceKey("eriLoreEnabled", room), false) === true;
+    return GM_getValue(getReferenceKey("eriLoreEnabled", room), REFERENCE_ENABLED_DEFAULT) === true;
   }
 
   function isUserNoteReferenceEnabled(room = getChatRoomId()) {
-    // V2 opt-in 키는 과거 버전의 암묵적 ON 값을 승계하지 않는다.
-    return GM_getValue(getReferenceKey("userNoteEnabledOptInV2", room), false) === true;
+    // 새 방은 기본 ON. 특정 방에서 사용자가 직접 OFF로 저장한 경우에만 비활성화한다.
+    return GM_getValue(getReferenceKey("userNoteEnabledOptInV2", room), REFERENCE_ENABLED_DEFAULT) === true;
   }
 
   function isLongMemoryHookEnabled(room = getChatRoomId()) {
@@ -569,7 +575,7 @@
   }
 
   function getLongMemoryMode(room = getChatRoomId()) {
-    return GM_getValue(getReferenceKey("longMemoryMode", room), "selected") === "all" ? "all" : "selected";
+    return GM_getValue(getReferenceKey("longMemoryMode", room), "all") === "all" ? "all" : "selected";
   }
 
   function setLongMemoryMode(mode, room = getChatRoomId()) {
@@ -2461,7 +2467,6 @@
   //    - 2순위: 기존 방식(DOM의 "현재" 뱃지 스캔)
   // =============================================
   const profileScanInFlight = new Map();
-  const PROFILE_API_CACHE_MS = 60 * 1000;
   let lastProfileApiScanRoom = "";
   let lastProfileApiScanAt = 0;
 
@@ -2563,7 +2568,7 @@
     if (!room || room === "global_room") return null;
 
     const now = Date.now();
-    if (!force && lastProfileApiScanRoom === room && now - lastProfileApiScanAt < PROFILE_API_CACHE_MS) {
+    if (!force && lastProfileApiScanRoom === room && now - lastProfileApiScanAt < 12000) {
       return readStoredProfile(room);
     }
     const existingRequest = profileScanInFlight.get(room);
@@ -2577,7 +2582,7 @@
       const chatJson = await fetchCrackJson(`${API_BASE}/v3/chats/${room}`);
       const roomData = chatJson?.data ?? chatJson;
       // Crack의 유저 노트는 PC 추가 설정과 별개의 방 데이터다.
-      // 사용자가 현재 방에서 명시적으로 켠 경우에만 노트 필드를 읽는다.
+      // 새 방은 기본 ON이며, 현재 방에서 OFF로 저장한 경우에만 노트 필드를 읽지 않는다.
       // API 조회가 성공한 경우 빈 값도 저장하여 사이트에서 삭제된 노트의 낡은 캐시를 지운다.
       if (isUserNoteReferenceEnabled(room)) {
         GM_setValue("scannedUserNote_" + room, extractChatUserNote(roomData));
@@ -2647,6 +2652,9 @@
       });
   }
 
+  let renderedContextBox = null;
+  let renderedContextText = null;
+
   function updateContextDisplay() {
     const room = getChatRoomId();
     const data = readStoredProfile(room);
@@ -2655,15 +2663,23 @@
     const box = document.getElementById("detected-profile");
     if (!box) return;
 
+    let displayText;
     if (data || userNote) {
       const blocks = [];
       if (data) blocks.push(`[프로필 · ${data.name || "이름 없음"}]\n${data.profile || "설정 내용 없음"}`);
       if (userNote) blocks.push(`[유저 노트 · AI 반영 ON]\n${userNote}`);
-      box.innerText = blocks.join("\n\n");
+      displayText = blocks.join("\n\n");
     } else {
-      box.innerText = userNoteEnabled
+      displayText = userNoteEnabled
         ? "⏳ 현재 채팅방 프로필과 유저 노트를 읽는 중입니다. 잠시 뒤 다시 열어보세요."
         : "⏳ 현재 채팅방 프로필을 읽는 중입니다. 유저 노트는 반영을 켠 뒤에만 읽습니다.";
+    }
+    // 이 스크립트가 소유한 표시 영역에 같은 문자열을 1초마다 다시 쓰지 않는다.
+    // innerText를 읽는 대신 마지막 렌더 결과를 기억해 강제 레이아웃도 피한다.
+    if (box !== renderedContextBox || displayText !== renderedContextText) {
+      box.innerText = displayText;
+      renderedContextBox = box;
+      renderedContextText = displayText;
     }
   }
 
@@ -5493,6 +5509,10 @@ ${styleInstruction}`);
   // 전송 버튼 탐색 (클래스 row 탐색 + 위치/fixed 안전 필터)
   // 다른 확프(HUD)·말풍선·좌측툴바를 환경 무관하게 배제
   // ---------------------------------------------
+  let cachedSendButton = null;
+  let cachedSendInput = null;
+  let cachedSendRoom = "";
+
   function findSendButton() {
     const input = getChatInput();
     if (!input) return null;
@@ -5520,6 +5540,42 @@ ${styleInstruction}`);
       return true;
     };
 
+    const rememberSendButton = (button) => {
+      cachedSendButton = button;
+      cachedSendInput = input;
+      cachedSendRoom = getChatRoomId();
+      return button;
+    };
+
+    // 기존 wrapper의 바로 다음 버튼이 같은 입력창의 composer row에 남아 있으면
+    // 1초마다 조상 subtree를 다시 검색하지 않고 먼저 검증해 재사용한다.
+    const wrapper = document.getElementById("crack-pure-send-left-group");
+    const row = cachedSendButton?.parentElement;
+    if (
+      cachedSendInput === input &&
+      cachedSendRoom === getChatRoomId() &&
+      cachedSendButton?.isConnected &&
+      wrapper?.isConnected &&
+      wrapper.parentElement === row &&
+      wrapper.nextElementSibling === cachedSendButton &&
+      row?.classList.contains("justify-between")
+    ) {
+      let node = input;
+      let rowIsInComposer = false;
+      for (let i = 0; i < 8 && node; i++, node = node.parentElement) {
+        if (node.contains(row)) {
+          rowIsInComposer = true;
+          break;
+        }
+      }
+      if (rowIsInComposer) {
+        const directButtons = Array.from(row.children).filter(
+          (child) => child.tagName === "BUTTON" && isComposerButton(child),
+        );
+        if (directButtons[directButtons.length - 1] === cachedSendButton) return cachedSendButton;
+      }
+    }
+
     // 1순위: justify-between row의 직계 버튼 중 검증 통과한 마지막
     let node = input;
     for (let i = 0; i < 8 && node; i++, node = node.parentElement) {
@@ -5529,7 +5585,7 @@ ${styleInstruction}`);
         const btns = Array.from(rows[r].children || []).filter(
           (c) => c.tagName === "BUTTON" && isComposerButton(c),
         );
-        if (btns.length > 0) return btns[btns.length - 1];
+        if (btns.length > 0) return rememberSendButton(btns[btns.length - 1]);
       }
     }
 
@@ -5544,7 +5600,7 @@ ${styleInstruction}`);
         const btns = Array.from(rows[r].children || []).filter(
           (c) => c.tagName === "BUTTON" && isComposerButton(c),
         );
-        if (btns.length > 0) return btns[btns.length - 1];
+        if (btns.length > 0) return rememberSendButton(btns[btns.length - 1]);
       }
     }
 
@@ -5557,7 +5613,7 @@ ${styleInstruction}`);
         cands.sort(
           (a, b) => b.getBoundingClientRect().right - a.getBoundingClientRect().right,
         );
-        return cands[0];
+        return rememberSendButton(cands[0]);
       }
     }
 
@@ -5902,84 +5958,6 @@ ${styleInstruction}`);
     injectSendLeftGroup();
   }
 
-  // 상시 1초 폴링 대신 실제로 재확인이 필요한 변화만 모아서 처리한다.
-  // React가 composer를 통째로 교체하는 경우는 DOM observer가 잡고,
-  // SPA 경로 이동·탭 복귀는 lifecycle hook이 잡는다. 아래 안전망은
-  // 사이트 마크업이 바뀌어 힌트를 놓친 경우만 복구하기 위한 느린 폴백이다.
-  const MUSE_UI_SAFETY_INTERVAL_MS = 30 * 1000;
-  const COMPOSER_HINT_SELECTOR =
-    '.__chat_input_textarea, textarea, div[contenteditable="true"][translate="no"], div[contenteditable="true"]';
-  let museMaintenanceTimer = 0;
-  let museProfileScanPending = false;
-
-  function runMuseMaintenance() {
-    museMaintenanceTimer = 0;
-    const shouldScanProfile = museProfileScanPending;
-    museProfileScanPending = false;
-
-    injectUI();
-    if (shouldScanProfile && isAllowedStoryChatPath()) backgroundScanner();
-  }
-
-  function scheduleMuseMaintenance({ scanProfile = false, delay = 80 } = {}) {
-    if (scanProfile) museProfileScanPending = true;
-    if (museMaintenanceTimer) return;
-    museMaintenanceTimer = window.setTimeout(runMuseMaintenance, delay);
-  }
-
-  function nodeHasComposerHint(node) {
-    if (!(node instanceof Element)) return false;
-    if (node.id === "crack-pure-send-left-group") return true;
-    return node.matches(COMPOSER_HINT_SELECTOR) || !!node.querySelector(COMPOSER_HINT_SELECTOR);
-  }
-
-  function installComposerObserver() {
-    if (!document.body) return;
-
-    const observer = new MutationObserver((records) => {
-      for (const record of records) {
-        if (record.type !== "childList") continue;
-        if (
-          Array.from(record.addedNodes).some(nodeHasComposerHint) ||
-          Array.from(record.removedNodes).some(nodeHasComposerHint)
-        ) {
-          scheduleMuseMaintenance();
-          return;
-        }
-      }
-    });
-
-    observer.observe(document.body, { childList: true, subtree: true });
-  }
-
-  function installRouteAndLifecycleHooks() {
-    const routeEventName = "cmw:muse-route-change";
-
-    if (!window.__cmwMuseRouteHooksInstalled) {
-      window.__cmwMuseRouteHooksInstalled = true;
-      ["pushState", "replaceState"].forEach((method) => {
-        const original = history[method];
-        if (typeof original !== "function") return;
-        history[method] = function (...args) {
-          const before = location.href;
-          const result = original.apply(this, args);
-          if (location.href !== before) window.dispatchEvent(new Event(routeEventName));
-          return result;
-        };
-      });
-      window.addEventListener("popstate", () => window.dispatchEvent(new Event(routeEventName)));
-      window.addEventListener("hashchange", () => window.dispatchEvent(new Event(routeEventName)));
-    }
-
-    const refreshAfterNavigation = () => scheduleMuseMaintenance({ scanProfile: true, delay: 0 });
-    window.addEventListener(routeEventName, refreshAfterNavigation);
-    window.addEventListener("focus", refreshAfterNavigation, { passive: true });
-    window.addEventListener("pageshow", refreshAfterNavigation, { passive: true });
-    document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible") refreshAfterNavigation();
-    });
-  }
-
   async function waitForLoreInjectorIfPresent() {
     const _w = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
 
@@ -6013,14 +5991,14 @@ ${styleInstruction}`);
     // 3) 로어 인젝터가 있으면 선택적으로 대기. 없으면 즉시 진행
     await waitForLoreInjectorIfPresent();
 
-    // 4) 최초 주입 후 이벤트 기반으로 유지한다.
-    installRouteAndLifecycleHooks();
-    installComposerObserver();
-    scheduleMuseMaintenance({ scanProfile: true, delay: 0 });
+    // 4) 최초 주입 + 가벼운 재확인 루프
+    if (isAllowedStoryChatPath()) backgroundScanner();
+    injectUI();
 
-    window.setInterval(() => {
-      if (!document.hidden) scheduleMuseMaintenance({ delay: 0 });
-    }, MUSE_UI_SAFETY_INTERVAL_MS);
+    setInterval(() => {
+      if (isAllowedStoryChatPath()) backgroundScanner();
+      injectUI();
+    }, 1000);
   }
 
   boot();
