@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         🖥️ Crack Dashboard (크랙 대시보드)
 // @namespace    crack dashboard
-// @version      3.4.6
-// @description  숨김 적용 후 순정 모델창 높이를 남은 항목에 맞춰 자동 조절. 모델 목록 편집의 숨김 설정을 우측 상단 순정 모델 선택창에도 적용. 모델 숨김 필터 및 편집/일반 모드 전환 갱신 수정. 공식 모델 Popover(dialog/button/aria-current) DOM 변경 대응 및 모델명·선택 상태 동기화 수정. 턴/누적 사용·잔여·차감 크래커 표시 + 입력창 미니 사이드바. messages API user 고유 ID 기준 턴수. 모델 버튼은 기본 큐브 아이콘 유지. 미니 모델창은 API 기반으로 가볍게 동기화하고 폐기/대체 모델은 필터링. 진행 상세 표기를 프롤로그·현재답변 기준으로 정리하고 생성/리롤 표시는 제거. 에리 로어 Universal 신규 진입 버튼과 초월 번역기·AI 요약·AI 답변·게임 HUD·Scene Painter·Wish RP Manager 확프 연결 지원. AI 요약·메모리 확프의 신규 사이드바 진입점까지 감지·호출하도록 호환성을 확장. 우측 점 메뉴는 입력창 스크롤바와 겹치지 않게 간격 보정. 배경 확프 버튼은 각 확프의 설정 메뉴창 바로가기로 동작. dataLayer 400ms 상시 폴링 제거, DOM 감시 필터링, 최근 방 통계 캐시 재사용으로 가벼운 동작.
+// @version      3.4.7
+// @description  숨김 적용 후 순정 모델창 높이를 남은 항목에 맞춰 자동 조절. 모델 목록 편집의 숨김 설정을 우측 상단 순정 모델 선택창에도 적용. 모델 숨김 필터 및 편집/일반 모드 전환 갱신 수정. 공식 모델 Popover(dialog/button/aria-current) DOM 변경 대응 및 모델명·선택 상태 동기화 수정. 턴/누적 사용·잔여·차감 크래커 표시 + 입력창 미니 사이드바. messages API user 고유 ID 기준 턴수. 모델 버튼은 기본 큐브 아이콘 유지. 미니 모델창은 API 기반으로 가볍게 동기화하고 폐기/대체 모델은 필터링. 진행 상세 표기를 프롤로그·현재답변 기준으로 정리하고 생성/리롤 표시는 제거. 에리 로어 Universal 신규 진입 버튼과 초월 번역기·AI 요약·AI 답변·게임 HUD·Scene Painter·Wish RP Manager 확프 연결 지원. AI 요약·메모리 확프의 신규 사이드바 진입점까지 감지·호출하도록 호환성을 확장. 우측 점 메뉴는 입력창 스크롤바와 겹치지 않게 간격 보정. 배경 확프 버튼은 각 확프의 설정 메뉴창 바로가기로 동작. dataLayer 400ms 상시 폴링 제거, DOM 감시 필터링, 최근 방 통계 캐시 재사용으로 가벼운 동작. 채팅 입력 글자수와 2,000자 경고를 입력창에 표시.
 // @match        *://crack.wrtn.ai/*
 // @grant        GM_registerMenuCommand
 // @grant        GM_unregisterMenuCommand
@@ -1814,7 +1814,9 @@
                 background: transparent !important; border: 0 !important; box-shadow: none !important; outline: 0; color: inherit; }
             #chud-model-btn { margin-left: 0; }
             .chud-action-btn:hover { background: transparent !important; color: var(--chud-side-hover-text, currentColor); opacity: .95; }
-            #chud-theme-mode-btn:focus-visible, #chud-episode-mode-btn:focus-visible { outline: 2px solid currentColor !important; outline-offset: 2px; border-radius: 4px; }
+            #chud-theme-mode-btn:focus-visible, #chud-episode-mode-btn:focus-visible, #chud-composer-expander-btn:focus-visible { outline: 2px solid currentColor !important; outline-offset: 2px; border-radius: 4px; }
+            #chud-composer-expander-btn:disabled { opacity: .38; cursor: default; }
+            #chud-composer-expander-btn:disabled:hover { opacity: .38; color: inherit; }
             .chud-action-btn.is-active { background: transparent !important; color: var(--chud-side-active-text, currentColor); }
             .chud-action-btn.is-active:hover { background: transparent !important; color: var(--chud-side-active-text, currentColor); }
             .chud-btn-icon { flex: 0 0 auto; display: block; width: 16.5px; height: 16.5px; pointer-events: none; }
@@ -2606,26 +2608,65 @@
         let modeObserver = null;
         let composerExpanderAvailable = false;
         let composerExpanderExpanded = false;
+        let composerNativeObserver = null;
+        let composerNativeObserved = null;
+        let composerLayerObserver = null;
+        let composerLayerObserved = null;
+
+        function observeComposerNativeButton(nativeButton) {
+            const layer = document.getElementById('ccr-controls-layer');
+            if (composerLayerObserved !== layer) {
+                composerLayerObserver?.disconnect();
+                composerLayerObserver = null;
+                composerLayerObserved = layer;
+                if (layer) {
+                    composerLayerObserver = new MutationObserver(() => syncComposerExpanderButton());
+                    composerLayerObserver.observe(layer, { childList: true });
+                }
+            }
+            if (composerNativeObserved === nativeButton) return;
+            composerNativeObserver?.disconnect();
+            composerNativeObserver = null;
+            composerNativeObserved = nativeButton;
+            if (!nativeButton) return;
+            // The separately installed Expander predates the Dashboard event bridge.
+            // Its class and data-state are enough to keep this button in sync.
+            composerNativeObserver = new MutationObserver(() => syncComposerExpanderButton());
+            composerNativeObserver.observe(nativeButton, {
+                attributes: true, attributeFilter: ['class', 'data-state']
+            });
+        }
 
         function syncComposerExpanderButton(event) {
+            const nativeButton = document.getElementById('ccr-expand-toggle');
+            observeComposerNativeButton(nativeButton);
             if (event?.detail) {
                 composerExpanderAvailable = !!event.detail.available;
                 composerExpanderExpanded = !!event.detail.expanded;
             } else {
-                const nativeButton = document.getElementById('ccr-expand-toggle');
                 composerExpanderAvailable = !!nativeButton?.classList.contains('ccr-expand-visible');
                 composerExpanderExpanded = nativeButton?.dataset.state === 'expanded';
             }
             const button = btns.composerExpander;
             if (!button) return;
             button.innerHTML = composerExpanderExpanded ? ICON.composerCollapse : ICON.composerExpand;
-            button.title = composerExpanderExpanded ? '입력창 원래 크기로 접기' : '입력창 내용 전체 펼치기';
+            button.title = composerExpanderAvailable
+                ? (composerExpanderExpanded ? '입력창 원래 크기로 접기' : '입력창 내용 전체 펼치기')
+                : '입력 내용이 창을 넘치면 펼칠 수 있습니다';
             button.setAttribute('aria-label', button.title);
             button.setAttribute('aria-pressed', String(composerExpanderExpanded));
-            button.style.display = composerExpanderAvailable && visible.composerExpanderButton !== false ? 'inline-flex' : 'none';
+            button.disabled = !composerExpanderAvailable;
+            button.style.display = visible.composerExpanderButton !== false ? 'inline-flex' : 'none';
+            // The Dashboard owns this slot even when a legacy Expander ran first.
+            // Keep the native control available for programmatic clicks and restore it on unmount.
+            if (nativeButton && (nativeButton.style.getPropertyValue('display') !== 'none'
+                || nativeButton.style.getPropertyPriority('display') !== 'important')) {
+                nativeButton.style.setProperty('display', 'none', 'important');
+            }
         }
 
         function toggleComposerExpander() {
+            if (!composerExpanderAvailable) return;
             const nativeButton = document.getElementById('ccr-expand-toggle');
             if (nativeButton?.classList.contains('ccr-expand-visible')) nativeButton.click();
         }
@@ -3179,6 +3220,11 @@
             },
             unmount() {
                 modeObserver?.disconnect(); modeObserver = null;
+                composerNativeObserver?.disconnect(); composerNativeObserver = null;
+                composerNativeObserved = null;
+                composerLayerObserver?.disconnect(); composerLayerObserver = null;
+                composerLayerObserved = null;
+                document.getElementById('ccr-expand-toggle')?.style.removeProperty('display');
                 window.removeEventListener('storage', syncModeFromEvent);
                 window.removeEventListener('crack-ui-episode-ui-mode-change', syncModeFromEvent);
                 document.removeEventListener('chud:composer-expander-state', syncComposerExpanderButton);
@@ -3285,6 +3331,240 @@
         });
     }
 
+    /* The Input Counter shares this Dashboard's validated composer and route lifecycle.
+     * A standalone @grant none script may run in a different world, so share its guard
+     * through unsafeWindow as well as this script's sandbox window. */
+    const InputCounter = (() => {
+        const pageWindow = typeof unsafeWindow === 'undefined' ? window : unsafeWindow;
+        if (pageWindow.__CRACK_INPUT_COUNTER_102_LOADED__ || window.__CRACK_INPUT_COUNTER_102_LOADED__
+            || document.getElementById('cic-wrap')) return { mount() {}, unmount() {} };
+        pageWindow.__CRACK_INPUT_COUNTER_102_LOADED__ = true;
+        window.__CRACK_INPUT_COUNTER_102_LOADED__ = true;
+
+        const LIMIT = 2000, YELLOW_START = 1400, ORANGE_START = 1750, HOT_START = 1900;
+        const STYLE_ID = 'cic-style', WRAP_ID = 'cic-wrap', COUNT_ID = 'cic-count';
+        let editor = null, editorObserver = null, row = null, rowPosition = null;
+        let wrap = null, countEl = null, renderFrame = 0, positionFrame = 0;
+        let previousCount = null;
+
+        function injectStyle() {
+            if (document.getElementById(STYLE_ID)) return;
+            const style = document.createElement('style');
+            style.id = STYLE_ID;
+            style.textContent = `
+                #${WRAP_ID} { position: absolute !important; z-index: 2 !important;
+                    top: var(--cic-top, 0px) !important; left: var(--cic-left, 100%) !important;
+                    right: auto !important; transform: translate(-50%, -100%) !important;
+                    display: inline-flex !important; align-items: center !important; justify-content: center !important;
+                    min-width: 30px !important; height: 28px !important; margin: 0 !important;
+                    padding: 0 4px !important; box-sizing: border-box !important;
+                    pointer-events: none !important; user-select: none !important; -webkit-user-select: none !important; }
+                #${COUNT_ID} { display: inline-block !important;
+                    color: var(--cic-color, var(--text_tertiary, var(--icon_tertiary, rgba(128,128,128,.78)))) !important;
+                    font-family: inherit !important; font-size: 11px !important; font-weight: 650 !important;
+                    line-height: 1 !important; letter-spacing: -.02em !important;
+                    font-variant-numeric: tabular-nums !important; white-space: nowrap !important;
+                    opacity: .74 !important; text-shadow: none !important;
+                    transition: color 150ms ease, opacity 150ms ease, transform 150ms ease !important; }
+                #${COUNT_ID}[data-empty="true"] { opacity: .42 !important; }
+                #${COUNT_ID}[data-warning="true"] { opacity: .96 !important; }
+                #${COUNT_ID}[data-limit="true"] { opacity: 1 !important; font-weight: 750 !important; }
+                #${COUNT_ID}.cic-over-pulse { animation: cic-over-shake 520ms cubic-bezier(.36,.07,.19,.97) both !important; }
+                @keyframes cic-over-shake {
+                    0%,100% { transform: translateX(0) scale(1); }
+                    12% { transform: translateX(-3px) rotate(-4deg) scale(1.08); }
+                    24% { transform: translateX(3px) rotate(4deg) scale(1.08); }
+                    36% { transform: translateX(-3px) rotate(-3deg) scale(1.07); }
+                    48% { transform: translateX(3px) rotate(3deg) scale(1.07); }
+                    62% { transform: translateX(-2px) rotate(-2deg) scale(1.05); }
+                    76% { transform: translateX(2px) rotate(2deg) scale(1.03); }
+                }
+                @media (prefers-reduced-motion: reduce) {
+                    #${COUNT_ID} { transition: color 150ms ease, opacity 150ms ease !important; }
+                    #${COUNT_ID}.cic-over-pulse { animation: none !important; }
+                }
+            `;
+            (document.head || document.documentElement).appendChild(style);
+        }
+
+        function getEditorText(input) {
+            if (input instanceof HTMLTextAreaElement || input instanceof HTMLInputElement) {
+                return String(input.value || '').replace(/\r\n?/g, '\n').replace(/\u200b/g, '');
+            }
+            let value = String(input.innerText ?? input.textContent ?? '')
+                .replace(/\r\n?/g, '\n').replace(/\u00a0/g, ' ').replace(/\u200b/g, '');
+            const hasVisibleText = String(input.textContent || '').replace(/\u200b/g, '').length > 0;
+            if (!hasVisibleText && (input.querySelector?.('.is-editor-empty') || /^\n*$/.test(value))) value = '';
+            return value;
+        }
+
+        function warningColor(count) {
+            if (count < YELLOW_START) return '';
+            if (count >= LIMIT) return '#ef4444';
+            const lerp = (a, b, t) => a + (b - a) * Math.max(0, Math.min(1, t));
+            if (count < ORANGE_START) {
+                const t = (count - YELLOW_START) / (ORANGE_START - YELLOW_START);
+                return `hsl(${lerp(47, 30, t).toFixed(1)} 92% ${lerp(48, 52, t).toFixed(1)}%)`;
+            }
+            const t = (count - ORANGE_START) / (LIMIT - ORANGE_START);
+            const light = count >= HOT_START ? lerp(52, 48, (count - HOT_START) / (LIMIT - HOT_START)) : 52;
+            return `hsl(${lerp(30, 0, t).toFixed(1)} 91% ${Math.max(48, light).toFixed(1)}%)`;
+        }
+
+        function alertOverLimit() {
+            countEl.classList.remove('cic-over-pulse');
+            void countEl.offsetWidth;
+            countEl.classList.add('cic-over-pulse');
+            setTimeout(() => countEl?.classList.remove('cic-over-pulse'), 560);
+            try { navigator.vibrate?.([35, 30, 55]); } catch (e) {}
+        }
+
+        function render() {
+            renderFrame = 0;
+            if (!editor?.isConnected || !countEl) return;
+            const count = Array.from(getEditorText(editor)).length;
+            const label = count.toLocaleString('ko-KR');
+            const title = `현재 ${label}자 · 최대 ${LIMIT.toLocaleString('ko-KR')}자`;
+            if (countEl.textContent !== label) countEl.textContent = label;
+            if (countEl.title !== title) countEl.title = title;
+            const color = warningColor(count);
+            if (color && countEl.style.getPropertyValue('--cic-color') !== color) countEl.style.setProperty('--cic-color', color);
+            else if (!color && countEl.style.getPropertyValue('--cic-color')) countEl.style.removeProperty('--cic-color');
+            if (countEl.dataset.empty !== String(count === 0)) countEl.dataset.empty = String(count === 0);
+            if (countEl.dataset.warning !== String(count >= YELLOW_START)) countEl.dataset.warning = String(count >= YELLOW_START);
+            if (countEl.dataset.limit !== String(count >= LIMIT)) countEl.dataset.limit = String(count >= LIMIT);
+            if (previousCount !== null && previousCount <= LIMIT && count > LIMIT) alertOverLimit();
+            previousCount = count;
+        }
+
+        function scheduleRender() {
+            if (!renderFrame) renderFrame = requestAnimationFrame(render);
+        }
+
+        function isVisibleButton(button) {
+            if (!(button instanceof HTMLElement)) return false;
+            const rect = button.getBoundingClientRect();
+            if (rect.width <= 0 || rect.height <= 0) return false;
+            const style = getComputedStyle(button);
+            return style.display !== 'none' && style.visibility !== 'hidden';
+        }
+
+        function isActionRow(candidate) {
+            return candidate instanceof HTMLElement
+                && candidate.classList.contains('flex')
+                && candidate.classList.contains('items-center')
+                && candidate.classList.contains('justify-between')
+                && Array.from(candidate.querySelectorAll('button')).some(isVisibleButton)
+                && (Array.from(candidate.children).some((child) => child.classList?.contains('space-x-2') || child.querySelector?.('.space-x-2'))
+                    || candidate.children.length >= 2);
+        }
+
+        function findActionRow(input) {
+            let node = input;
+            for (let depth = 0; node && depth < 10; depth++, node = node.parentElement) {
+                if (isActionRow(node)) return node;
+                const rows = Array.from(node.querySelectorAll?.('div.flex.items-center.justify-between') || []);
+                for (let i = rows.length - 1; i >= 0; i--) if (isActionRow(rows[i])) return rows[i];
+                if (node === document.body || node.tagName === 'MAIN') break;
+            }
+            return null;
+        }
+
+        function restoreRowPosition() {
+            if (rowPosition?.element?.dataset.cicPositionHost === 'dashboard') {
+                const { element, value, priority } = rowPosition;
+                if (element.style.getPropertyValue('position') === 'relative'
+                    && element.style.getPropertyPriority('position') === 'important') {
+                    if (value) element.style.setProperty('position', value, priority);
+                    else element.style.removeProperty('position');
+                }
+                delete element.dataset.cicPositionHost;
+            }
+            rowPosition = null;
+        }
+
+        function bindRow(nextRow) {
+            if (nextRow === row) return;
+            restoreRowPosition();
+            row = nextRow;
+            if (!row) { wrap?.remove(); return; }
+            if (getComputedStyle(row).position === 'static') {
+                rowPosition = { element: row, value: row.style.getPropertyValue('position'), priority: row.style.getPropertyPriority('position') };
+                row.style.setProperty('position', 'relative', 'important');
+                row.dataset.cicPositionHost = 'dashboard';
+            }
+            if (wrap.parentElement !== row) row.prepend(wrap);
+            schedulePosition();
+        }
+
+        function position() {
+            positionFrame = 0;
+            if (!row?.isConnected || !wrap) return;
+            const children = Array.from(row.children).filter((child) => child instanceof HTMLElement && child !== wrap);
+            const leftToolbar = children.find((child) => child.classList.contains('space-x-2') || child.querySelector?.('.space-x-2'));
+            const buttons = Array.from(row.querySelectorAll('button')).filter((button) => isVisibleButton(button) && (!leftToolbar || !leftToolbar.contains(button)));
+            if (!buttons.length) { wrap.style.visibility = 'hidden'; return; }
+            const sendButton = buttons.reduce((best, button) => !best || button.getBoundingClientRect().right > best.getBoundingClientRect().right ? button : best, null);
+            const sendRect = sendButton.getBoundingClientRect();
+            const rowRect = row.getBoundingClientRect();
+            const left = sendRect.left + sendRect.width / 2 - rowRect.left;
+            const top = sendRect.top - rowRect.top - 4;
+            if (wrap.style.getPropertyValue('--cic-left') !== `${left}px`) wrap.style.setProperty('--cic-left', `${left}px`);
+            if (wrap.style.getPropertyValue('--cic-top') !== `${top}px`) wrap.style.setProperty('--cic-top', `${top}px`);
+            wrap.style.visibility = 'visible';
+        }
+
+        function schedulePosition() {
+            if (!positionFrame && row) positionFrame = requestAnimationFrame(position);
+        }
+
+        function scheduleAfterEdit() { setTimeout(scheduleRender, 0); }
+
+        function unmount() {
+            editorObserver?.disconnect(); editorObserver = null;
+            if (editor) {
+                for (const event of ['input', 'keyup', 'compositionend']) editor.removeEventListener(event, scheduleRender, true);
+                for (const event of ['cut', 'paste']) editor.removeEventListener(event, scheduleAfterEdit, true);
+            }
+            if (renderFrame) cancelAnimationFrame(renderFrame);
+            if (positionFrame) cancelAnimationFrame(positionFrame);
+            renderFrame = positionFrame = 0;
+            editor = null; previousCount = null;
+            restoreRowPosition(); row = null;
+            wrap?.remove();
+        }
+
+        function mount(input) {
+            if (!(input instanceof HTMLElement)) { unmount(); return; }
+            injectStyle();
+            if (!wrap) {
+                wrap = document.createElement('div'); wrap.id = WRAP_ID;
+                wrap.setAttribute('aria-hidden', 'true');
+                countEl = document.createElement('span'); countEl.id = COUNT_ID;
+                countEl.textContent = '0'; wrap.appendChild(countEl);
+            }
+            let newEditor = false;
+            if (editor !== input) {
+                unmount();
+                editor = input;
+                newEditor = true;
+                for (const event of ['input', 'keyup', 'compositionend']) editor.addEventListener(event, scheduleRender, true);
+                for (const event of ['cut', 'paste']) editor.addEventListener(event, scheduleAfterEdit, true);
+                editorObserver = new MutationObserver(scheduleRender);
+                editorObserver.observe(editor, { childList: true, subtree: true, characterData: true });
+            }
+            if (!row?.isConnected || wrap.parentElement !== row) bindRow(findActionRow(input));
+            schedulePosition();
+            // Contenteditable changes are covered by its input events and scoped observer.
+            // A textarea's value can change programmatically without a DOM mutation.
+            if (newEditor || editor instanceof HTMLTextAreaElement || editor instanceof HTMLInputElement) scheduleRender();
+        }
+
+        window.addEventListener('resize', schedulePosition, { passive: true });
+        try { window.visualViewport?.addEventListener('resize', schedulePosition, { passive: true }); } catch (e) {}
+        return { mount, unmount };
+    })();
+
     let currentInput = null, currentContainer = null;
     let observer = null, updateTimer = null;
     let dashboardScrollInput = null, dashboardScrollRaf = 0;
@@ -3371,6 +3651,7 @@
         try {
             inputEl.style.removeProperty('padding-top');
             inputEl.style.removeProperty('min-height');
+            inputEl.removeAttribute('data-chud-main-composer');
         } catch (e) {}
     }
 
@@ -3497,6 +3778,7 @@
         if (!isChat || !chatId) {
             stopDashboardScrollSync();
             InfoBar.unmount(); Sidebar.unmount();
+            InputCounter.unmount();
             resetInputLayout(currentInput);
             currentInput = currentContainer = null;
             if (lastChatId) lastChatId = null;
@@ -3507,6 +3789,7 @@
         if (!inputEl) {
             stopDashboardScrollSync();
             InfoBar.unmount(); Sidebar.unmount();
+            InputCounter.unmount();
             resetInputLayout(currentInput);
             currentInput = currentContainer = null;
             return;
@@ -3517,8 +3800,13 @@
         }
         const container = findInputContainer(inputEl);
         currentInput = inputEl; currentContainer = container;
+        // Share the Dashboard's confirmed composer with the integrated Expander.
+        if (inputEl.getAttribute('data-chud-main-composer') !== '1') {
+            inputEl.setAttribute('data-chud-main-composer', '1');
+        }
         ensurePosition(container);
         startDashboardScrollSync(inputEl);
+        InputCounter.mount(inputEl);
 
         // 바 붙이기/떼기
         if (featureEnabled.infoBar) InfoBar.mount(container); else InfoBar.unmount();
@@ -4156,7 +4444,10 @@
 (() => {
   'use strict';
 
-  if (window.__CRACK_COMPOSER_RESIZER_V1__) return;
+  const pageWindow = typeof unsafeWindow === 'undefined' ? window : unsafeWindow;
+  if (pageWindow.__CRACK_COMPOSER_RESIZER_V1__ || window.__CRACK_COMPOSER_RESIZER_V1__
+      || document.getElementById('ccr-expand-toggle')) return;
+  pageWindow.__CRACK_COMPOSER_RESIZER_V1__ = true;
   window.__CRACK_COMPOSER_RESIZER_V1__ = true;
 
   const APP = Object.freeze({
@@ -4227,7 +4518,8 @@
     if (element.closest(OWN_SELECTOR)) return false;
     if (element.closest('[role="dialog"], [aria-modal="true"], [data-radix-dialog-content]')) return false;
     const rect = element.getBoundingClientRect();
-    if (rect.width < 160 || rect.height < 18) return false;
+    const dashboardComposer = element.getAttribute('data-chud-main-composer') === '1';
+    if (rect.width < (dashboardComposer ? 1 : 160) || rect.height < (dashboardComposer ? 1 : 18)) return false;
     const style = getComputedStyle(element);
     return style.display !== 'none' && style.visibility !== 'hidden';
   }
@@ -4242,7 +4534,11 @@
   }
 
   function isLikelyChatInput(element) {
-    if (!isVisibleElement(element) || !element.closest('main')) return false;
+    if (!isVisibleElement(element)) return false;
+    const dashboardComposer = element.getAttribute('data-chud-main-composer') === '1';
+    if (!element.closest('main') && !dashboardComposer) return false;
+    if (element.closest('[data-message-group-id]')) return false;
+    if (dashboardComposer) return true;
     if (element.classList.contains('__chat_input_textarea')) return true;
     if (element.matches('textarea') && hasMessagePlaceholder(element)) return true;
     if (element.matches('[contenteditable="true"]') && (
@@ -4255,6 +4551,7 @@
 
   function findChatInput() {
     const selectors = [
+      '[data-chud-main-composer="1"]',
       'main .__chat_input_textarea',
       'main div.ProseMirror[contenteditable="true"]',
       'main div.tiptap[contenteditable="true"]',
@@ -4311,8 +4608,9 @@
     if (!(input instanceof HTMLElement)) return null;
     const shell = findComposerShell(input);
     let current = input;
-    for (let depth = 0; current && current !== shell && depth < 7; depth += 1, current = current.parentElement) {
+    for (let depth = 0; current && depth < 8; depth += 1, current = current.parentElement) {
       if (elementOverflows(current)) return current;
+      if (current === shell) break;
     }
     return input;
   }
