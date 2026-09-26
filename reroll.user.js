@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Crack Reroll Suite (리롤 · 클린 리롤 · 믹서) 🧩✨
 // @namespace    http://tampermonkey.net/
-// @version      2.4.1
+// @version      2.4.2
 // @description  꾹 눌러 리롤, 클린 리롤, 카드형 리롤 믹서와 AI 자연 혼합 도구를 제공합니다. RP Manager 본문 호환.
 // @author       Assistant
 // @match        https://crack.wrtn.ai/stories/*/episodes/*
@@ -1109,10 +1109,51 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
         return group?.getAttribute?.('data-message-group-id') || '';
     }
 
+    // 클린 리롤로 지운 답변과 그 뒤 새 답변 그룹의 연결을 스크립트 저장소(GM)에 둡니다.
+    // 새로고침해도 믹서가 지운 답변을 다시 보여 주고, 이어서 클린 리롤하면 계속 쌓입니다.
+    const CLEAN_LINKS_KEY = `${SCRIPT_NS}:clean-links:v1`;
+    const CLEAN_LINK_LIMIT = 20;
+    const CLEAN_LINK_ANSWER_LIMIT = 10;
+    let cleanLinksCache = null;
+
+    function loadCleanLinks() {
+        if (!cleanLinksCache) {
+            const stored = gmGet(CLEAN_LINKS_KEY, []);
+            cleanLinksCache = (Array.isArray(stored) ? stored : []).filter(link =>
+                link && typeof link.chatId === 'string' && typeof link.groupId === 'string' &&
+                Array.isArray(link.answers) && link.answers.length > 0 &&
+                link.answers.every(answer => typeof answer === 'string'));
+        }
+        return cleanLinksCache;
+    }
+
+    function rememberCleanLink(session) {
+        const link = {
+            chatId: session.chatId,
+            groupId: session.targetGroupId,
+            turnId: session.resendTurnId,
+            userId: session.resendUserId,
+            answers: session.answers.slice(-CLEAN_LINK_ANSWER_LIMIT),
+            savedAt: Date.now()
+        };
+        // 이번 클린 리롤로 지운 답변 그룹의 연결은 새 연결에 합쳐졌으므로 뺍니다.
+        const rest = loadCleanLinks().filter(item => item.chatId !== link.chatId ||
+            (item.groupId !== link.groupId && item.userId !== session.sourceUserId));
+        cleanLinksCache = [link, ...rest].slice(0, CLEAN_LINK_LIMIT);
+        gmSet(CLEAN_LINKS_KEY, cleanLinksCache);
+    }
+
+    function cleanAnswersForGroup(group, chatId) {
+        const groupId = getGroupMessageId(group);
+        if (cleanSession?.chatId === chatId && cleanSession.targetGroupId === groupId && cleanSession.answers.length) {
+            return cleanSession.answers;
+        }
+        return loadCleanLinks().find(link => link.chatId === chatId && link.groupId === groupId)?.answers || [];
+    }
+
     function addCleanAnswersToBundle(group, chatId, messages, lookup, bundle) {
-        if (!cleanSession || cleanSession.chatId !== chatId ||
-            cleanSession.targetGroupId !== getGroupMessageId(group) ||
-            !cleanSession.answers.length) return bundle;
+        const answers = cleanAnswersForGroup(group, chatId);
+        if (!answers.length) return bundle;
 
         const anchor = lookup.idMap.get(getGroupMessageId(group));
         if (!anchor || !isAssistantMessage(anchor) || !anchor.parentTurnId) return bundle;
@@ -1135,7 +1176,7 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
         }
 
         // 클린 리롤로 서버에서 지운 답변의 로컬 사본입니다. 리롤 변형으로 보이지 않게 표시합니다.
-        const memoryVariants = cleanSession.answers.map((answer, index) => ({
+        const memoryVariants = answers.map((answer, index) => ({
             _id: `clean-memory-${index}`,
             content: answer,
             role: 'assistant',
@@ -1362,8 +1403,7 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
         for (const group of groups) {
             if (group.querySelector(`.${MIXER_BUTTON_CLASS}`)) continue;
             const compareInfo = parseCompareButton(group);
-            const hasCleanAnswers = cleanSession?.chatId === extractChatIdFromUrl() &&
-                cleanSession.targetGroupId === getGroupMessageId(group) && cleanSession.answers.length > 0;
+            const hasCleanAnswers = cleanAnswersForGroup(group, extractChatIdFromUrl()).length > 0;
             if ((!compareInfo || compareInfo.total <= 1) && !hasCleanAnswers) continue;
 
             const compareBtn = compareInfo?.button || findNativeRerollButton(group);
@@ -4353,8 +4393,10 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
             Date.now() - pending.receivedAt > 150_000 ||
             typeof detail.userId !== 'string' || !detail.userId ||
             detail.userId === pending.userId) return;
+        // 새로고침 뒤에는 저장된 연결에서 같은 USER 사슬의 지운 답변을 이어받습니다.
         const previousAnswers = cleanSession?.chatId === pending.chatId &&
-            cleanSession.resendUserId === pending.userId ? cleanSession.answers : [];
+            cleanSession.resendUserId === pending.userId ? cleanSession.answers
+            : (loadCleanLinks().find(link => link.chatId === pending.chatId && link.userId === pending.userId)?.answers || []);
         const existingGroupIds = pending.existingGroupIds;
         // If an exceptionally fast new AI bubble appeared before these two
         // events arrived, let the latest-ID server check decide whether it is
@@ -4811,6 +4853,7 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
             }
             session.targetGroupId = id;
             session.pendingResend = false;
+            rememberCleanLink(session);
         } catch (error) {
             // A failed read is not evidence that the candidate is current.
             session.checkedTargetId = '';
