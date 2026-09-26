@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Crack Char Clock Badge (크랙 글자수·시간 배지) 🕒
 // @namespace    crack char clock badge
-// @version      1.2.8-integrated.6
+// @version      1.2.8-integrated.7
 // @description  글자수·시간 배지, 선택 글자수, 입력 감싸기, 수정창 도구, 버블 메뉴·바로 수정·단어 줄바꿈을 통합합니다.
 // @author       Assistant
 // @match        https://crack.wrtn.ai/*
@@ -4822,6 +4822,14 @@
     try { handler(fakeEvent(el, 'pointerdown')); return true; } catch (_) { return false; }
   }
 
+  function callReactKeyDown(el, key) {
+    const handler = getReactProps(el)?.onKeyDown;
+    if (typeof handler !== 'function') return false;
+    const event = fakeEvent(el, 'keydown');
+    event.key = event.code = key;
+    try { handler(event); return true; } catch (_) { return false; }
+  }
+
   function dispatchPointerPress(el) {
     const rect = el.getBoundingClientRect();
     const x = rect.left + rect.width / 2;
@@ -4897,10 +4905,9 @@
     const attempts = [
       () => callReactPointerDown(trigger),
       () => { dispatchPointerPress(button); return true; },
-      () => {
-        trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
-        return true;
-      }
+      // Call the Enter handler directly: a dispatched Enter would also hit
+      // Crack's `enter` hotkey (focus chat input) and stay held (see below).
+      () => callReactKeyDown(trigger, 'Enter')
     ];
     for (const attempt of attempts) {
       if (!triggerOpen(trigger) && !attempt()) continue;
@@ -4926,10 +4933,13 @@
     wrapper.dataset.ccbCursorMenu = '1';
   }
 
-  function closeMenuSoon() {
-    document.dispatchEvent(new KeyboardEvent('keydown', {
-      key: 'Escape', code: 'Escape', bubbles: true, cancelable: true, composed: true
-    }));
+  // Close through the menu's own trigger. A dispatched Escape keydown has no
+  // keyup, so Crack's hotkey tracker keeps Escape held until the window blurs,
+  // and each later Ctrl/Shift press matches its `esc` bindings (요약 메모리
+  // toggle, chat input blur). Radix toggles the trigger on pointerdown.
+  function closeOptionMenu(trigger) {
+    if (!trigger?.isConnected || !triggerOpen(trigger)) return;
+    if (!callReactPointerDown(trigger)) dispatchPointerPress(trigger.querySelector('button') || trigger);
   }
 
   async function messageTextToCopy(root) {
@@ -4951,8 +4961,9 @@
     return (markdown?.innerText || markdown?.textContent || '').trim();
   }
 
-  function addCopyItem(menu, root) {
+  function addCopyItem(menu, root, trigger) {
     menu.__ccbCopyRoot = root;
+    menu.__ccbCopyTrigger = trigger;
     let item = menu.querySelector(`:scope > .${COPY_CLASS}`);
     if (!item) {
       item = document.createElement('div');
@@ -4974,7 +4985,7 @@
           await navigator.clipboard.writeText(text);
           if (label) label.textContent = '복사됨';
           item.classList.add('ccb-copied');
-          setTimeout(closeMenuSoon, 230);
+          setTimeout(() => closeOptionMenu(menu.__ccbCopyTrigger), 230);
         } catch (_) {
           if (label) label.textContent = '복사 실패';
           setTimeout(() => {
@@ -5007,8 +5018,11 @@
     (async () => {
       try {
         const menu = await showOptionMenu(trigger);
-        if (!menu) return;
-        addCopyItem(menu, root);
+        if (!menu) {
+          closeOptionMenu(trigger);
+          return;
+        }
+        addCopyItem(menu, root, trigger);
         placeMenuAtCursor(menu, event.clientX, event.clientY);
         requestAnimationFrame(() => {
           placeMenuAtCursor(menu, event.clientX, event.clientY);
@@ -5016,7 +5030,7 @@
         });
         setTimeout(() => placeMenuAtCursor(menu, event.clientX, event.clientY), 80);
       } catch (_) {
-        closeMenuSoon();
+        closeOptionMenu(trigger);
       } finally {
         setTimeout(() => {
           delete document.body.dataset.ccbOpeningMessageMenu;
@@ -5059,7 +5073,7 @@
       } catch (_) {
         // A rerender may remove the native trigger or menu during this gesture.
       } finally {
-        if (!success) closeMenuSoon();
+        if (!success) closeOptionMenu(trigger);
         setTimeout(() => {
           delete document.body.dataset.ccbDoubleclickEdit;
           editBusy = false;
