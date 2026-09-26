@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Crack Char Clock Badge (크랙 글자수·시간 배지) 🕒
 // @namespace    crack char clock badge
-// @version      1.2.8-integrated.4
+// @version      1.2.8-integrated.6
 // @description  글자수·시간 배지, 선택 글자수, 입력 감싸기, 수정창 도구, 버블 메뉴·바로 수정·단어 줄바꿈을 통합합니다.
 // @author       Assistant
 // @match        https://crack.wrtn.ai/*
@@ -1916,6 +1916,8 @@
     // 새 답변이 생성된 직후에는 기존 messages API 캐시에 새 messageId가 없을 수 있습니다.
     // 글자수 미해결 상태에서만 캐시를 제한적으로 새로고침해, 새 메시지 글자수가 계속 time-only로 남는 문제를 막습니다.
     const API_FORCE_REFRESH_MIN_INTERVAL = 1600;
+    // 실패한 요청과 같은 메시지를 위한 반복 새로고침은 간격을 두 배씩 늘립니다.
+    const API_RETRY_MAX_INTERVAL = 60000;
 
     let lastUrlKey = getUrlKey();
     let scanTimer = null;
@@ -1923,7 +1925,10 @@
     let apiPromise = null;
     let forcedApiRefreshPromise = null;
     let lastForcedApiRefreshAt = 0;
+    let apiRetryAt = 0;
+    let apiRetryDelay = API_FORCE_REFRESH_MIN_INTERVAL;
     const resultCache = new Map();
+    const refreshBackoff = new Map();
     const queuedGroups = new Set();
     const retryGroups = new Set();
     let fullScanPending = false;
@@ -1940,7 +1945,10 @@
         retryGroups.clear();
         apiCache = null;
         apiPromise = null;
+        apiRetryAt = 0;
+        apiRetryDelay = API_FORCE_REFRESH_MIN_INTERVAL;
         resultCache.clear();
+        refreshBackoff.clear();
     }
 
     function legacySettingKey(name) {
@@ -2014,6 +2022,7 @@
 
         // 설정 변경 후 기존 캐시를 버려야 껐다 켰을 때 글자수/API 보정이 즉시 반영됩니다.
         resultCache.clear();
+        refreshBackoff.clear();
 
         if (!anyInfoEnabled()) {
             retryGroups.clear();
@@ -2108,6 +2117,7 @@
 
         if (!force && apiCache) return apiCache;
         if (apiPromise) return apiPromise;
+        if (Date.now() < apiRetryAt) throw new Error('messages fetch backoff');
 
         if (force) apiCache = null;
 
@@ -2125,11 +2135,15 @@
                 const messages = json?.data?.messages || json?.messages || [];
                 const list = Array.isArray(messages) ? messages : [];
                 apiCache = buildApiCache(list);
+                apiRetryAt = 0;
+                apiRetryDelay = API_FORCE_REFRESH_MIN_INTERVAL;
                 return apiCache;
             })
             .catch(err => {
                 console.warn(`${LOG_PREFIX} API resolve failed:`, err);
                 apiCache = null;
+                apiRetryAt = Date.now() + apiRetryDelay;
+                apiRetryDelay = Math.min(API_RETRY_MAX_INTERVAL, apiRetryDelay * 2);
                 throw err;
             })
             .finally(() => {
@@ -2167,15 +2181,37 @@
     function buildApiCache(messages) {
         const idMap = new Map();
         const apiIndexMap = new Map();
+        let oldestTime = Infinity;
 
         messages.forEach((msg, index) => {
             const id = messageIdOf(msg);
             if (!id) return;
             idMap.set(id, msg);
             apiIndexMap.set(id, index);
+            const time = objectIdToDate(id)?.getTime();
+            if (time < oldestTime) oldestTime = time;
         });
 
-        return { messages, idMap, apiIndexMap };
+        return { messages, idMap, apiIndexMap, oldestTime };
+    }
+
+    // 강제 새로고침은 같은 최신 MESSAGE_LIMIT개를 다시 받습니다. 스크롤로 불러온
+    // 그보다 오래된 메시지나 ObjectId가 없는 그룹은 몇 번을 받아도 나오지 않습니다.
+    function refreshCanReach(group) {
+        const date = objectIdToDate(getGroupMessageId(group));
+        if (!date) return false;
+        if (!apiCache || apiCache.messages.length < MESSAGE_LIMIT) return true;
+        return date.getTime() >= apiCache.oldestTime;
+    }
+
+    function takeRefreshTurn(key) {
+        const now = Date.now();
+        const turn = refreshBackoff.get(key) || { nextAt: 0, delay: API_FORCE_REFRESH_MIN_INTERVAL };
+        if (now < turn.nextAt) return false;
+        turn.nextAt = now + turn.delay;
+        turn.delay = Math.min(API_RETRY_MAX_INTERVAL, turn.delay * 2);
+        refreshBackoff.set(key, turn);
+        return true;
     }
 
     function messageIdOf(msg) {
@@ -2332,7 +2368,12 @@
                 );
 
                 if (variants.length !== compare.total) {
-                    return enrichResolvedWithMessage(fallback, idMap.get(fallback.messageId), 'api-message');
+                    // 방금 만든 리롤이 아직 캐시에 없으면 첫 답변 정보로 임시 표시만 하고
+                    // 캐시하지 않아, 새로고침 뒤 현재 답변 기준으로 다시 계산합니다.
+                    return {
+                        ...enrichResolvedWithMessage(fallback, idMap.get(fallback.messageId), 'api-message'),
+                        provisional: true
+                    };
                 }
 
                 const ordered = sortVariantsUiOrder(variants, apiIndexMap);
@@ -2684,8 +2725,10 @@
     }
 
     function cacheResolvedIfReady(key, resolved) {
+        if (resolved?.provisional) return;
         if (!getSetting('showChars') || hasResolvedChars(resolved)) {
             resultCache.set(key, resolved);
+            refreshBackoff.delete(key);
         }
     }
 
@@ -2721,15 +2764,21 @@
 
             // 글자수가 필요한데 못 구한 결과(fallback/API 미스)는 캐시에 박지 않습니다.
             // 한 번 실패한 time-only 결과가 영구 캐시되어 글자수 재시도를 막는 문제를 방지합니다.
-            const needChars = getSetting('showChars');
-            const gotChars = hasResolvedChars(resolved);
+            const needsRefresh = resolved.provisional ||
+                (getSetting('showChars') && !hasResolvedChars(resolved));
 
             cacheResolvedIfReady(key, resolved);
             setBadge(group, resolved);
 
             // 새 답변은 기존 messages API 캐시에 아직 없을 수 있습니다.
-            // 글자수가 필요하지만 못 구한 경우에만 API 캐시를 한 번 새로고침한 뒤 재확인합니다.
-            if (needChars && !gotChars && group.isConnected) {
+            // 글자수가 필요하지만 못 구한 경우에만 API 캐시를 새로고침한 뒤 재확인합니다.
+            if (needsRefresh && group.isConnected) {
+                if (!refreshCanReach(group)) {
+                    // 받을 수 있는 창 밖의 메시지는 시간만 표시하고 재시도하지 않습니다.
+                    retryGroups.delete(group);
+                    return;
+                }
+                if (!takeRefreshTurn(key)) return;
                 refreshApiCacheThrottled()
                     .then(() => {
                         if (!group.isConnected || resultCache.has(key)) return null;
@@ -2743,6 +2792,7 @@
                         setBadge(group, retryResolved);
                     })
                     .catch(err => {
+                        if (Date.now() < apiRetryAt) return;
                         console.warn(`${LOG_PREFIX} API refresh retry failed:`, err);
                     });
             }
@@ -3770,7 +3820,7 @@
   }
 
   function nativeButtonClass(container) {
-    const btn = container?.querySelector?.('button');
+    const btn = container?.querySelector?.(`button:not(#${TOOLBAR_BUTTON_ID})`);
     if (btn?.className && typeof btn.className === 'string') return btn.className;
 
     return 'relative inline-flex items-center gap-1 rounded-full text-sm font-medium leading-none transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-focus disabled:pointer-events-none disabled:opacity-50 min-w-7 border border-border bg-card text-line-gray-1 hover:bg-secondary p-0 size-7 justify-center';
@@ -3812,8 +3862,9 @@
       wrapper.appendChild(btn);
     }
 
-    btn.className = nativeButtonClass(container);
-    btn.classList.add('ciw-native-toolbar-btn');
+    // This runs every 1.5s; rewriting an unchanged class still emits mutations.
+    const nextClass = `${nativeButtonClass(container)} ciw-native-toolbar-btn`;
+    if (btn.className !== nextClass) btn.className = nextClass;
 
     if (wrapper.parentElement !== container) {
       container.insertBefore(wrapper, container.firstChild);
@@ -4699,6 +4750,13 @@
       body[data-ccb-opening-message-menu="1"] [data-radix-popper-content-wrapper] {
         transform: translate(-9999px, -9999px) !important;
       }
+      /* The menu content animates itself; Radix would keep the hidden menu
+         mounted for its exit animation, so it could flash after the flag. */
+      body[data-ccb-opening-message-menu="1"] [data-radix-popper-content-wrapper] *,
+      body[data-ccb-doubleclick-edit="1"] [data-radix-popper-content-wrapper] * {
+        transition: none !important;
+        animation: none !important;
+      }
       .${COPY_CLASS} { cursor: pointer !important; }
       .${COPY_CLASS}:hover { background: rgba(127,127,127,.16) !important; }
       .${COPY_CLASS} svg {
@@ -4768,8 +4826,10 @@
     const rect = el.getBoundingClientRect();
     const x = rect.left + rect.width / 2;
     const y = rect.top + rect.height / 2;
+    // No `view`: Tampermonkey passes @grant scripts a Proxy as `window`, and
+    // the MouseEvent/PointerEvent constructors reject it with a TypeError.
     const base = {
-      bubbles: true, cancelable: true, composed: true, view: window,
+      bubbles: true, cancelable: true, composed: true,
       button: 0, buttons: 1, clientX: x, clientY: y, screenX: x, screenY: y,
       ctrlKey: false, shiftKey: false, altKey: false, metaKey: false
     };
@@ -4786,11 +4846,6 @@
     el.dispatchEvent(new MouseEvent('mouseup', { ...base, buttons: 0 }));
   }
 
-  function dispatchPointerClick(el) {
-    dispatchPointerPress(el);
-    el.click();
-  }
-
   function messageRoot(target) {
     const markdown = target?.closest?.('.wrtn-markdown');
     return markdown?.closest('[data-message-group-id]') || null;
@@ -4799,11 +4854,16 @@
   function optionTrigger(root) {
     if (!root) return null;
     // Crack's message trigger is a Radix div.dropdown-button with an inner
-    // button. Older snapshots lack its aria-label, so allow both variants.
+    // button. Older snapshots lack its aria-label, so fall back to the source
+    // script's "…" icon path before the structural guesses.
     const triggers = Array.from(root.querySelectorAll('[aria-haspopup="menu"]'))
       .filter(el => isVisible(el) && el.getAttribute('aria-disabled') !== 'true');
-    return triggers.find(el => el.classList.contains('dropdown-button') && el.querySelector('button')) ||
-      triggers.find(el => el.matches('button[aria-label="메시지 옵션"]') || el.querySelector('button')) ||
+    const labelled = '[aria-label="메시지 옵션"]';
+    const moreIcon = 'path[d^="M7.04 10.73H4.5v2.54"]';
+    return triggers.find(el => el.matches(labelled) || el.querySelector(labelled)) ||
+      triggers.find(el => el.querySelector(moreIcon)) ||
+      triggers.find(el => el.classList.contains('dropdown-button') && el.querySelector('button')) ||
+      triggers.find(el => el.querySelector('button')) ||
       null;
   }
 
@@ -4824,39 +4884,30 @@
     return null;
   }
 
+  const triggerOpen = trigger => trigger.getAttribute('aria-expanded') === 'true' ||
+    trigger.getAttribute('data-state') === 'open';
+
   async function showOptionMenu(trigger) {
     let menu = openOptionMenu(trigger);
     if (menu) return menu;
-    // The original Radix handler expects a real false ctrlKey. Avoid calling
-    // pointerdown and click together: the second action can toggle it closed.
-    if (callReactPointerDown(trigger)) {
+    // Radix toggles its trigger on pointerdown (button 0, ctrlKey false) or
+    // Enter, never on click. Try each route once, and skip a press while the
+    // trigger already reports open: a second toggle would close the menu.
+    const button = trigger.querySelector?.('button') || trigger;
+    const attempts = [
+      () => callReactPointerDown(trigger),
+      () => { dispatchPointerPress(button); return true; },
+      () => {
+        trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
+        return true;
+      }
+    ];
+    for (const attempt of attempts) {
+      if (!triggerOpen(trigger) && !attempt()) continue;
       menu = await waitForMenu(trigger);
       if (menu) return menu;
     }
-    const button = trigger.querySelector?.('button') || trigger;
-    dispatchPointerPress(button);
-    menu = await waitForMenu(trigger);
-    if (!menu) {
-      button.click();
-      menu = await waitForMenu(trigger);
-    }
-    if (!menu) {
-      if (button !== trigger) {
-        dispatchPointerPress(trigger);
-        menu = await waitForMenu(trigger);
-      }
-    }
-    if (!menu) {
-      if (button !== trigger) {
-        trigger.click();
-        menu = await waitForMenu(trigger);
-      }
-    }
-    if (!menu) {
-      trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
-      menu = await waitForMenu(trigger);
-    }
-    return menu;
+    return null;
   }
 
   function placeMenuAtCursor(menu, clientX, clientY) {
@@ -5001,9 +5052,9 @@
           item = findEditMenuItem(menu);
         }
         if (!item) return;
-        // Radix invokes its select handler from the item's native DOM click.
-        // Directly calling React props fails from a userscript isolated world.
-        dispatchPointerClick(item);
+        // Crack runs 수정 from the Radix item's onClick. A plain DOM click
+        // reaches it in the page and in an isolated world alike.
+        item.click();
         success = true;
       } catch (_) {
         // A rerender may remove the native trigger or menu during this gesture.
