@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🧩 Crack Chat Hub (크랙 채팅 허브)
 // @namespace    https://crack.wrtn.ai/
-// @version      1.1.7
+// @version      1.1.8
 // @description  크랙 채팅 합본: 임시저장, 글자수, 채팅창 펼치기, 대시보드(해/달·소설/채팅 즉시 전환), 라디오존데, 채팅·출력 모델 공통 숨김.
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-idle
@@ -2382,6 +2382,7 @@ const hubNotice = (() => {
     let lastPendingThemeAttempt = '';
     let lastPendingThemeAttemptAt = 0;
     let lastPendingThemeLookupAt = 0;
+    try { localStorage.removeItem(STORAGE.pendingTheme); } catch (e) {}
     function syncPendingNativeTheme() {
         let pending;
         try { pending = localStorage.getItem(STORAGE.pendingTheme); } catch (e) { return; }
@@ -2419,6 +2420,25 @@ const hubNotice = (() => {
         }, 180);
     }
 
+    // 크랙은 테마를 crack-user-theme 쿠키(99년)에 두고, 새로고침 때 서버가 이 쿠키로 화면을 그린다.
+    // 예전에는 localStorage와 화면 속성만 바꿔서 새로고침하면 쿠키에 남은 테마로 돌아갔다.
+    // 크랙이 쓴 쿠키(도메인 쿠키일 수도, 호스트 쿠키일 수도 있음)를 같은 방식으로 덮어써서 쿠키가 둘로 갈라지지 않게 한다.
+    function writeCrackThemeCookie(mode) {
+        try {
+            const expires = new Date();
+            expires.setFullYear(expires.getFullYear() + 99);
+            const base = `crack-user-theme=${mode}; path=/; expires=${expires.toUTCString()}; SameSite=Lax`;
+            const count = () => (String(document.cookie || '').match(/(?:^|;\s*)crack-user-theme=/g) || []).length;
+            const domain = '.' + location.hostname.split('.').slice(-2).join('.');
+            const before = count();
+            document.cookie = `${base}; domain=${domain}`;
+            if (count() > Math.max(1, before)) {
+                document.cookie = `crack-user-theme=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax; domain=${domain}`;
+                document.cookie = base;
+            }
+        } catch (e) {}
+    }
+
     function toggleQuickTheme() {
         const next = getQuickThemeMode() === 'dark' ? 'light' : 'dark';
         // UI Plus가 실행 중이면 숨겨진 설정 패널의 기존 버튼을 사용한다.
@@ -2435,8 +2455,10 @@ const hubNotice = (() => {
         try {
             localStorage.setItem('theme', next);
             localStorage.removeItem('crack_ui_theme_mode');
-            localStorage.setItem(STORAGE.pendingTheme, next);
+            // 쿠키에 바로 저장하므로 크랙 설정창을 대신 눌러 줄 필요가 없다(남아 있으면 나중에 설정에서 고른 테마를 되돌렸다).
+            localStorage.removeItem(STORAGE.pendingTheme);
         } catch (e) {}
+        writeCrackThemeCookie(next);
         lastPendingThemeAttempt = '';
         lastPendingThemeAttemptAt = 0;
         lastPendingThemeLookupAt = 0;
@@ -2449,7 +2471,6 @@ const hubNotice = (() => {
             document.body.dataset.theme = next;
             document.body.style.colorScheme = next;
         }
-        syncPendingNativeTheme();
         Sidebar.render();
     }
 
