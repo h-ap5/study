@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        크랙 대화 프로필 매니저
 // @namespace   crack-profile-library-menu
-// @version     1.7.3
+// @version     1.7.5
 // @description 대화 프로필 라이브러리, 백업, 전용 메모장 추가.
 // @match       https://crack.wrtn.ai/*
 // @run-at      document-start
@@ -357,6 +357,7 @@
         archive: '<rect x="3.5" y="4.5" width="17" height="4.5" rx="1.2"/><path d="M5.5 9v9a1.5 1.5 0 0 0 1.5 1.5h10a1.5 1.5 0 0 0 1.5-1.5V9M10 13h4"/>',
         inbox: '<path d="M4 13.5h4.2l1.4 2.5h4.8l1.4-2.5H20"/><path d="M6.4 5.5h11.2L20 13.5v4.5a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18v-4.5z"/>',
         copy: '<rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 8.5V6A1.5 1.5 0 0 0 14 4.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5"/>',
+        duplicate: '<rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 8.5V6A1.5 1.5 0 0 0 14 4.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5M14 11.5v5M11.5 14h5"/>',
         trash: '<path d="M4.5 7h15M9.5 7V4.8h5V7M6.5 7l.8 11.6a1.5 1.5 0 0 0 1.5 1.4h6.4a1.5 1.5 0 0 0 1.5-1.4L17.5 7M10 11v5.5M14 11v5.5"/>',
         download: '<path d="M12 4.5v10M7.5 10.5 12 15l4.5-4.5M4.5 15.5v2.5A1.5 1.5 0 0 0 6 19.5h12a1.5 1.5 0 0 0 1.5-1.5v-2.5"/>',
         upload: '<path d="M12 15V5M7.5 9.5 12 5l4.5 4.5M4.5 15.5v2.5A1.5 1.5 0 0 0 6 19.5h12a1.5 1.5 0 0 0 1.5-1.5v-2.5"/>',
@@ -483,6 +484,8 @@
             .ctm-pm-rowinfo:empty::before { content:'정보 없음'; color:var(--ctm-faint); }
             .ctm-pm-rowedit { grid-area:ed; display:none; align-items:center; height:34px; padding:0 14px; border:1px solid var(--ctm-line); border-radius:10px; color:var(--ctm-text); font-size:13.5px; font-weight:500; }
             .ctm-pm-rowuse { display:none; }
+            .ctm-pm-rowcopy { width:28px; height:28px; margin-right:2px; color:var(--ctm-faint); }
+            .ctm-pm-rowcopy svg { width:16px; height:16px; }
             .ctm-pm-avatar { display:inline-flex; align-items:center; justify-content:center; width:30px; height:30px; flex-shrink:0; overflow:hidden; border-radius:50%; background:var(--ctm-avatar); color:var(--ctm-sub); font-size:12.5px; font-weight:600; line-height:1; }
             .ctm-pm-avatar.is-current { background:var(--ctm-brand-tint); color:var(--ctm-brand-text); }
             .ctm-pm-avatar.is-large { width:42px; height:42px; font-size:16px; }
@@ -556,6 +559,12 @@
             .ctm-toast.show { opacity:1; transform:translate(-50%, 0); }
             .ctm-inline-action { appearance:none; display:inline-flex; align-items:center; height:24px; padding:0 9px; border:1px solid var(--ctm-line); border-radius:7px; background:var(--ctm-hover); color:var(--ctm-text); font:inherit; font-size:12px; font-weight:500; line-height:1; white-space:nowrap; vertical-align:middle; cursor:pointer; -webkit-tap-highlight-color:transparent; transition:border-color .15s ease, color .15s ease; }
             .ctm-inline-action:focus-visible { outline:2px solid var(--ctm-brand-text); outline-offset:2px; }
+            .ctm-confirm { position:fixed; inset:0; z-index:1000003; display:flex; align-items:center; justify-content:center; padding:24px; background:rgba(6,6,10,.45); animation:ctm-fade .14s ease-out; }
+            body[data-theme="light"] .ctm-confirm { background:rgba(20,18,32,.24); }
+            .ctm-confirm-card { width:min(360px, 100%); padding:20px 18px 14px; border:1px solid var(--ctm-line); border-radius:14px; background:var(--ctm-panel); color:var(--ctm-text); box-shadow:var(--ctm-shadow); font-size:13px; line-height:1.45; animation:ctm-rise .2s cubic-bezier(.16,1,.3,1); }
+            .ctm-confirm-message { margin:0 0 16px; font-size:14px; line-height:1.6; white-space:pre-line; word-break:keep-all; overflow-wrap:anywhere; }
+            .ctm-confirm-actions { display:flex; justify-content:flex-end; gap:8px; }
+            .ctm-confirm-actions .ctm-btn { min-width:72px; }
 
             @media (hover: hover) {
                 .ctm-icon-btn:hover { background:var(--ctm-hover); color:var(--ctm-text); }
@@ -607,6 +616,9 @@
                 .ctm-pm-badge { font-size:12.5px; }
                 .ctm-pm-rowinfo { font-size:13.5px; }
                 .ctm-pm-rowuse { display:inline-flex; height:40px; margin-right:4px; padding:0 14px; font-size:14px; }
+                .ctm-pm-rowcopy { margin-right:0; }
+                .ctm-pm-rowcopy svg { width:19px; height:19px; }
+                .ctm-pm-row.is-current .ctm-pm-rowcopy { align-self:flex-start; margin:12px 10px 0 0; }
                 .ctm-pm-row.is-current { margin:0 0 6px; border:1px solid var(--ctm-brand-line); border-radius:16px; background:var(--ctm-raised); }
                 .ctm-pm-row.is-current .ctm-pm-pick { grid-template-columns:44px minmax(0,1fr) auto; grid-template-areas:"av nm ed" "in in in"; row-gap:10px; padding:14px; border-radius:16px; }
                 .ctm-pm-row.is-current .ctm-pm-avatar { width:44px; height:44px; font-size:16px; }
@@ -644,6 +656,8 @@
                 .ctm-menu-sub { font-size:13px; }
                 .ctm-toast { top:calc(12px + env(safe-area-inset-top, 0px)); bottom:auto; transform:translate(-50%, -8px); font-size:14px; }
                 .ctm-toast.show { transform:translate(-50%, 0); }
+                .ctm-confirm-message { font-size:15px; }
+                .ctm-confirm-actions .ctm-btn { flex:1; height:44px; }
             }
             @media (max-width: 360px) {
                 .ctm-pm-dirty-text { display:none; }
@@ -656,7 +670,7 @@
             @keyframes ctm-menu-in { from { opacity:0; transform:translateY(-4px); } }
             @keyframes ctm-pulse { 50% { opacity:.45; } }
             @media (prefers-reduced-motion: reduce) {
-                .ctm-overlay, .ctm-pm, .ctm-menu, .ctm-pm-skeleton { animation:none; }
+                .ctm-overlay, .ctm-pm, .ctm-menu, .ctm-pm-skeleton, .ctm-confirm, .ctm-confirm-card { animation:none; }
                 .ctm-toast { transition:opacity .2s ease; }
             }
         `;
@@ -787,6 +801,46 @@
         let pointerStartedOnBackdrop = false;
         let allowNativeEscape = false;
         let hostOverlay = null;
+        let confirmState = null;
+
+        // 크롬 기본 confirm 대신 이 창 안에 띄우는 확인창. 기본 창은 페이지 전체를 멈추고
+        // 크랙·매니저와 모양이 맞지 않는다. 루트 안에 두어, 크랙 창의 바깥 클릭 닫기와
+        // 포커스 가두기를 막는 루트의 이벤트 차단이 그대로 적용된다.
+        function askConfirm(message, { confirmLabel = '확인', cancelLabel = '취소', danger = false } = {}) {
+            confirmState?.finish(false);
+            return new Promise((resolve) => {
+                const previousFocus = document.activeElement;
+                const node = document.createElement('div');
+                node.className = 'ctm-confirm';
+                node.innerHTML = `
+                    <div class="ctm-confirm-card" role="alertdialog" aria-modal="true" aria-describedby="ctmConfirmMessage">
+                        <p class="ctm-confirm-message" id="ctmConfirmMessage"></p>
+                        <div class="ctm-confirm-actions">
+                            <button class="ctm-btn" type="button" data-confirm="cancel"></button>
+                            <button class="ctm-btn is-primary" type="button" data-confirm="ok"></button>
+                        </div>
+                    </div>`;
+                node.querySelector('.ctm-confirm-message').textContent = message;
+                const cancelButton = node.querySelector('[data-confirm="cancel"]');
+                const okButton = node.querySelector('[data-confirm="ok"]');
+                cancelButton.textContent = cancelLabel;
+                okButton.textContent = confirmLabel;
+                const finish = (value) => {
+                    if (confirmState?.node !== node) return;
+                    confirmState = null;
+                    node.remove();
+                    if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
+                    resolve(value);
+                };
+                cancelButton.addEventListener('click', () => finish(false));
+                okButton.addEventListener('click', () => finish(true));
+                node.addEventListener('pointerdown', (event) => { if (event.target === node) finish(false); });
+                confirmState = { node, finish, buttons: [cancelButton, okButton] };
+                root.appendChild(node);
+                // 지우기처럼 되돌릴 수 없는 확인은 실수로 Enter를 눌러도 취소되게 취소 버튼에 둔다.
+                (danger ? cancelButton : okButton).focus({ preventScroll: true });
+            });
+        }
 
         const store = () => state[state.source];
         const keyOf = (item) => (item.isDraft ? DRAFT : String(item.id));
@@ -807,7 +861,9 @@
             return values.name !== base.name || values.information !== base.information || values.memo !== base.memo;
         }
         function memoFor(item) {
-            if (!item || item.isDraft) return '';
+            if (!item) return '';
+            // 새 항목은 메모가 없고, 복제본은 원본 메모를 들고 있다.
+            if (item.isDraft) return String(item.memo ?? '');
             if (state.source === 'library') return String(item.memo ?? '');
             return item.name ? String(loadSlotMemos()[item.name] ?? '') : '';
         }
@@ -816,11 +872,12 @@
             el.name.value = values.name;
             el.info.value = values.information;
             el.memo.value = values.memo;
-            state.baseline = item ? values : null;
+            // 복제본은 내용이 있어도 아직 저장하지 않은 새 항목이라 '저장 안 됨'으로 두고 저장 버튼을 켠다.
+            state.baseline = item ? (item.copiedFrom ? { name: '', information: '', memo: '' } : values) : null;
             state.error = '';
         }
-        function confirmDiscard(message = '저장하지 않은 변경사항이 있어요. 버리고 계속할까요?') {
-            return !isDirty() || confirm(message);
+        function confirmDiscard(message = '저장하지 않은 변경사항이 있어요. 버리고 계속할까요?', confirmLabel = '버리기') {
+            return isDirty() ? askConfirm(message, { confirmLabel, danger: true }) : Promise.resolve(true);
         }
 
         function ensureSelection(target, { preferredId = null, preferredName = null } = {}) {
@@ -924,18 +981,20 @@
         function rowTemplate(item) {
             const selected = keyOf(item) === store().selected;
             const inUse = state.source === 'server' && Boolean(item.current);
-            const name = item.isDraft ? (state.source === 'server' ? '새 프로필' : '새 항목') : (item.name || '이름 없음');
-            const badge = item.isDraft ? '<span class="ctm-pm-badge is-muted">작성 중</span>'
+            const blankName = state.source === 'server' ? '새 프로필' : '새 항목';
+            const name = item.isDraft ? ((item.copiedFrom && item.name) || blankName) : (item.name || '이름 없음');
+            const badge = item.isDraft ? `<span class="ctm-pm-badge is-muted">${item.copiedFrom ? '복제본' : '작성 중'}</span>`
                 : inUse ? '<span class="ctm-pm-badge">사용 중</span>'
                     : state.source === 'library' && String(item.memo ?? '').trim() ? '<span class="ctm-pm-badge is-muted">메모</span>' : '';
             const canUse = state.source === 'server' && state.server.chatId && !item.isDraft && !inUse;
             return `<div class="ctm-pm-row${selected ? ' is-selected' : ''}${inUse ? ' is-current' : ''}" data-key="${escapeHtml(keyOf(item))}">`
                 + `<button class="ctm-pm-pick" type="button" data-action="pick"${selected ? ' aria-current="true"' : ''}>`
-                + avatarMarkup(item.isDraft ? '' : item.name, inUse)
+                + avatarMarkup(item.isDraft && !item.copiedFrom ? '' : item.name, inUse)
                 + `<span class="ctm-pm-rowname"><span class="ctm-pm-rowname-text">${escapeHtml(name)}</span>${badge}<span class="ctm-pm-dirtydot" aria-hidden="true" hidden></span></span>`
                 + `<span class="ctm-pm-rowinfo">${escapeHtml(item.information || '')}</span>`
                 + (inUse ? '<span class="ctm-pm-rowedit" aria-hidden="true">편집</span>' : '')
                 + '</button>'
+                + (item.isDraft ? '' : `<button class="ctm-icon-btn ctm-pm-rowcopy" type="button" data-action="duplicate" aria-label="‘${escapeHtml(name)}’ 복제" title="복제해서 새로 만들기">${icon('duplicate')}</button>`)
                 + (canUse ? `<button class="ctm-btn ctm-pm-rowuse" type="button" data-action="use" aria-label="‘${escapeHtml(name)}’ 프로필을 이 대화에 사용">사용</button>` : '')
                 + '</div>';
         }
@@ -1032,11 +1091,13 @@
             syncRowDirty();
         }
 
-        function select(key) {
+        async function select(key) {
             const target = store();
             if (state.busy || !findItem(key)) return;
             if (key !== target.selected) {
-                if (!confirmDiscard()) return;
+                if (!await confirmDiscard()) return;
+                // 확인을 기다리는 동안 탭이나 목록이 바뀌었을 수 있다.
+                if (state.busy || store() !== target || !findItem(key)) return;
                 if (target.selected === DRAFT) target.draft = null;
                 target.selected = key;
                 fillForm(getSelected());
@@ -1059,9 +1120,10 @@
             render();
             el.list.querySelector('.ctm-pm-row.is-selected .ctm-pm-pick')?.focus({ preventScroll: true });
         }
-        function switchSource(next) {
+        async function switchSource(next) {
             if (next === state.source || state.busy) return;
-            if (!confirmDiscard()) return;
+            if (!await confirmDiscard()) return;
+            if (next === state.source || state.busy) return;
             const previous = store();
             if (previous.selected === DRAFT) {
                 previous.draft = null;
@@ -1077,15 +1139,17 @@
             setView('list');
             render();
         }
-        function startDraft() {
+        async function startDraft() {
             const target = store();
             if (state.busy) return;
             if (state.source === 'server' && target.status !== 'ready') {
                 toast('크랙 프로필을 불러온 뒤에 만들 수 있어요');
                 return;
             }
-            if (target.selected !== DRAFT) {
-                if (!confirmDiscard()) return;
+            // 복제본을 보고 있을 때 누르면 빈 새 항목으로 바꾼다.
+            if (target.selected !== DRAFT || target.draft?.copiedFrom) {
+                if (!await confirmDiscard()) return;
+                if (state.busy || store() !== target) return;
                 target.draft = { isDraft: true, id: null, name: '', information: '' };
                 target.selected = DRAFT;
                 fillForm(target.draft);
@@ -1096,6 +1160,33 @@
             setView('detail');
             render();
             el.name.focus({ preventScroll: true });
+        }
+        // 목록의 복제 아이콘: 이름·정보·메모를 그대로 담은 새 항목을 연다.
+        // 저장을 누르기 전에는 크랙 서버나 보관함에 아무것도 만들지 않는다.
+        async function duplicate(key) {
+            const target = store();
+            const source = findItem(key);
+            if (!source || source.isDraft || state.busy) return;
+            if (state.source === 'server' && target.status !== 'ready') return;
+            if (!await confirmDiscard()) return;
+            if (state.busy || store() !== target || !findItem(key)) return;
+            target.draft = {
+                isDraft: true,
+                id: null,
+                copiedFrom: String(source.id),
+                name: truncate(String(source.name ?? ''), NAME_MAX),
+                information: String(source.information ?? ''),
+                memo: memoFor(source),
+            };
+            target.selected = DRAFT;
+            fillForm(target.draft);
+            el.editor.scrollTop = 0;
+            state.query = '';
+            el.search.value = '';
+            setView('detail');
+            render();
+            if (!isSheet()) el.name.focus({ preventScroll: true });
+            toast(`‘${source.name || '이름 없음'}’ 복제본이에요. 저장하면 새로 추가돼요`);
         }
         function revert() {
             const item = getSelected();
@@ -1127,9 +1218,13 @@
                     savedId = saved?._id ?? saved?.id ?? savedId;
                 }
                 const sharedName = !item.isDraft && target.items.some((other) => other !== item && other.name === item.name);
-                saveSlotMemos(updateSlotMemo(loadSlotMemos(), {
-                    previousName: item.isDraft ? '' : item.name, name, memo: values.memo, keepPrevious: sharedName,
-                }));
+                // 메모는 이름으로 묶인다. 새 항목(복제본 포함)을 빈 메모로 저장할 때 지우면
+                // 같은 이름을 쓰는 기존 프로필의 메모까지 사라지므로 건너뛴다.
+                if (!item.isDraft || values.memo.trim()) {
+                    saveSlotMemos(updateSlotMemo(loadSlotMemos(), {
+                        previousName: item.isDraft ? '' : item.name, name, memo: values.memo, keepPrevious: sharedName,
+                    }));
+                }
                 el.name.value = name;
                 state.baseline = { ...values, name };
                 if (writesServer) {
@@ -1190,7 +1285,7 @@
             const target = state.server;
             if (!item || item.isDraft || item.current || !target.chatId || state.busy) return;
             if (keyOf(item) === target.selected && isDirty()) {
-                if (!confirm('저장하지 않은 변경사항이 있어요. 저장한 뒤 이 대화에 사용할까요?')) return;
+                if (!await askConfirm('저장하지 않은 변경사항이 있어요. 저장한 뒤 이 대화에 사용할까요?', { confirmLabel: '저장하고 사용' })) return;
                 if (!await save()) return;
                 item = getSelected(target);
                 if (!item || item.current) return;
@@ -1216,7 +1311,8 @@
             if (!item || item.isDraft || state.busy) return;
             const label = item.name || '이름 없음';
             if (state.source === 'library') {
-                if (!confirm(`‘${label}’ 항목을 보관함에서 삭제할까요?`)) return;
+                if (!await askConfirm(`‘${label}’ 항목을 보관함에서 삭제할까요?`, { confirmLabel: '삭제', danger: true })) return;
+                if (getSelected() !== item || state.busy) return;
                 saveLibrary(loadLibrary().filter((entry) => String(entry.id) !== String(item.id)));
                 state.library.selected = null;
                 state.baseline = null;
@@ -1231,7 +1327,8 @@
                 fail('이 대화에서 사용 중인 프로필은 삭제할 수 없어요. 다른 프로필을 먼저 사용해 주세요.');
                 return;
             }
-            if (!confirm(`‘${label}’ 프로필을 크랙에서 삭제할까요? 되돌릴 수 없어요.`)) return;
+            if (!await askConfirm(`‘${label}’ 프로필을 크랙에서 삭제할까요? 되돌릴 수 없어요.`, { confirmLabel: '삭제', danger: true })) return;
+            if (getSelected() !== item || state.busy) return;
             const target = state.server;
             setBusy('delete');
             try {
@@ -1300,7 +1397,7 @@
             const server = state.server;
             if (state.source !== 'library' || state.busy) return;
             if (isDirty()) {
-                if (!confirm('저장하지 않은 변경사항이 있어요. 보관함에 저장한 뒤 추가할까요?')) return;
+                if (!await askConfirm('저장하지 않은 변경사항이 있어요. 보관함에 저장한 뒤 추가할까요?', { confirmLabel: '저장하고 추가' })) return;
                 if (!await save()) return;
             }
             const entry = getSelected();
@@ -1361,13 +1458,14 @@
             el.import.value = '';
             if (!file) return;
             const reader = new FileReader();
-            reader.onload = () => {
+            reader.onload = async () => {
                 let data;
                 try { data = JSON.parse(reader.result); } catch { return toast('백업 파일을 읽지 못했어요'); }
                 const library = Array.isArray(data?.library) ? data.library : null;
                 const memos = data?.memos && typeof data.memos === 'object' && !Array.isArray(data.memos) ? data.memos : null;
                 if (!library && !memos) return toast('보관함 백업 파일이 아니에요');
-                if (!confirm('백업 파일 내용으로 보관함과 메모를 바꿀까요? 지금 보관함에 있는 내용은 사라져요.')) return;
+                if (!await askConfirm('백업 파일 내용으로 보관함과 메모를 바꿀까요? 지금 보관함에 있는 내용은 사라져요.', { confirmLabel: '바꾸기', danger: true })) return;
+                if (!root.isConnected) return;
                 try {
                     if (library) saveLibrary(library);
                     if (memos) saveSlotMemos(memos);
@@ -1479,6 +1577,7 @@
                 entries.push({ label: '텍스트로 복사', icon: 'copy', onSelect: copyAsText });
             }
             if (!item.isDraft) {
+                entries.push({ label: '복제해서 새로 만들기', icon: 'duplicate', onSelect: () => duplicate(keyOf(item)) });
                 entries.push('separator', {
                     label: state.source === 'server' ? '크랙에서 삭제' : '보관함에서 삭제', icon: 'trash', danger: true, onSelect: removeSelected,
                 });
@@ -1500,12 +1599,13 @@
         function openLibraryTools(anchor) {
             openMenu(anchor, [
                 { label: '파일로 백업', icon: 'download', onSelect: exportLibrary },
-                { label: '백업 파일에서 복원', icon: 'upload', onSelect: () => { if (confirmDiscard()) el.import.click(); } },
+                { label: '백업 파일에서 복원', icon: 'upload', onSelect: async () => { if (await confirmDiscard()) el.import.click(); } },
             ], { label: '보관함 백업·복원' });
         }
 
-        function requestClose() {
-            if (!confirmDiscard('저장하지 않은 변경사항이 있어요. 닫을까요?')) return;
+        async function requestClose() {
+            if (!await confirmDiscard('저장하지 않은 변경사항이 있어요. 닫을까요?', '닫기')) return;
+            if (!root.isConnected) return;
             if (host) {
                 closeHostDialog();
                 return;
@@ -1566,7 +1666,8 @@
             event.stopPropagation();
             if (event.isComposing || event.keyCode === 229) return;
             event.preventDefault();
-            if (menu) closeMenu({ focusAnchor: true });
+            if (confirmState) confirmState.finish(false);
+            else if (menu) closeMenu({ focusAnchor: true });
             else if (isSheet() && state.view === 'detail') goBack();
             else requestClose();
         }
@@ -1614,6 +1715,7 @@
             render();
         }
         function cleanup() {
+            confirmState?.finish(false);
             closeMenu();
             viewport?.removeEventListener('resize', syncViewport);
             viewport?.removeEventListener('scroll', syncViewport);
@@ -1649,6 +1751,7 @@
                 case 'use': useInChat(key ? findItem(key, state.server) : getSelected(state.server)); break;
                 case 'retry': startServerLoad(); break;
                 case 'new': startDraft(); break;
+                case 'duplicate': duplicate(key); break;
                 case 'library-tools': openLibraryTools(control); break;
                 case 'back': goBack(); break;
                 case 'more': openMoreMenu(control); break;
@@ -1665,6 +1768,16 @@
         }
         function onKeydown(event) {
             if (event.isComposing || event.keyCode === 229) return;
+            // 확인창이 떠 있는 동안에는 두 버튼 사이에서만 포커스를 돌리고 저장 단축키도 막는다.
+            if (confirmState) {
+                if (event.key === 'Tab') {
+                    event.preventDefault();
+                    const { buttons } = confirmState;
+                    const index = buttons.indexOf(document.activeElement);
+                    buttons[(index + (event.shiftKey ? -1 : 1) + buttons.length) % buttons.length].focus();
+                }
+                return;
+            }
             if (menu && menu.node.contains(event.target) && ['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
                 moveMenuFocus(event);
                 return;
@@ -1702,8 +1815,9 @@
             if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
             event.preventDefault();
             const next = state.source === 'server' ? 'library' : 'server';
-            switchSource(next);
-            root.querySelector(`.ctm-pm-tab[data-source="${next}"]`)?.focus();
+            switchSource(next).then(() => {
+                if (state.source === next) root.querySelector(`.ctm-pm-tab[data-source="${next}"]`)?.focus();
+            });
         });
         el.search.addEventListener('input', () => {
             state.query = el.search.value;
@@ -1782,13 +1896,30 @@
         if (dialog) openProfileManager({ host: dialog });
     }
 
+    // 변경 기록이 선택자에 닿는지 본다. 바뀐 노드와 그 조상만 보므로, 채팅 스트리밍처럼
+    // 대화상자와 무관한 변경마다 문서 전체를 [role="dialog"]로 훑지 않는다.
+    function mutationTouchesSelector(mutation, selector) {
+        if (mutation.target?.nodeType === 1 && mutation.target.closest?.(selector)) return true;
+        if (mutation.type !== 'childList') return false;
+        for (const nodes of [mutation.addedNodes, mutation.removedNodes]) {
+            for (const node of nodes || []) {
+                if (node.nodeType !== 1) continue;
+                if (node.matches?.(selector) || node.querySelector?.(selector)) return true;
+            }
+        }
+        return false;
+    }
+
     function startUi() {
         // 채팅이 스트리밍될 때 매 변경마다 문서를 훑지 않도록 관리 버튼 확인은 모아서 한다.
         let timer = null;
-        const observer = new MutationObserver(() => {
+        const observer = new MutationObserver((mutations) => {
             // 크랙 창은 그려지기 전에 바꿔야 원래 화면이 깜빡이지 않는다.
-            syncProfileDialog();
-            if (timer) return;
+            if (hostedRoot || mutations.some((mutation) => mutationTouchesSelector(mutation, '[role="dialog"]'))) {
+                syncProfileDialog();
+            }
+            if (timer || document.getElementById(UI.entryId)
+                || !mutations.some((mutation) => mutationTouchesSelector(mutation, 'p[color="text_primary"]'))) return;
             timer = setTimeout(() => {
                 timer = null;
                 syncUi();
