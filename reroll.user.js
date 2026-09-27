@@ -1,12 +1,10 @@
 // ==UserScript==
 // @name         Crack Reroll Suite (리롤 · 클린 리롤 · 믹서) 🧩✨
 // @namespace    http://tampermonkey.net/
-// @version      2.4.2
+// @version      2.4.3
 // @description  꾹 눌러 리롤, 클린 리롤, 카드형 리롤 믹서와 AI 자연 혼합 도구를 제공합니다. RP Manager 본문 호환.
 // @author       Assistant
-// @match        https://crack.wrtn.ai/stories/*/episodes/*
-// @match        https://crack.wrtn.ai/characters/*/chats/*
-// @match        https://crack.wrtn.ai/u/*/c/*
+// @match        https://crack.wrtn.ai/*
 // @grant        GM_addStyle
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
@@ -132,6 +130,82 @@
             item.style.transform = 'translateY(8px)';
             setTimeout(() => item.remove(), 240);
         }, ms);
+    }
+
+    // 크롬 기본 alert/confirm 대신 쓰는 화면 가운데 창. 기본 창은 페이지 전체를 멈추고
+    // (다른 확장과 자동화도 같이 멈춘다) 크랙·믹서 화면과 모양이 맞지 않는다.
+    // 여러 개가 한꺼번에 오면 차례로 띄운다.
+    const DIALOG_ID = `${SCRIPT_NS}-dialog`;
+    let dialogChain = Promise.resolve();
+
+    function openDialog({ title, message, confirmLabel = '확인', cancelLabel = '', danger = false }) {
+        const show = () => new Promise(resolve => {
+            const previousFocus = document.activeElement;
+            const overlay = document.createElement('div');
+            overlay.id = DIALOG_ID;
+            overlay.setAttribute('role', cancelLabel ? 'alertdialog' : 'dialog');
+            overlay.setAttribute('aria-modal', 'true');
+            overlay.innerHTML = `
+                <div class="${SCRIPT_NS}-dialog-card">
+                    <div class="${SCRIPT_NS}-dialog-title"></div>
+                    <div class="${SCRIPT_NS}-dialog-message"></div>
+                    <div class="${SCRIPT_NS}-dialog-actions">
+                        ${cancelLabel ? `<button type="button" class="${SCRIPT_NS}-secondary-btn" data-dialog-cancel></button>` : ''}
+                        <button type="button" class="${SCRIPT_NS}-primary-btn" data-dialog-ok></button>
+                    </div>
+                </div>`;
+            overlay.querySelector(`.${SCRIPT_NS}-dialog-title`).textContent = title || '리롤 믹서';
+            overlay.querySelector(`.${SCRIPT_NS}-dialog-message`).textContent = String(message || '');
+            const okButton = overlay.querySelector('[data-dialog-ok]');
+            const cancelButton = overlay.querySelector('[data-dialog-cancel]');
+            okButton.textContent = confirmLabel;
+            if (cancelButton) cancelButton.textContent = cancelLabel;
+            const buttons = [cancelButton, okButton].filter(Boolean);
+
+            const finish = value => {
+                window.removeEventListener('keydown', onKey, true);
+                overlay.remove();
+                try { previousFocus?.focus?.({ preventScroll: true }); } catch (e) {}
+                resolve(value);
+            };
+            // 창이 떠 있는 동안 키는 여기서 끝낸다. 크랙 단축키(Enter 입력창 포커스,
+            // Esc 요약 메모리)나 믹서의 Esc 닫기로 넘어가지 않게 캡처 단계에서 멈춘다.
+            const onKey = event => {
+                event.stopPropagation();
+                if (event.key === 'Escape') {
+                    event.preventDefault();
+                    finish(false);
+                } else if (event.key === 'Enter' && !event.isComposing) {
+                    event.preventDefault();
+                    finish(document.activeElement !== cancelButton);
+                } else if (event.key === 'Tab') {
+                    event.preventDefault();
+                    const index = buttons.indexOf(document.activeElement);
+                    buttons[(index + (event.shiftKey ? -1 : 1) + buttons.length) % buttons.length].focus();
+                }
+            };
+
+            okButton.addEventListener('click', () => finish(true));
+            cancelButton?.addEventListener('click', () => finish(false));
+            overlay.addEventListener('mousedown', event => {
+                if (event.target === overlay) finish(!cancelLabel);
+            });
+            window.addEventListener('keydown', onKey, true);
+            (document.body || document.documentElement).appendChild(overlay);
+            // 서버에 쓰는 확인은 실수로 Enter를 눌러도 취소되도록 취소 버튼에 둔다.
+            (danger && cancelButton ? cancelButton : okButton).focus({ preventScroll: true });
+        });
+        const result = dialogChain.then(show, show);
+        dialogChain = result.catch(() => {});
+        return result;
+    }
+
+    function uiNotice(message, title = '리롤 믹서') {
+        return openDialog({ title, message });
+    }
+
+    function uiConfirm(message, { title = '리롤 믹서', confirmLabel = '확인', cancelLabel = '취소', danger = false } = {}) {
+        return openDialog({ title, message, confirmLabel, cancelLabel, danger }).then(value => value === true);
     }
 
     function escapeHtml(value = '') {
@@ -1434,7 +1508,7 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
 
         const chatId = findChatId();
         if (!chatId) {
-            alert('채팅 ID(chatId)를 찾을 수 없습니다.');
+            uiNotice('채팅 ID(chatId)를 찾을 수 없습니다.');
             return;
         }
 
@@ -1452,7 +1526,7 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
             bundle = addCleanAnswersToBundle(group, chatId, messages, lookup, bundle);
         } catch (err) {
             console.error(err);
-            alert('리롤 답변을 불러오지 못했습니다.');
+            uiNotice('리롤 답변을 불러오지 못했습니다.');
             busy = false;
             return;
         }
@@ -1460,12 +1534,12 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
         busy = false;
 
         if (!bundle) {
-            alert('이 답변의 리롤 묶음을 찾지 못했습니다.\n답변 비교 버튼이 있는 메시지에서 다시 시도해 주세요.');
+            uiNotice('이 답변의 리롤 묶음을 찾지 못했습니다.\n답변 비교 버튼이 있는 메시지에서 다시 시도해 주세요.');
             return;
         }
 
         if (!bundle.totalMatches) {
-            alert(`안전 확인 실패: 화면의 답변 수(${bundle.compareInfo.total})와 API 후보 수(${bundle.variants.length})가 다릅니다.`);
+            uiNotice(`화면의 답변 수(${bundle.compareInfo.total})와 API 후보 수(${bundle.variants.length})가 달라요.`, '안전 확인 실패');
             return;
         }
 
@@ -2566,7 +2640,7 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
             const backup = getLatestDraftBackup(activeDraftKey);
             if (!backup) {
                 aiUndoButton.hidden = true;
-                return alert('되돌릴 AI 적용 전 초안이 없어요.');
+                return uiNotice('되돌릴 AI 적용 전 초안이 없어요.');
             }
 
             pushDraftBackup(activeDraftKey, getEditorText(), 'AI 되돌리기 전');
@@ -2588,14 +2662,14 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
             const aIndex = Number(selectA.value);
             const bIndex = Number(selectB.value);
             if (aIndex === bIndex) {
-                return alert('서로 다른 답변 A와 B를 선택해 주세요.');
+                return uiNotice('서로 다른 답변 A와 B를 선택해 주세요.');
             }
 
             const answerA = getMessageContent(bundle.variants[aIndex]);
             const answerB = getMessageContent(bundle.variants[bIndex]);
             const targetText = getMessageContent(bundle.variants[current]);
             if (!answerA.trim() || !answerB.trim()) {
-                return alert('선택한 답변의 본문을 읽지 못했어요.');
+                return uiNotice('선택한 답변의 본문을 읽지 못했어요.');
             }
 
             const mustKeep = [...addedParagraphKeys.values()]
@@ -2683,8 +2757,8 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
             toggleWholeAnswerInEditor(Number(selectB.value), 'B 답변', 'B');
         });
 
-        overlay.querySelector('[data-clear-editor]').addEventListener('click', () => {
-            const ok = !editor.value.trim() || confirm('편집본을 비울까요?');
+        overlay.querySelector('[data-clear-editor]').addEventListener('click', async () => {
+            const ok = !editor.value.trim() || await uiConfirm('편집본을 비울까요?', { title: '편집본 비우기', confirmLabel: '비우기' });
             if (!ok) return;
             setEditorText('');
         });
@@ -2692,40 +2766,40 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
         overlay.querySelector('[data-copy]').addEventListener('click', async () => {
             commitEditorText();
             const text = editor.value.trim();
-            if (!text) return alert('복사할 편집본이 비어 있어요.');
+            if (!text) return uiNotice('복사할 편집본이 비어 있어요.');
             await copyText(text);
         });
 
         overlay.querySelector('[data-insert]').addEventListener('click', () => {
             commitEditorText();
             const text = editor.value.trim();
-            if (!text) return alert('입력창에 넣을 편집본이 비어 있어요.');
+            if (!text) return uiNotice('입력창에 넣을 편집본이 비어 있어요.');
             const ok = insertTextIntoComposer(text);
             if (ok) {
                 toast('입력창에 넣었어. 전송 전 확인해줘!', 'success', 1600);
                 closeModal();
             } else {
-                alert('입력창을 찾지 못했습니다. 편집본 복사를 사용해 주세요.');
+                uiNotice('입력창을 찾지 못했습니다. 편집본 복사를 사용해 주세요.');
             }
         });
 
         overlay.querySelector('[data-overwrite]').addEventListener('click', async () => {
             commitEditorText();
             const text = editor.value.trim();
-            if (!text) return alert('답변 덮어쓰기에 사용할 편집본이 비어 있어요.');
+            if (!text) return uiNotice('답변 덮어쓰기에 사용할 편집본이 비어 있어요.');
 
             const chatId = findChatId();
             const targetMsg = bundle.variants[current];
             const targetId = messageIdOf(targetMsg);
 
             if (!chatId || !targetId) {
-                alert('채팅 ID 또는 답변 ID를 찾지 못해서 중단했어요.');
+                uiNotice('채팅 ID 또는 답변 ID를 찾지 못해서 중단했어요.');
                 return;
             }
 
             const beforePreview = shortPreview(getMessageContent(targetMsg), 150);
             const afterPreview = shortPreview(text, 150);
-            const ok = confirm([
+            const ok = await uiConfirm([
                 `현재 화면 답변 ${current + 1}/${total}에 편집본을 덮어쓸까요?`,
                 '',
                 `대상 ID: ${targetId}`,
@@ -2735,7 +2809,7 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
                 `변경: ${afterPreview}`,
                 '',
                 '덮어쓴 답변은 크랙 서버의 채팅 내용에 반영됩니다.'
-            ].join('\n'));
+            ].join('\n'), { title: '답변 덮어쓰기', confirmLabel: '덮어쓰기', danger: true });
 
             if (!ok) return;
 
@@ -2767,7 +2841,8 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
                     normalizeForVerify(getMessageContent(updated)) === normalizeForVerify(text);
 
                 if (!verified) {
-                    alert('요청은 성공했지만, 다시 확인했을 때 내용이 완전히 일치하지 않았어요. 새로고침 후 확인해 주세요.');
+                    // 기본 alert는 닫을 때까지 아래 새로고침을 막았다. 창을 닫은 뒤 새로고침한다.
+                    await uiNotice('요청은 성공했지만, 다시 확인했을 때 내용이 완전히 일치하지 않았어요. 새로고침 후 확인해 주세요.', '덮어쓰기 확인');
                 } else {
                     toast('답변 덮어쓰기 완료. 새로고침할게.', 'success', 1300);
                 }
@@ -2775,7 +2850,7 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
                 setTimeout(() => location.reload(), 650);
             } catch (err) {
                 console.error('[reroll-mixer] overwrite failed:', err);
-                alert(err?.message || '답변 덮어쓰기에 실패했어요.');
+                uiNotice(err?.message || '답변 덮어쓰기에 실패했어요.', '덮어쓰기 실패');
                 btn.disabled = false;
                 btn.textContent = oldLabel;
             }
@@ -2826,7 +2901,7 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
             document.execCommand('copy');
             toast('편집본을 복사했어.', 'success');
         } catch (e) {
-            alert('복사에 실패했습니다. 편집창에서 직접 복사해 주세요.');
+            uiNotice('복사에 실패했습니다. 편집창에서 직접 복사해 주세요.');
         }
         textarea.remove();
     }
@@ -5146,6 +5221,108 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
             @keyframes ${SCRIPT_NS}-clean-spin { to { transform: rotate(360deg); } }
             .${SCRIPT_NS}-toast-item.error { background: rgba(150, 40, 40, .94); white-space: pre-line; }
         `);
+        GM_addStyle(`
+            #${DIALOG_ID} {
+                --rrm-overlay: rgba(0, 0, 0, .42);
+                --rrm-bg: #ffffff;
+                --rrm-text: #18181b;
+                --rrm-strong: #0f0f12;
+                --rrm-muted: #6f7178;
+                --rrm-border: rgba(16, 18, 24, .13);
+                --rrm-soft: rgba(16, 18, 24, .065);
+                --rrm-soft-hover: rgba(16, 18, 24, .105);
+                --rrm-primary: #ff4432;
+                --rrm-primary-hover: #ff5b4b;
+                --rrm-primary-text: #ffffff;
+                position: fixed;
+                inset: 0;
+                z-index: 2147483006;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                padding: 18px;
+                background: var(--rrm-overlay);
+                backdrop-filter: blur(4px);
+                color: var(--rrm-text);
+                font-family: Pretendard, "Apple SD Gothic Neo", system-ui, sans-serif;
+                animation: ${SCRIPT_NS}-dialog-fade .14s ease-out;
+            }
+            body[data-theme="dark"] #${DIALOG_ID},
+            [data-theme="dark"] #${DIALOG_ID} {
+                --rrm-overlay: rgba(0, 0, 0, .58);
+                --rrm-bg: #18181c;
+                --rrm-text: #f4f4f5;
+                --rrm-strong: #ffffff;
+                --rrm-muted: rgba(255,255,255,.68);
+                --rrm-border: rgba(255,255,255,.12);
+                --rrm-soft: rgba(255,255,255,.085);
+                --rrm-soft-hover: rgba(255,255,255,.14);
+            }
+            @media (prefers-color-scheme: dark) {
+                body:not([data-theme="light"]) #${DIALOG_ID} {
+                    --rrm-overlay: rgba(0, 0, 0, .58);
+                    --rrm-bg: #18181c;
+                    --rrm-text: #f4f4f5;
+                    --rrm-strong: #ffffff;
+                    --rrm-muted: rgba(255,255,255,.68);
+                    --rrm-border: rgba(255,255,255,.12);
+                    --rrm-soft: rgba(255,255,255,.085);
+                    --rrm-soft-hover: rgba(255,255,255,.14);
+                }
+            }
+            .${SCRIPT_NS}-dialog-card {
+                width: min(420px, calc(100vw - 32px));
+                max-height: calc(100vh - 36px);
+                display: flex;
+                flex-direction: column;
+                gap: 10px;
+                padding: 20px 20px 16px;
+                border: 1px solid var(--rrm-border);
+                border-radius: 18px;
+                background: var(--rrm-bg);
+                box-shadow: 0 22px 80px rgba(0,0,0,.38);
+                animation: ${SCRIPT_NS}-dialog-pop .16s cubic-bezier(.2,.8,.2,1);
+            }
+            .${SCRIPT_NS}-dialog-title {
+                color: var(--rrm-strong);
+                font-size: 16px;
+                line-height: 1.3;
+                font-weight: 900;
+            }
+            .${SCRIPT_NS}-dialog-message {
+                min-height: 0;
+                overflow-y: auto;
+                color: var(--rrm-text);
+                font-size: 13px;
+                line-height: 1.55;
+                white-space: pre-wrap;
+                word-break: keep-all;
+                overflow-wrap: anywhere;
+            }
+            .${SCRIPT_NS}-dialog-actions {
+                display: flex;
+                justify-content: flex-end;
+                gap: 8px;
+                margin-top: 6px;
+            }
+            #${DIALOG_ID} .${SCRIPT_NS}-dialog-actions button {
+                min-width: 72px;
+                min-height: 36px;
+                font-size: 13px;
+            }
+            #${DIALOG_ID} button:focus-visible {
+                outline: 2px solid color-mix(in srgb, var(--rrm-primary) 70%, transparent);
+                outline-offset: 2px;
+            }
+            @keyframes ${SCRIPT_NS}-dialog-fade { from { opacity: 0; } }
+            @keyframes ${SCRIPT_NS}-dialog-pop { from { opacity: 0; transform: translateY(6px) scale(.97); } }
+            @media (prefers-reduced-motion: reduce) {
+                #${DIALOG_ID}, .${SCRIPT_NS}-dialog-card { animation: none; }
+            }
+            @media (max-width: 760px), (pointer: coarse) {
+                #${DIALOG_ID} .${SCRIPT_NS}-dialog-actions button { min-height: 44px; flex: 1 1 0; }
+            }
+        `);
     }
 
     function init() {
@@ -5182,5 +5359,34 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
         }
     }
 
-    init();
+    // Tampermonkey는 새로고침으로 연 페이지에만 스크립트를 넣는다. 크랙은 새로고침 없이
+    // 페이지를 옮기므로, 홈이나 채팅 목록에서 방에 들어가면 버튼도 꾹 누르기 보호도 없었다.
+    // 모든 크랙 페이지에서 받되, 채팅방 주소가 처음 나타날 때 한 번만 시작한다.
+    // (예전 @match: /stories/*/episodes/*, /characters/*/chats/*, /u/*/c/*)
+    const CHAT_ROUTE_RE = /^\/(?:stories\/.+\/episodes\/|characters\/.+\/chats\/|u\/.+\/c\/)/;
+    const isChatRoute = () => CHAT_ROUTE_RE.test(location.pathname);
+
+    if (isChatRoute()) {
+        init();
+    } else {
+        const pageNavigation = (typeof unsafeWindow !== 'undefined' ? unsafeWindow : window).navigation;
+        let started = false;
+        let routeTimer = 0;
+        const onRoute = () => {
+            if (started || !isChatRoute()) return;
+            started = true;
+            pageNavigation?.removeEventListener?.('currententrychange', onRoute);
+            window.removeEventListener('popstate', onRoute);
+            clearInterval(routeTimer);
+            init();
+        };
+        window.addEventListener('popstate', onRoute);
+        if (typeof pageNavigation?.addEventListener === 'function') {
+            // Next의 router.push(history.pushState)와 뒤로·앞으로 모두 여기로 온다.
+            pageNavigation.addEventListener('currententrychange', onRoute);
+        } else {
+            // Navigation API가 없는 브라우저는 pushState를 알 수 없어 주소를 확인한다.
+            routeTimer = setInterval(onRoute, 1000);
+        }
+    }
 })();
