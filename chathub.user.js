@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         🧩 Crack Chat Hub (크랙 채팅 허브)
 // @namespace    https://crack.wrtn.ai/
-// @version      1.1.5
-// @description  크랙 채팅 합본: 임시저장, 글자수, 채팅창 펼치기, 대시보드, 라디오존데, 채팅·출력 모델 공통 숨김.
+// @version      1.1.6
+// @description  크랙 채팅 합본: 임시저장, 글자수, 채팅창 펼치기, 대시보드(해/달·소설/채팅 즉시 전환), 라디오존데, 채팅·출력 모델 공통 숨김.
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-idle
 // @grant        GM_getValue
@@ -16,6 +16,7 @@
 // @connect      rs.igx.kr
 // @connect      igx-radiosonde-api-striker.b-cdn.net
 // @connect      claude-radiosonde.chyoyam.chatgpt.site
+// @connect      crack-api.wrtn.ai
 // @grant        unsafeWindow
 // @require      https://cdn.jsdelivr.net/gh/milkyway0308/crystallized-chasm@crack-shared-core@v1.2.1/crack/libraries/crack-shared-core.js
 // @require      https://cdn.jsdelivr.net/gh/milkyway0308/crystallized-chasm@chasm-shared-core@v1.0.0/libraries/chasm-shared-core.js
@@ -2092,6 +2093,8 @@ const Core = (() => {
         // Sidebar
         sideVisible: 'chud_side_visible_parts',
         hiddenModels: 'chud_hidden_models_v1',
+        episodeMode: 'chud_episode_ui_mode',
+        pendingTheme: 'chud_pending_theme_mode',
         // Models
         models: 'chud_models_cache'
     };
@@ -2112,6 +2115,7 @@ const Core = (() => {
         history: `${API_BASE}/crack-cash/crackers/history`,
         chatModels: `${API_BASE}/crack-gen/v3/chat-models`,
         chatBase: `${API_BASE}/crack-gen/v3/chats`,
+        episodeUiSetting: `${API_BASE}/crack-api/profiles/ui-setting`,
         rawMessages: `${CONTENTS_API_BASE}/character-chat/v3/chats`
     };
 
@@ -2275,6 +2279,231 @@ const Core = (() => {
         const res = await fetch(url, { headers });
         if (!res.ok) throw new Error('HTTP ' + res.status);
         return res.json();
+    }
+
+    // UI Plus의 퀵 모드 전환을 대시보드 버튼에서 독립적으로 사용할 수 있게 유지한다.
+    // 사이트의 실제 테마/메시지 목록을 먼저 읽고, 이전 UI Plus 저장값은 폴백으로만 사용한다.
+    function getQuickThemeMode() {
+        const bodyMode = document.body?.dataset?.theme;
+        if (bodyMode === 'light' || bodyMode === 'dark') return bodyMode;
+        const root = document.documentElement;
+        if (root.dataset.theme === 'light' || root.dataset.theme === 'dark') return root.dataset.theme;
+        if (root.classList.contains('dark')) return 'dark';
+        if (root.classList.contains('light')) return 'light';
+        try {
+            const saved = localStorage.getItem('theme');
+            if (saved === 'light' || saved === 'dark') return saved;
+        } catch (e) {}
+        return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    }
+
+    function getQuickEpisodeMode() {
+        const group = document.querySelector('[data-message-group-id]');
+        const list = group?.closest?.('.flex-col-reverse');
+        if (list?.classList.contains('gap-0')) return 'chat';
+        if (list?.classList.contains('gap-10')) return 'novel';
+        try {
+            const saved = localStorage.getItem('crack_ui_episode_ui_mode') || localStorage.getItem(STORAGE.episodeMode);
+            if (saved === 'chat' || saved === 'novel') return saved;
+        } catch (e) {}
+        return 'novel';
+    }
+
+    function findNativeThemeSetting(mode) {
+        const label = mode === 'dark' ? '다크 모드' : '라이트 모드';
+        for (const node of document.querySelectorAll('span, p, label, button, [role="checkbox"]')) {
+            if (node.closest?.('#chud-sidebar, #chud-side-menu, #crack-ui-settings-panel')) continue;
+            if (String(node.textContent || '').replace(/\s+/g, ' ').trim() !== label) continue;
+            const row = node.closest('[role="checkbox"], button, label, .cursor-pointer') || node.parentElement?.closest('[role="checkbox"], button, label, .cursor-pointer');
+            const control = row?.matches?.('[role="checkbox"]') ? row : row?.querySelector?.('[role="checkbox"]');
+            if (control) return control;
+        }
+        return null;
+    }
+
+    let lastPendingThemeAttempt = '';
+    let lastPendingThemeAttemptAt = 0;
+    let lastPendingThemeLookupAt = 0;
+    function syncPendingNativeTheme() {
+        let pending;
+        try { pending = localStorage.getItem(STORAGE.pendingTheme); } catch (e) { return; }
+        if (pending !== 'light' && pending !== 'dark') return;
+        // 원본 설정이 열렸을 때만 찾는다. 평소 사이드바 갱신마다 문서 전체를 검색하지 않는다.
+        const nativePanelOpen = [...document.querySelectorAll('[role="dialog"], #web-modal')]
+            .some((panel) => {
+                if (panel.id === 'crack-ui-settings-panel' || panel.closest('#crack-ui-settings-root, [aria-hidden="true"]')) return false;
+                const style = getComputedStyle(panel);
+                const rect = panel.getBoundingClientRect();
+                return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+            });
+        if (!nativePanelOpen && !location.pathname.includes('/setting')) return;
+        if (Date.now() - lastPendingThemeLookupAt < 800) return;
+        lastPendingThemeLookupAt = Date.now();
+        const control = findNativeThemeSetting(pending);
+        if (!control) return;
+        if (control.getAttribute('aria-checked') === 'true' || control.getAttribute('data-state') === 'checked') {
+            try { localStorage.removeItem(STORAGE.pendingTheme); } catch (e) {}
+            lastPendingThemeAttempt = '';
+            lastPendingThemeAttemptAt = 0;
+            return;
+        }
+        if (lastPendingThemeAttempt === pending && Date.now() - lastPendingThemeAttemptAt < 1500) return;
+        lastPendingThemeAttempt = pending;
+        lastPendingThemeAttemptAt = Date.now();
+        control.click();
+        setTimeout(() => {
+            const current = findNativeThemeSetting(pending);
+            if (current?.getAttribute('aria-checked') === 'true' || current?.getAttribute('data-state') === 'checked') {
+                try { localStorage.removeItem(STORAGE.pendingTheme); } catch (e) {}
+                lastPendingThemeAttempt = '';
+                lastPendingThemeAttemptAt = 0;
+            }
+        }, 180);
+    }
+
+    function toggleQuickTheme() {
+        const next = getQuickThemeMode() === 'dark' ? 'light' : 'dark';
+        // UI Plus가 실행 중이면 숨겨진 설정 패널의 기존 버튼을 사용한다.
+        // 이렇게 해야 UI Plus 내부 themeMode와 DOM 감시기의 상태도 함께 바뀐다.
+        const uiPlusChoice = document.querySelector(`#crack-ui-settings-panel [data-crack-ui-theme-mode="${next}"]`);
+        if (uiPlusChoice?.dataset.crackUiBound === '1') {
+            try { localStorage.removeItem(STORAGE.pendingTheme); } catch (e) {}
+            lastPendingThemeAttempt = '';
+            lastPendingThemeAttemptAt = 0;
+            uiPlusChoice.click();
+            Sidebar.render();
+            return;
+        }
+        try {
+            localStorage.setItem('theme', next);
+            localStorage.removeItem('crack_ui_theme_mode');
+            localStorage.setItem(STORAGE.pendingTheme, next);
+        } catch (e) {}
+        lastPendingThemeAttempt = '';
+        lastPendingThemeAttemptAt = 0;
+        lastPendingThemeLookupAt = 0;
+        const root = document.documentElement;
+        root.classList.toggle('dark', next === 'dark');
+        root.classList.toggle('light', next === 'light');
+        root.dataset.theme = next;
+        root.style.colorScheme = next;
+        if (document.body) {
+            document.body.dataset.theme = next;
+            document.body.style.colorScheme = next;
+        }
+        syncPendingNativeTheme();
+        Sidebar.render();
+    }
+
+    let quickEpisodeSaveBusy = false;
+    function readQuickCookie(name) {
+        const prefix = `${encodeURIComponent(name)}=`;
+        const item = String(document.cookie || '').split(';').map((part) => part.trim()).find((part) => part.startsWith(prefix));
+        if (!item) return '';
+        const raw = item.slice(prefix.length);
+        try { return decodeURIComponent(raw); } catch (e) { return raw; }
+    }
+
+    function getQuickAccessToken() {
+        const cookieToken = readQuickCookie('access_token');
+        if (cookieToken) return cookieToken;
+        try {
+            for (const key of ['access_token', 'accessToken', 'crack_access_token', 'wrtn_access_token']) {
+                const value = localStorage.getItem(key);
+                if (value && (/^eyJ/.test(value) || /^Bearer\s/i.test(value))) return value;
+            }
+        } catch (e) {}
+        return '';
+    }
+
+    async function requestQuickEpisodeMode(mode) {
+        const token = getQuickAccessToken();
+        const headers = {
+            Accept: 'application/json, text/plain, */*',
+            'Content-Type': 'application/json',
+            platform: 'web',
+            'wrtn-locale': 'ko-KR'
+        };
+        if (token) headers.Authorization = /^Bearer\s/i.test(token) ? token : `Bearer ${token}`;
+        const wrtnId = readQuickCookie('__w_id');
+        if (wrtnId) headers['x-wrtn-id'] = wrtnId;
+        const mixpanelId = readQuickCookie('Mixpanel-Distinct-Id');
+        if (mixpanelId) headers['mixpanel-distinct-id'] = mixpanelId;
+        const payload = JSON.stringify({ isEpisodeBubbleEnabled: mode === 'chat' });
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 10000);
+        try {
+            const response = await fetch(API.episodeUiSetting, {
+                method: 'PATCH', credentials: 'include', cache: 'no-store',
+                headers, body: payload, signal: controller.signal
+            });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            return;
+        } catch (fetchError) {
+            if (typeof GM_xmlhttpRequest !== 'function') throw fetchError;
+            await new Promise((resolve, reject) => {
+                GM_xmlhttpRequest({
+                    method: 'PATCH', url: API.episodeUiSetting, headers, data: payload,
+                    withCredentials: true, anonymous: false, timeout: 10000,
+                    onload: (response) => response.status >= 200 && response.status < 300
+                        ? resolve() : reject(new Error(`HTTP ${response.status}`)),
+                    onerror: () => reject(new Error('네트워크 오류')),
+                    ontimeout: () => reject(new Error('요청 시간 초과'))
+                });
+            });
+        } finally {
+            clearTimeout(timeout);
+        }
+    }
+
+    async function toggleQuickEpisodeMode() {
+        if (quickEpisodeSaveBusy) return;
+        const next = getQuickEpisodeMode() === 'chat' ? 'novel' : 'chat';
+        const uiPlusChoice = document.querySelector(`#crack-ui-settings-panel [data-crack-ui-episode-ui-mode="${next}"]`);
+        if (uiPlusChoice?.dataset.crackUiBound === '1') {
+            // UI Plus의 API 저장·실패 안내·재로드 흐름을 그대로 사용한다.
+            quickEpisodeSaveBusy = true;
+            Sidebar.render();
+            let timeoutId;
+            const release = () => {
+                clearTimeout(timeoutId);
+                window.removeEventListener('crack-ui-episode-ui-mode-change', onSaved);
+                quickEpisodeSaveBusy = false;
+                Sidebar.render();
+            };
+            const onSaved = () => {
+                window.removeEventListener('crack-ui-episode-ui-mode-change', onSaved);
+                clearTimeout(timeoutId);
+                // UI Plus가 성공 후 450ms 뒤 새로고침하므로 그 사이의 중복 클릭을 막는다.
+                timeoutId = setTimeout(release, 4000);
+            };
+            window.addEventListener('crack-ui-episode-ui-mode-change', onSaved);
+            timeoutId = setTimeout(release, 23000);
+            try { uiPlusChoice.click(); } catch (error) {
+                release();
+                alert(`작품 UI 변경에 실패했습니다. 다시 시도해주세요.\n${error.message || error}`);
+            }
+            return;
+        }
+        quickEpisodeSaveBusy = true;
+        Sidebar.render();
+        try {
+            await requestQuickEpisodeMode(next);
+            try {
+                localStorage.setItem(STORAGE.episodeMode, next);
+                localStorage.setItem('crack_ui_episode_ui_mode', next);
+                localStorage.removeItem('crack_ui_pending_episode_ui_mode');
+            } catch (e) {}
+            window.dispatchEvent(new CustomEvent('crack-ui-episode-ui-mode-change', {
+                detail: { mode: next, isEpisodeBubbleEnabled: next === 'chat' }
+            }));
+            setTimeout(() => window.location.reload(), 450);
+        } catch (error) {
+            alert(`작품 UI 변경에 실패했습니다. 다시 시도해주세요.\n${error.message || error}`);
+        } finally {
+            quickEpisodeSaveBusy = false;
+            Sidebar.render();
+        }
     }
 
     // (1) 잔여 크래커
@@ -3105,6 +3334,13 @@ const Core = (() => {
         sceneBlur: `<svg width="15.5" height="15.5" viewBox="0 0 24 24" fill="currentColor" class="chud-btn-icon chud-scene-blur-icon" aria-hidden="true"><path d="M4.2 4.2c0-.88.72-1.6 1.6-1.6h12.4c.88 0 1.6.72 1.6 1.6v15.6c0 .88-.72 1.6-1.6 1.6H5.8c-.88 0-1.6-.72-1.6-1.6zm1.6 0v15.6h12.4V4.2z"></path><path d="M8.1 8.2h7.8v1.45H8.1zm0 3.05h7.8v1.45H8.1zm0 3.05h4.6v1.45H8.1z" opacity=".65"></path><path d="M17.4 13.1c1.52 1.44 2.35 2.67 2.35 3.74a2.35 2.35 0 1 1-4.7 0c0-1.07.83-2.3 2.35-3.74"></path></svg>`
     };
 
+    const QUICK_MODE_ICON = {
+        light: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" class="chud-btn-icon" aria-hidden="true"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4"/></svg>`,
+        dark: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" class="chud-btn-icon" aria-hidden="true"><path d="M20.2 15.6A8.6 8.6 0 0 1 8.4 3.8 8.7 8.7 0 1 0 20.2 15.6Z"/></svg>`,
+        novel: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" class="chud-btn-icon" aria-hidden="true"><rect x="2.5" y="6.5" width="19" height="11" rx="5.5"/><circle cx="8.3" cy="12" r="3.1" fill="currentColor" stroke="none"/><path d="M14.4 10h4M14.4 12h4M14.4 14h2.7" stroke-width="1.1"/></svg>`,
+        chat: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" class="chud-btn-icon" aria-hidden="true"><rect x="2.5" y="6.5" width="19" height="11" rx="5.5"/><circle cx="15.7" cy="12" r="3.1" fill="currentColor" stroke="none"/><path d="M5.5 10h4M5.5 12h4M6.8 14h2.7" stroke-width="1.1"/></svg>`
+    };
+
     function extractFirstPathD(svg) {
         const m = svg.match(/<path\b[^>]*?\bd="([^"]+)"/);
         return m ? m[1] : null;
@@ -3696,6 +3932,8 @@ const Core = (() => {
                 font-weight: 700; transition: color .15s, opacity .15s, transform .15s; touch-action: manipulation;
                 background: transparent !important; border: 0 !important; box-shadow: none !important; outline: 0; color: inherit; }
             #chud-model-btn { margin-left: 0; }
+            #chud-theme-mode-btn:focus-visible, #chud-episode-mode-btn:focus-visible { outline: 2px solid currentColor !important; outline-offset: 2px; border-radius: 4px; }
+            #chud-episode-mode-btn:disabled { opacity: .5; cursor: progress; }
             .chud-action-btn:hover { background: transparent !important; color: var(--chud-side-hover-text, currentColor); opacity: .95; }
             .chud-action-btn.is-active { background: transparent !important; color: var(--chud-side-active-text, currentColor); }
             .chud-action-btn.is-active:hover { background: transparent !important; color: var(--chud-side-active-text, currentColor); }
@@ -4485,7 +4723,8 @@ const Core = (() => {
      * =======================================================*/
     const Sidebar = (() => {
         const DEFAULT_VISIBLE = {
-            modelButton: true, guideButton: true, profileButton: true, profileBoxButton: true, noteButton: true, outputButton: true,
+            modelButton: true, themeButton: true, episodeModeButton: true,
+            guideButton: true, profileButton: true, profileBoxButton: true, noteButton: true, outputButton: true,
             summaryButton: true, imageButton: true, archiveButton: true, externalArchiveButton: true, roomBackgroundButton: true, scenePainterButton: true, wishManagerButton: true, sceneBlurButton: true, startButton: true, loreButton: true, translatorButton: true, aiSummaryButton: true, aiWriterButton: true, gameHudButton: true
         };
 
@@ -4503,17 +4742,46 @@ const Core = (() => {
         }
         function saveVisible() { try { localStorage.setItem(STORAGE.sideVisible, JSON.stringify(visible)); } catch (e) {} }
 
-        function makeBtn(id, icon, onclick) {
+        function makeBtn(id, icon, onclick, keyboardAccessible = false) {
             const b = document.createElement('button');
-            b.id = id; b.className = 'chud-action-btn'; b.type = 'button'; b.tabIndex = -1;
+            b.id = id; b.className = 'chud-action-btn'; b.type = 'button'; b.tabIndex = keyboardAccessible ? 0 : -1;
             b.innerHTML = icon;
             b.addEventListener('pointerdown', (e) => e.preventDefault());
-            b.addEventListener('keydown', (e) => { e.preventDefault(); e.stopPropagation(); });
+            b.addEventListener('keydown', (e) => {
+                if (keyboardAccessible && (e.key === 'Enter' || e.key === ' ')) {
+                    e.preventDefault(); e.stopPropagation(); onclick();
+                } else if (!keyboardAccessible) {
+                    e.preventDefault(); e.stopPropagation();
+                }
+            });
             b.onclick = (e) => {
-                if (e.detail === 0) { e.preventDefault(); e.stopPropagation(); return; }
+                if (e.detail === 0 && !keyboardAccessible) { e.preventDefault(); e.stopPropagation(); return; }
                 e.preventDefault(); e.stopPropagation(); onclick();
             };
             return b;
+        }
+
+        function syncQuickModeButtons() {
+            const theme = getQuickThemeMode();
+            if (btns.theme) {
+                if (btns.theme.dataset.mode !== theme) btns.theme.innerHTML = QUICK_MODE_ICON[theme];
+                btns.theme.dataset.mode = theme;
+                btns.theme.title = theme === 'dark' ? '다크 모드 · 라이트 모드로 전환' : '라이트 모드 · 다크 모드로 전환';
+                btns.theme.setAttribute('aria-label', btns.theme.title);
+                btns.theme.setAttribute('aria-pressed', String(theme === 'dark'));
+            }
+            const episode = getQuickEpisodeMode();
+            if (btns.episodeMode) {
+                if (btns.episodeMode.dataset.mode !== episode) btns.episodeMode.innerHTML = QUICK_MODE_ICON[episode];
+                btns.episodeMode.dataset.mode = episode;
+                btns.episodeMode.disabled = quickEpisodeSaveBusy;
+                btns.episodeMode.title = quickEpisodeSaveBusy
+                    ? '작품 UI 변경 중'
+                    : episode === 'chat' ? '채팅형 UI · 소설형으로 전환' : '소설형 UI · 채팅형으로 전환';
+                btns.episodeMode.setAttribute('aria-label', btns.episodeMode.title);
+                btns.episodeMode.setAttribute('aria-checked', String(episode === 'chat'));
+                btns.episodeMode.setAttribute('aria-busy', String(quickEpisodeSaveBusy));
+            }
         }
 
         function build(container) {
@@ -4533,6 +4801,10 @@ const Core = (() => {
             btns.model = makeBtn('chud-model-btn', ICON.model, toggleDropdown);
             btns.model.title = '모델 변경';
             btns.model.setAttribute('aria-label', '모델 변경');
+            btns.theme = makeBtn('chud-theme-mode-btn', QUICK_MODE_ICON[getQuickThemeMode()], toggleQuickTheme, true);
+            btns.episodeMode = makeBtn('chud-episode-mode-btn', QUICK_MODE_ICON[getQuickEpisodeMode()], toggleQuickEpisodeMode, true);
+            btns.episodeMode.setAttribute('role', 'switch');
+            syncQuickModeButtons();
             btns.guide = makeBtn('chud-guide-btn', ICON.guide, () => openDialogByIconPath(ICON_PATHS.guide, '플레이 가이드'));
             btns.profile = makeBtn('chud-profile-btn', ICON.profile, () => openDialogByIconPath(ICON_PATHS.profile, '대화 프로필'));
             btns.profileBox = makeBtn('chud-profile-box-btn', ICON.profileBox, openProfileBox);
@@ -4573,7 +4845,7 @@ const Core = (() => {
             btns.gameHud.title = '게임 HUD';
             btns.gameHud.setAttribute('aria-label', '게임 HUD');
 
-            content.append(btns.model, btns.guide, btns.profile, btns.profileBox, btns.note, btns.output, btns.summary, btns.image, btns.archive, btns.external, btns.roomBackground, btns.scenePainter, btns.wishManager, btns.sceneBlur, btns.start, btns.lore, btns.translator, btns.aiSummary, btns.aiWriter, btns.gameHud);
+            content.append(btns.model, btns.theme, btns.episodeMode, btns.guide, btns.profile, btns.profileBox, btns.note, btns.output, btns.summary, btns.image, btns.archive, btns.external, btns.roomBackground, btns.scenePainter, btns.wishManager, btns.sceneBlur, btns.start, btns.lore, btns.translator, btns.aiSummary, btns.aiWriter, btns.gameHud);
             el.append(content, settingsBtn);
             container.appendChild(el);
 
@@ -4607,7 +4879,10 @@ const Core = (() => {
             t.className = 'chud-menu-title'; t.textContent = '버튼 표시';
             m.appendChild(t);
             const items = [
-                { key: 'modelButton', label: '모델 아이콘' }, { key: 'guideButton', label: '플레이 가이드' },
+                { key: 'modelButton', label: '모델 아이콘' },
+                { key: 'themeButton', label: '해/달 모드 전환', icon: QUICK_MODE_ICON.light },
+                { key: 'episodeModeButton', label: '소설/채팅 UI 전환', icon: QUICK_MODE_ICON.chat },
+                { key: 'guideButton', label: '플레이 가이드' },
                 { key: 'profileButton', label: '대화 프로필' },
                 { key: 'profileBoxButton', label: '프로필 박스' }, { key: 'noteButton', label: '유저노트 표시' },
                 { key: 'outputButton', label: '출력량 조절' }, { key: 'summaryButton', label: '요약 메모리' },
@@ -4620,7 +4895,7 @@ const Core = (() => {
             for (const it of items) {
                 const row = document.createElement('label');
                 row.className = 'chud-menu-row'; row.dataset.part = it.key;
-                row.innerHTML = `<input type="checkbox" data-part="${it.key}">${ICON[it.key.replace(/Button$/, '')] || ''}<span>${it.label}</span><i class="chud-sw" aria-hidden="true"></i>`;
+                row.innerHTML = `<input type="checkbox" data-part="${it.key}">${it.icon || ICON[it.key.replace(/Button$/, '')] || ''}<span>${it.label}</span><i class="chud-sw" aria-hidden="true"></i>`;
                 row.querySelector('input').onchange = (e) => {
                     e.stopPropagation();
                     visible[it.key] = e.target.checked; saveVisible();
@@ -4909,6 +5184,8 @@ const Core = (() => {
         function applyVisible() {
             const set = (b, on) => { if (b) b.style.display = on ? 'inline-flex' : 'none'; };
             set(btns.model, visible.modelButton !== false);
+            set(btns.theme, visible.themeButton !== false);
+            set(btns.episodeMode, visible.episodeModeButton !== false);
             set(btns.guide, visible.guideButton !== false);
             set(btns.profile, visible.profileButton !== false);
             set(btns.note, visible.noteButton !== false);
@@ -4949,6 +5226,8 @@ const Core = (() => {
 
         function applyTheme() {
             if (!el) return;
+            syncPendingNativeTheme();
+            syncQuickModeButtons();
             const c = getThemeColors(currentInput || document.body);
             el.style.backgroundColor = 'transparent';
             el.style.color = c.sideIconText || c.text;
@@ -5691,6 +5970,17 @@ const Core = (() => {
                 refreshAll();
             }
         });
+
+        // 해/달·소설/채팅 버튼 아이콘은 사이트 테마, 다른 탭, UI Plus 전환을 따라간다.
+        const syncQuickModes = (e) => {
+            if (e?.type === 'storage' && ![
+                'theme', 'crack_ui_theme_mode', 'crack_ui_episode_ui_mode', STORAGE.episodeMode
+            ].includes(e.key)) return;
+            Sidebar.render();
+        };
+        Core.on('theme', syncQuickModes);
+        window.addEventListener('storage', syncQuickModes);
+        window.addEventListener('crack-ui-episode-ui-mode-change', syncQuickModes);
 
         const hideFloats = () => {
             const ibMenu = document.getElementById('chud-info-menu'); if (ibMenu) ibMenu.style.display = 'none';
