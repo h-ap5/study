@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🧩 Crack Chat Hub (크랙 채팅 허브)
 // @namespace    https://crack.wrtn.ai/
-// @version      1.1.6
+// @version      1.1.7
 // @description  크랙 채팅 합본: 임시저장, 글자수, 채팅창 펼치기, 대시보드(해/달·소설/채팅 즉시 전환), 라디오존데, 채팅·출력 모델 공통 숨김.
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-idle
@@ -32,7 +32,7 @@ const Core = (() => {
   const INPUT = 'textarea.__chat_input_textarea,[contenteditable="true"].__chat_input_textarea';
   const FALLBACK = 'main textarea[placeholder*="메시지"],main textarea[placeholder*="Message"],main [contenteditable="true"].ProseMirror,main [contenteditable="true"].tiptap,main [contenteditable="true"][role="textbox"]';
   const BLOCKED = '[role="dialog"],[aria-modal="true"],[aria-hidden="true"],[hidden],[data-message-group-id],[data-message-id],#cunpm-root,#rpcm-overlay,#crack-ai-panel,#trans-setting-panel';
-  const OWN = '#cic-wrap,#ccr-controls-layer,#chud-infobar,#chud-sidebar,#chud-info-menu,#chud-side-menu,#chud-side-dropdown,.chud-list-cracker,#igx-live-popup,#igx-live-settings';
+  const OWN = '#cic-wrap,#ccr-controls-layer,#chud-infobar,#chud-sidebar,#chud-info-menu,#chud-side-menu,#chud-side-dropdown,.chud-list-cracker,#igx-live-popup,#igx-live-settings,#chud-notice';
   let editor = null, epoch = 0, path = location.pathname, raf = 0, started = false;
   let nextFind = 0, backoff = 1200, lastSafety = 0, blockedEditor = null, blockedText = '';
   let textareaValue = '', messageCount = null;
@@ -189,6 +189,63 @@ const Core = (() => {
     get editor(){return editor?.isConnected?editor:null;},get epoch(){return epoch;},
     messageCount(){if(messageCount===null)messageCount=document.querySelectorAll('[data-message-group-id]').length;return messageCount;},
     isOwn(el){return !!el?.closest?.(OWN);}};
+})();
+
+// 알림 창: 크롬 기본 alert는 탭 전체를 멈추고(다른 확장·자동화도 같이 멈춘다) 크랙 화면과 모양이 맞지 않는다.
+// 크랙의 색 변수(body[data-theme])를 그대로 쓰고, 여러 개가 오면 차례로 띄운다.
+const hubNotice = (() => {
+  let chain = Promise.resolve();
+  function ensureStyle() {
+    if (document.getElementById('chud-notice-style')) return;
+    const style = document.createElement('style');
+    style.id = 'chud-notice-style';
+    style.textContent = `
+#chud-notice{position:fixed;inset:0;z-index:2147483600;display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;background:rgba(0,0,0,.45);font-family:Pretendard,"Apple SD Gothic Neo",system-ui,sans-serif}
+#chud-notice .chud-notice-card{width:min(360px,100%);box-sizing:border-box;padding:20px;border-radius:16px;border:1px solid var(--divider_secondary,#dbdad5);background:var(--bg_elevated_primary,#fff);color:var(--text_primary,#1a1918);box-shadow:0 16px 48px rgba(0,0,0,.28)}
+#chud-notice h4{margin:0 0 8px;font-size:15px;font-weight:700;line-height:1.4;color:inherit}
+#chud-notice p{margin:0;font-size:13px;line-height:1.6;color:var(--text_secondary,#61605a);white-space:pre-wrap;overflow-wrap:anywhere;max-height:50vh;overflow-y:auto}
+#chud-notice button{display:block;width:100%;margin-top:16px;min-height:40px;border:0;border-radius:10px;background:var(--surface_primary,#0d0d0c);color:var(--text_ivory,#fcfcfa);font:inherit;font-size:14px;font-weight:600;cursor:pointer}
+#chud-notice button:focus-visible{outline:2px solid var(--text_brand,#ff4432);outline-offset:2px}
+@media (pointer:coarse){#chud-notice button{min-height:44px}}`;
+    (document.head || document.documentElement).appendChild(style);
+  }
+  function open(message, title) {
+    ensureStyle();
+    return new Promise(resolve => {
+      const previousFocus = document.activeElement;
+      const overlay = document.createElement('div');
+      overlay.id = 'chud-notice';
+      overlay.setAttribute('role', 'alertdialog');
+      overlay.setAttribute('aria-modal', 'true');
+      overlay.innerHTML = '<div class="chud-notice-card"><h4></h4><p></p><button type="button">확인</button></div>';
+      overlay.querySelector('h4').textContent = title || '크랙 채팅 허브';
+      overlay.querySelector('p').textContent = String(message || '');
+      const ok = overlay.querySelector('button');
+      const finish = () => {
+        window.removeEventListener('keydown', onKey, true);
+        overlay.remove();
+        try { previousFocus?.focus?.({preventScroll:true}); } catch (_) {}
+        resolve();
+      };
+      // 창이 떠 있는 동안 키는 여기서 끝낸다. 크랙 단축키로 넘어가지 않게 캡처 단계에서 멈춘다.
+      const onKey = event => {
+        event.stopPropagation();
+        if (event.key === 'Escape' || (event.key === 'Enter' && !event.isComposing)) { event.preventDefault(); finish(); }
+        else if (event.key === 'Tab') { event.preventDefault(); ok.focus(); }
+      };
+      ok.addEventListener('click', finish);
+      overlay.addEventListener('mousedown', event => { if (event.target === overlay) finish(); });
+      window.addEventListener('keydown', onKey, true);
+      document.body.appendChild(overlay);
+      ok.focus({preventScroll:true});
+    });
+  }
+  return (message, title) => {
+    const show = () => open(message, title);
+    const result = chain.then(show, show);
+    chain = result.catch(() => {});
+    return result;
+  };
 })();
 
 
@@ -1624,18 +1681,19 @@ const Core = (() => {
   function setButtonState(visible, expanded = state.expanded) {
     const button = state.toggle;
     if (!(button instanceof HTMLButtonElement)) return;
+    const setAttr = (name, value) => { if (button.getAttribute(name) !== value) button.setAttribute(name, value); };
     button.classList.toggle('ccr-expand-visible', Boolean(visible));
-    button.tabIndex = visible ? 0 : -1;
-    button.setAttribute('aria-hidden', visible ? 'false' : 'true');
+    setAttr('tabindex', visible ? '0' : '-1');
+    setAttr('aria-hidden', visible ? 'false' : 'true');
     const nextState = expanded ? 'expanded' : 'collapsed';
     if (button.dataset.state !== nextState) {
       button.dataset.state = nextState;
       button.innerHTML = TOGGLE_ICONS[nextState];
     }
     const label = expanded ? '입력창 원래 크기로 접기' : '입력창 내용 전체 펼치기';
-    button.title = label;
-    button.setAttribute('aria-label', label);
-    button.setAttribute('aria-pressed', expanded ? 'true' : 'false');
+    setAttr('title', label);
+    setAttr('aria-label', label);
+    setAttr('aria-pressed', expanded ? 'true' : 'false');
   }
 
   function updateExpandedHeight() {
@@ -2481,7 +2539,7 @@ const Core = (() => {
             timeoutId = setTimeout(release, 23000);
             try { uiPlusChoice.click(); } catch (error) {
                 release();
-                alert(`작품 UI 변경에 실패했습니다. 다시 시도해주세요.\n${error.message || error}`);
+                hubNotice(`다시 시도해주세요.\n${error.message || error}`, '작품 UI를 바꾸지 못했어요');
             }
             return;
         }
@@ -2499,7 +2557,7 @@ const Core = (() => {
             }));
             setTimeout(() => window.location.reload(), 450);
         } catch (error) {
-            alert(`작품 UI 변경에 실패했습니다. 다시 시도해주세요.\n${error.message || error}`);
+            hubNotice(`다시 시도해주세요.\n${error.message || error}`, '작품 UI를 바꾸지 못했어요');
         } finally {
             quickEpisodeSaveBusy = false;
             Sidebar.render();
@@ -3463,7 +3521,7 @@ const Core = (() => {
         const retry = () => {
             if (tryOpen()) return;
             if (Date.now() - started > 5000) {
-                alert('AI 요약 확장프로그램 버튼을 찾지 못했습니다. AI 요약 확프가 켜져 있는지 확인해주세요.');
+                hubNotice('AI 요약 확장프로그램 버튼을 찾지 못했습니다. AI 요약 확프가 켜져 있는지 확인해주세요.', '확장프로그램을 찾지 못했어요');
                 return;
             }
             setTimeout(retry, 250);
@@ -3531,7 +3589,7 @@ const Core = (() => {
         const retry = () => {
             if (tryOpen()) return;
             if (Date.now() - started > 5000) {
-                alert('AI 답변 확장프로그램 버튼을 찾지 못했습니다. AI 답변 확프가 켜져 있는지 확인해주세요.');
+                hubNotice('AI 답변 확장프로그램 버튼을 찾지 못했습니다. AI 답변 확프가 켜져 있는지 확인해주세요.', '확장프로그램을 찾지 못했어요');
                 return;
             }
             setTimeout(retry, 250);
@@ -3593,7 +3651,7 @@ const Core = (() => {
         const retry = () => {
             if (tryOpen()) return;
             if (Date.now() - started > 5000) {
-                alert('게임 HUD 버튼을 찾지 못했습니다. INFO Game HUD 확프가 켜져 있는지 확인해주세요.');
+                hubNotice('게임 HUD 버튼을 찾지 못했습니다. INFO Game HUD 확프가 켜져 있는지 확인해주세요.', '확장프로그램을 찾지 못했어요');
                 return;
             }
             setTimeout(retry, 250);
@@ -3642,7 +3700,7 @@ const Core = (() => {
         const retry = () => {
             if (tryOpen()) return;
             if (Date.now() - started > 5000) {
-                alert('Scene Painter 설정을 찾지 못했습니다. 삽화 확프가 켜져 있는지 확인해주세요.');
+                hubNotice('Scene Painter 설정을 찾지 못했습니다. 삽화 확프가 켜져 있는지 확인해주세요.', '확장프로그램을 찾지 못했어요');
                 return;
             }
             setTimeout(retry, 250);
@@ -3677,7 +3735,7 @@ const Core = (() => {
         const retry = () => {
             if (tryOpen()) return;
             if (Date.now() - started > 5000) {
-                alert('Wish RP Manager 버튼을 찾지 못했습니다. Wish RP Manager 확프가 켜져 있는지 확인해주세요.');
+                hubNotice('Wish RP Manager 버튼을 찾지 못했습니다. Wish RP Manager 확프가 켜져 있는지 확인해주세요.', '확장프로그램을 찾지 못했어요');
                 return;
             }
             setTimeout(retry, 250);
@@ -3715,7 +3773,7 @@ const Core = (() => {
         const retry = () => {
             if (tryOpen()) return;
             if (Date.now() - started > 5000) {
-                alert('프로필 박스 버튼을 찾지 못했습니다. 프로필 박스 확프가 켜져 있는지 확인해주세요.');
+                hubNotice('프로필 박스 버튼을 찾지 못했습니다. 프로필 박스 확프가 켜져 있는지 확인해주세요.', '확장프로그램을 찾지 못했어요');
                 return;
             }
             setTimeout(retry, 250);
@@ -3791,7 +3849,7 @@ const Core = (() => {
         const retry = () => {
             if (tryOpen()) return;
             if (Date.now() - started > 5000) {
-                alert('직접 방 이미지 배경 확프 설정을 찾지 못했습니다. 확프가 켜져 있는지 확인해주세요.');
+                hubNotice('직접 방 이미지 배경 확프 설정을 찾지 못했습니다. 확프가 켜져 있는지 확인해주세요.', '확장프로그램을 찾지 못했어요');
                 return;
             }
             setTimeout(retry, 250);
@@ -3815,7 +3873,7 @@ const Core = (() => {
         const retry = () => {
             if (tryOpen()) return;
             if (Date.now() - started > 5000) {
-                alert('Scene Painter 배경 블러 확프 설정을 찾지 못했습니다. 확프가 켜져 있는지 확인해주세요.');
+                hubNotice('Scene Painter 배경 블러 확프 설정을 찾지 못했습니다. 확프가 켜져 있는지 확인해주세요.', '확장프로그램을 찾지 못했어요');
                 return;
             }
             setTimeout(retry, 250);
