@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Crack Char Clock Badge (크랙 글자수·시간 배지) 🕒
 // @namespace    crack char clock badge
-// @version      1.2.8-integrated.7
+// @version      1.2.8-integrated.8
 // @description  글자수·시간 배지, 선택 글자수, 입력 감싸기, 수정창 도구, 버블 메뉴·바로 수정·단어 줄바꿈을 통합합니다.
 // @author       Assistant
 // @match        https://crack.wrtn.ai/*
@@ -198,6 +198,22 @@
     }
   }
 
+  // 크랙 수정창은 tiptap 에디터다. execCommand는 글 중간에 붙여넣으면 첫 줄바꿈에서
+  // 문단을 쪼개 저장 시 빈 줄이 하나 더 생긴다. tiptap의 insertContent는 모든 줄바꿈을
+  // 현재 문단 안의 줄바꿈(hardBreak)으로 넣으므로 있으면 그쪽을 먼저 쓴다.
+  function insertWithTiptap(editor, plainText) {
+    const api = editor?.editor;
+    if (typeof api?.commands?.insertContent !== 'function') return false;
+
+    try {
+      const html = normalizeText(plainText).split('\n').map(escapeHtml).join('<br>');
+      return api.commands.insertContent(html, { parseOptions: { preserveWhitespace: 'full' } }) !== false;
+    } catch (error) {
+      console.warn(PREFIX, 'tiptap 삽입 실패, 기존 방식 사용', error);
+      return false;
+    }
+  }
+
   function handlePaste(event) {
     const editor = findEditorFromEventTarget(event.target);
     if (!editor || !isCrackEditEditor(editor)) return;
@@ -216,7 +232,7 @@
     event.stopPropagation();
     event.stopImmediatePropagation();
 
-    const ok = insertHtmlAtSelection(editor, html, plain);
+    const ok = insertWithTiptap(editor, plain) || insertHtmlAtSelection(editor, html, plain);
 
     if (ok) {
       console.debug(PREFIX, 'v0.2.0 단일 문단 줄바꿈 보존 적용');
@@ -1271,8 +1287,17 @@
       bindPanelEvents(panel);
     }
 
-    panel.hidden = false;
+    setPanelOpen(panel, true);
     renderPanel();
+  }
+
+  // 닫힌 창에 role="dialog"가 남아 있으면 "대화상자가 열렸나"를 첫 [role="dialog"]로
+  // 판단하는 다른 스크립트(예: 요약 메모리 창 새로고침)가 이 숨은 창을 잡는다.
+  function setPanelOpen(panel, open) {
+    panel.hidden = !open;
+    const modal = panel.querySelector('.cerc-modal');
+    if (open) modal?.setAttribute('role', 'dialog');
+    else modal?.removeAttribute('role');
   }
 
   function resetPanelSession() {
@@ -1283,7 +1308,7 @@
   }
   function closePanel() {
     const panel = document.getElementById(PANEL_ID);
-    if (panel) panel.hidden = true;
+    if (panel) setPanelOpen(panel, false);
     resetPanelSession();
   }
 
@@ -1871,6 +1896,18 @@
       for (const known of knownDoneButtons) if (known.isConnected) pendingDoneButtons.add(known);
       if (pendingDoneButtons.size) scheduleInject();
     }, true);
+
+    // 후보를 누르면 목록이 다시 그려져 포커스가 body로 빠지고, 그때는 창의 keydown이
+    // 불리지 않아 Esc로 닫히지 않았다. 창이 열려 있으면 문서에서 받아 닫고,
+    // 이 Esc가 크랙의 Esc 단축키로 넘어가지 않게 한다.
+    document.addEventListener('keydown', event => {
+      if (event.key !== 'Escape') return;
+      const panel = document.getElementById(PANEL_ID);
+      if (!panel || panel.hidden) return;
+      event.preventDefault();
+      event.stopPropagation();
+      closePanel();
+    }, true);
   }
 
   if (document.readyState === 'loading') {
@@ -1880,8 +1917,16 @@
   }
 })();
   }
-  // Char Clock Badge v1.2.8: original episode-route scope.
-  if (onMainHost && /^\/stories\/[^/]+\/episodes\//.test(location.pathname)) {
+  // Char Clock Badge v1.2.8: episode routes only. The original @match ran it only
+  // when the first loaded page was an episode, and Crack changes pages without a
+  // reload, so entering a chat from home or the chat list showed no badges until
+  // a refresh. Start on the first episode route instead.
+  if (onMainHost) {
+    const isEpisodeRoute = () => /^\/stories\/[^/]+\/episodes\//.test(location.pathname);
+    let charClockStarted = false;
+    const startCharClockBadge = () => {
+      if (charClockStarted) return;
+      charClockStarted = true;
 (function () {
     'use strict';
 
@@ -1933,6 +1978,12 @@
     const retryGroups = new Set();
     let fullScanPending = false;
 
+    // 메시지 수정창(크랙 tiptap 에디터). 메인 입력창은 메시지 그룹 밖에 있다.
+    const EDITING_SELECTOR = '.ProseMirror[contenteditable="true"], [contenteditable="true"][data-history-hooked="true"]';
+    const EDIT_SAVE_SETTLE_MS = 1500;
+    const editingIds = new Set();
+    const lastShownById = new Map();
+
     function getUrlKey() {
         return location.origin + location.pathname + location.search;
     }
@@ -1949,6 +2000,8 @@
         apiRetryDelay = API_FORCE_REFRESH_MIN_INTERVAL;
         resultCache.clear();
         refreshBackoff.clear();
+        editingIds.clear();
+        lastShownById.clear();
     }
 
     function legacySettingKey(name) {
@@ -2112,6 +2165,27 @@
         }
     }
 
+    // 새 메시지는 늘 목록 맨 앞(최신 쪽)에 붙는다. 새 답변을 찾는 새로고침은
+    // 최신 REFRESH_LIMIT개만 받아 기존 캐시와 합치고, 처음 한 번만 MESSAGE_LIMIT개를 받는다.
+    const REFRESH_LIMIT = 20;
+
+    function mergeLatestMessages(latest, previous) {
+        const ids = new Set(latest.map(messageIdOf).filter(Boolean));
+        let windowStart = Infinity;
+        for (const msg of latest) {
+            const time = objectIdToDate(messageIdOf(msg))?.getTime();
+            if (time < windowStart) windowStart = time;
+        }
+        // 최신 묶음보다 늦게 만들어졌는데 묶음에 없는 옛 항목은 지워진 메시지라 뺀다.
+        // 같은 초에 만들어진 항목은 묶음 밖일 수 있어 남긴다.
+        const older = previous.messages.filter(msg => {
+            const id = messageIdOf(msg);
+            if (!id || ids.has(id)) return false;
+            return !(objectIdToDate(id)?.getTime() > windowStart);
+        });
+        return latest.concat(older);
+    }
+
     async function fetchAllMessagesOnce(options = {}) {
         const force = !!options.force;
 
@@ -2119,12 +2193,19 @@
         if (apiPromise) return apiPromise;
         if (Date.now() < apiRetryAt) throw new Error('messages fetch backoff');
 
+        const previous = apiCache;
+        const latestOnly = !!options.latestOnly && !!previous;
         if (force) apiCache = null;
 
         const chatId = findChatId();
         if (!chatId) throw new Error('chatId not found');
 
-        apiPromise = fetch(`${API_BASE}/chats/${chatId}/messages?limit=${MESSAGE_LIMIT}`, {
+        // A reply for the room we already left must not become this room's cache.
+        const urlKey = lastUrlKey;
+        const current = () => urlKey === lastUrlKey;
+        const limit = latestOnly ? REFRESH_LIMIT : MESSAGE_LIMIT;
+
+        const request = fetch(`${API_BASE}/chats/${chatId}/messages?limit=${limit}`, {
             method: 'GET',
             credentials: 'include',
             headers: getCommonHeaders()
@@ -2132,32 +2213,40 @@
             .then(async res => {
                 if (!res.ok) throw new Error(`messages fetch failed: ${res.status}`);
                 const json = await res.json();
-                const messages = json?.data?.messages || json?.messages || [];
+                const data = json?.data || {};
+                const messages = data.messages || json?.messages || [];
                 const list = Array.isArray(messages) ? messages : [];
-                apiCache = buildApiCache(list);
-                apiRetryAt = 0;
-                apiRetryDelay = API_FORCE_REFRESH_MIN_INTERVAL;
-                return apiCache;
+                const complete = (data.hasNext ?? json?.hasNext) === false || list.length < limit;
+                const cache = buildApiCache(latestOnly && !complete ? mergeLatestMessages(list, previous) : list);
+                if (current()) {
+                    apiCache = cache;
+                    apiRetryAt = 0;
+                    apiRetryDelay = API_FORCE_REFRESH_MIN_INTERVAL;
+                }
+                return cache;
             })
             .catch(err => {
                 console.warn(`${LOG_PREFIX} API resolve failed:`, err);
-                apiCache = null;
-                apiRetryAt = Date.now() + apiRetryDelay;
-                apiRetryDelay = Math.min(API_RETRY_MAX_INTERVAL, apiRetryDelay * 2);
+                if (current()) {
+                    apiCache = null;
+                    apiRetryAt = Date.now() + apiRetryDelay;
+                    apiRetryDelay = Math.min(API_RETRY_MAX_INTERVAL, apiRetryDelay * 2);
+                }
                 throw err;
             })
             .finally(() => {
-                apiPromise = null;
+                if (apiPromise === request) apiPromise = null;
             });
 
-        return apiPromise;
+        apiPromise = request;
+        return request;
     }
 
     function sleep(ms) {
         return new Promise(resolve => setTimeout(resolve, ms));
     }
 
-    function refreshApiCacheThrottled() {
+    function refreshApiCacheThrottled(options = {}) {
         if (forcedApiRefreshPromise) return forcedApiRefreshPromise;
 
         forcedApiRefreshPromise = (async () => {
@@ -2166,7 +2255,7 @@
             if (wait > 0) await sleep(wait);
 
             lastForcedApiRefreshAt = Date.now();
-            return fetchAllMessagesOnce({ force: true });
+            return fetchAllMessagesOnce({ force: true, latestOnly: !!options.latestOnly });
         })().finally(() => {
             forcedApiRefreshPromise = null;
         });
@@ -2182,6 +2271,7 @@
         const idMap = new Map();
         const apiIndexMap = new Map();
         let oldestTime = Infinity;
+        let newestTime = -Infinity;
 
         messages.forEach((msg, index) => {
             const id = messageIdOf(msg);
@@ -2190,9 +2280,17 @@
             apiIndexMap.set(id, index);
             const time = objectIdToDate(id)?.getTime();
             if (time < oldestTime) oldestTime = time;
+            if (time > newestTime) newestTime = time;
         });
 
-        return { messages, idMap, apiIndexMap, oldestTime };
+        return { messages, idMap, apiIndexMap, oldestTime, newestTime };
+    }
+
+    // 캐시를 만든 뒤에 생긴 메시지(새 답변·새 리롤)는 최신 묶음만 받아도 들어온다.
+    // 캐시 범위 안인데 빠진 메시지는 드문 경우라 예전처럼 전체를 다시 받는다.
+    function newerThanCache(group) {
+        const time = objectIdToDate(getGroupMessageId(group))?.getTime();
+        return !apiCache || !(time <= apiCache.newestTime);
     }
 
     // 강제 새로고침은 같은 최신 MESSAGE_LIMIT개를 다시 받습니다. 스크롤로 불러온
@@ -2693,6 +2791,7 @@
 
         const title = titleLines.join('\n');
         const source = resolved.source || 'dom';
+        lastShownById.set(getGroupMessageId(group), resolved);
 
         // 값이 실제로 바뀐 경우에만 DOM 갱신합니다.
         // textContent를 같은 값으로 다시 써도 childList mutation이 발생할 수 있어서,
@@ -2732,6 +2831,22 @@
         }
     }
 
+    // 크랙은 수정 내용을 화면에 먼저 반영하고 저장 요청은 뒤이어 보낸다.
+    // 수정창이 닫히자마자 다시 받으면 이전 본문이 올 수 있어 저장이 끝날 시간을 둔다.
+    function refreshAfterEdit(group, id) {
+        setTimeout(() => {
+            if (!group.isConnected || getUrlKey() !== lastUrlKey) return;
+            fetchAllMessagesOnce({ force: true })
+                .catch(() => null)
+                .then(() => {
+                    for (const key of Array.from(resultCache.keys())) {
+                        if (key === id || key.startsWith(`${id}:`)) resultCache.delete(key);
+                    }
+                    if (group.isConnected) processGroup(group);
+                });
+        }, EDIT_SAVE_SETTLE_MS);
+    }
+
     function processGroup(group) {
         if (!group?.isConnected || !group.matches?.(MESSAGE_SELECTOR)) return;
 
@@ -2739,6 +2854,18 @@
             removeBadge(group);
             return;
         }
+
+        // 수정 중에는 답변 비교 버튼이 사라져 그룹 ID(1번 답변) 기준 정보로 바뀌었다.
+        // 수정창이 닫힐 때까지 보고 있던 답변 정보를 두고, 닫히면 저장된 본문을 다시 읽는다.
+        const groupId = getGroupMessageId(group);
+        if (group.querySelector(EDITING_SELECTOR)) {
+            editingIds.add(groupId);
+            retryGroups.delete(group);
+            const shown = lastShownById.get(groupId);
+            if (shown) setBadge(group, shown);
+            return;
+        }
+        if (editingIds.delete(groupId) && isObjectId(groupId)) refreshAfterEdit(group, groupId);
 
         const key = makeCacheKey(group);
         if (!key) return;
@@ -2779,7 +2906,7 @@
                     return;
                 }
                 if (!takeRefreshTurn(key)) return;
-                refreshApiCacheThrottled()
+                refreshApiCacheThrottled({ latestOnly: !!resolved.provisional || newerThanCache(group) })
                     .then(() => {
                         if (!group.isConnected || resultCache.has(key)) return null;
                         return resolveCurrentMessageInfo(group, { force: false });
@@ -2961,6 +3088,32 @@
         `);
     }
 
+    // 크랙은 첫 메시지 몇 개를 서버가 그린 HTML로 보내고, React가 DOMContentLoaded 뒤에
+    // 그 DOM을 넘겨받는다(hydration). 그 전에 메시지 그룹에 배지를 끼우면 React가 DOM
+    // 불일치(#418)를 내고 화면 전체를 처음부터 다시 그린다(#423). 루트가 넘겨받기를
+    // 마친 뒤에 첫 스캔과 관찰을 시작한다.
+    const HYDRATION_WAIT_LIMIT = 8000;
+
+    function reactRootHydrated() {
+        const container = document.getElementById('__next');
+        if (!container) return true;
+        const key = Object.keys(container).find(name => name.startsWith('__reactContainer$'));
+        if (!key) return false; // hydrateRoot has not run yet
+        const state = container[key]?.stateNode?.current?.memoizedState;
+        // Unknown React internals: do not hold the badges back.
+        if (!state || typeof state.isDehydrated !== 'boolean') return true;
+        return !state.isDehydrated;
+    }
+
+    function whenReactHydrated(callback) {
+        const startedAt = Date.now();
+        const check = () => {
+            if (reactRootHydrated() || Date.now() - startedAt > HYDRATION_WAIT_LIMIT) callback();
+            else setTimeout(check, 50);
+        };
+        check();
+    }
+
     function init() {
         injectStyles();
         registerMenuCommands();
@@ -3022,15 +3175,39 @@
             }, 3500);
         };
 
+        const start = () => whenReactHydrated(ready);
         if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', ready, { once: true });
+            document.addEventListener('DOMContentLoaded', start, { once: true });
         } else {
-            ready();
+            start();
         }
     }
 
     init();
 })();
+    };
+
+    if (isEpisodeRoute()) {
+      startCharClockBadge();
+    } else {
+      const pageNavigation = (typeof unsafeWindow !== 'undefined' ? unsafeWindow : window).navigation;
+      let routeTimer = 0;
+      const onRoute = () => {
+        if (!isEpisodeRoute()) return;
+        pageNavigation?.removeEventListener?.('currententrychange', onRoute);
+        window.removeEventListener('popstate', onRoute);
+        clearInterval(routeTimer);
+        startCharClockBadge();
+      };
+      window.addEventListener('popstate', onRoute);
+      if (typeof pageNavigation?.addEventListener === 'function') {
+        // Fires for Next's router.push (history.pushState) as well as back/forward.
+        pageNavigation.addEventListener('currententrychange', onRoute);
+      } else {
+        // Without the Navigation API pushState is silent, so check the path instead.
+        routeTimer = setInterval(onRoute, 1000);
+      }
+    }
   }
 
   // Selection Text Counter v1.0.1-fixed-corner: original main-host scope.
