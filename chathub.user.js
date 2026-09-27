@@ -7479,6 +7479,7 @@ const hubNotice = (() => {
     return composer?.closest('[data-cmu-theme-input-box],[data-sgb-input-box],div[class*="rounded"][class*="border"]') || composer?.closest('form') || composer?.parentElement;
   }
 
+  let watchedPrevSibling=null,stopPrevSiblingWatch=()=>{};
   function attachInlineIfPossible() {
     if(!isIgxChatRoomPage()){detachPopupOutsideChat();return false;}
     const host=findInlineHost();
@@ -7489,6 +7490,13 @@ const hubNotice = (() => {
     const rowGap=parseFloat(getComputedStyle(host.parentElement).rowGap)||0;
     const marginBottom=`${4-rowGap}px`;
     if(popup.style.marginBottom!==marginBottom)popup.style.setProperty('margin-bottom',marginBottom,'important');
+    // 위쪽도 같다. 크랙 기본 입력창은 바로 앞 칸이 비어 있으므로 그 gap만큼 끌어올려 입력창 위 원래 여백 안에 바를 둔다.
+    // 그러지 않으면 바 위에 크랙 여백+gap(약 36px)의 불투명 띠가 새로 생겨, 스크롤하는 대화 끝을 가렸다.
+    // 앞 칸에 내용이 생기면(높이 > 0) 간격을 되돌린다. 크기 변화는 watchSize → layout으로 다시 여기 들어온다.
+    const prev=popup.previousElementSibling;
+    if(prev!==watchedPrevSibling){stopPrevSiblingWatch();watchedPrevSibling=prev;stopPrevSiblingWatch=prev?Core.watchSize(prev,()=>{}):()=>{};}
+    const marginTop=prev&&prev.getBoundingClientRect().height<1?`${-rowGap}px`:'0px';
+    if(popup.style.marginTop!==marginTop)popup.style.setProperty('margin-top',marginTop,'important');
     return true;
   }
 
