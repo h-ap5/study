@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        크랙 대화 프로필 매니저
 // @namespace   crack-profile-library-menu
-// @version     1.7.2
+// @version     1.7.3
 // @description 대화 프로필 라이브러리, 백업, 전용 메모장 추가.
 // @match       https://crack.wrtn.ai/*
 // @run-at      document-start
@@ -1515,11 +1515,20 @@
             if (returnFocus?.isConnected && typeof returnFocus.focus === 'function') returnFocus.focus({ preventScroll: true });
         }
         // 크랙 창은 크랙이 닫게 두고, 닫힌 뒤 정리는 창 감시(syncProfileDialog)가 맡는다.
+        // 가짜 Esc를 document에 보내면 keyup 짝이 없어 크랙 단축키가 Esc를 계속 눌린 키로 기억하고,
+        // 이후 Shift·Ctrl을 누를 때마다 Esc 단축키(요약 메모리 열기/닫기)가 실행된다.
+        // 그래서 크랙 창 안에 보내고 html에서 멈춰, 크랙 창 닫기(document 캡처)만 받고 단축키에는 닿지 않게 한다.
         function closeHostDialog() {
             closeMenu();
+            const stopBeforeShortcuts = (event) => event.stopPropagation();
+            document.documentElement.addEventListener('keydown', stopBeforeShortcuts);
             allowNativeEscape = true;
-            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true, cancelable: true }));
-            allowNativeEscape = false;
+            try {
+                host.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true, cancelable: true }));
+            } finally {
+                allowNativeEscape = false;
+                document.documentElement.removeEventListener('keydown', stopBeforeShortcuts);
+            }
             setTimeout(() => {
                 if (!root.isConnected || !host.isConnected || host.dataset.state === 'closed') return;
                 const nativeClose = [...host.querySelectorAll('button')].find((button) => !root.contains(button)
