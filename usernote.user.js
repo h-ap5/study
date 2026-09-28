@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Crack Usernote Preset (크랙 유저노트 프리셋) 🗂️
 // @namespace    crack-usernote-preset-maker
-// @version      1.2.0
+// @version      1.2.1
 // @description  크랙 유저노트 창에 프리셋·방별 임시저장·AI 정리/압축/검토를 한곳에 붙임 (PC=왼쪽 탭 패널, 모바일=노트 아래 인라인)
 // @author       뤼붕이 (프리셋) · mynameislovesong (AI 압축기)
 // @match        https://crack.wrtn.ai/*
@@ -18,6 +18,8 @@
 // - 프리셋·임시저장 데이터는 1.1.4와 같은 저장 키를 그대로 쓴다(이 항목에 덮어 설치하면 그대로 남음).
 // - AI 설정은 압축기와 같은 모양(crackUserNoteAISettingsV1)으로 저장한다. 압축기는 다른 항목이라 API 키는 한 번 다시 넣어야 한다.
 // - 압축기는 크랙 유저노트 창 안에만 붙는다(예전처럼 '유저노트' 글자가 보이는 아무 패널에나 붙지 않음).
+// 1.2.1: 모바일 프리셋 패널을 시트 위가 아니라 시트 안(제목 줄 아래)에 띄운다. 프리셋을 켜면 노트 칸이 늘어나
+//        시트가 위로 자라면서 패널이 화면 위로 잘리던 문제. 시트 크기가 바뀌면 다시 맞추고, 패널 밖을 누르면 닫힌다.
 
 (function () {
   'use strict';
@@ -1825,16 +1827,23 @@
   function restoreDialogShift(dialog) {
     if (dialog && dialog.style.marginLeft) dialog.style.marginLeft = '';
   }
-  // 패널을 dialog 기준 absolute로 붙임. (PC=왼쪽, 모바일=위)
+  // 패널을 dialog 기준 absolute로 붙임. (PC=왼쪽, 모바일=시트 안 제목 줄 아래)
   function positionPanel(dialog) {
     if (!panelEl || !dialog) return;
     if (mobileMode) {
       restoreDialogShift(dialog);
+      // 시트 위에 붙이면, 프리셋을 켤 때 노트 칸이 늘어나 시트가 위로 자라면서 패널이 화면 위로 밀려 잘렸다.
+      // 시트 안 제목 줄 바로 아래에 띄우고, 지금 보이는 영역(키보드 포함) 안으로 높이를 맞춘다.
       const r = dialog.getBoundingClientRect();
-      const avail = Math.max(0, r.top - GAP - MOBILE_TOP_SAFE);
-      // 위쪽 여유가 140px보다 작으면 남은 공간 안에서만 높이를 잡고, 내용은 목록 안에서 스크롤한다.
-      const h = avail < MOBILE_PANEL_MIN_PX ? avail : Math.min(MOBILE_PANEL_MAX_PX, avail);
-      Object.assign(panelEl.style, { left: '8px', right: '8px', width: 'auto', top: 'auto', bottom: `calc(100% + ${GAP}px)`, height: Math.round(h) + 'px' });
+      const vv = window.visualViewport;
+      const viewTop = vv ? vv.offsetTop : 0;
+      const viewBottom = vv ? vv.offsetTop + vv.height : window.innerHeight;
+      const head = chipEl && chipEl.isConnected ? chipEl.getBoundingClientRect().bottom + 12 : r.top + 66;
+      const top = Math.max(head, viewTop + MOBILE_TOP_SAFE);
+      const bottom = Math.min(r.bottom, viewBottom) - 12;
+      const h = Math.max(MOBILE_PANEL_MIN_PX, Math.min(MOBILE_PANEL_MAX_PX, bottom - top));
+      const next = { left: '8px', right: '8px', width: 'auto', top: Math.round(top - r.top) + 'px', bottom: 'auto', height: Math.round(h) + 'px' };
+      for (const k in next) if (panelEl.style[k] !== next[k]) panelEl.style[k] = next[k];
     } else {
       let shift = (PANEL_W + GAP) / 2;
       dialog.style.marginLeft = Math.round(shift) + 'px';
@@ -1861,7 +1870,7 @@
     if (!open) {
       panelEl.style.transition = `opacity ${PANEL_CLOSE_MS}ms ease, transform ${PANEL_CLOSE_MS}ms ease`;
       panelEl.style.opacity = '0';
-      panelEl.style.transform = mobileMode ? 'translateY(8px)' : 'translateX(-8px)';
+      panelEl.style.transform = mobileMode ? 'translateY(-6px)' : 'translateX(-8px)';
       panelEl.style.pointerEvents = 'none';
       panelEl.setAttribute('aria-hidden', 'true');
       closePreview();
@@ -1874,7 +1883,7 @@
     panelEl.style.display = 'flex';
     panelEl.style.transition = 'none';
     panelEl.style.opacity = '0';
-    panelEl.style.transform = mobileMode ? 'translateY(8px)' : 'translateX(-8px)';
+    panelEl.style.transform = mobileMode ? 'translateY(-6px)' : 'translateX(-8px)';
     panelEl.style.pointerEvents = 'none';
     panelEl.setAttribute('aria-hidden', 'false');
     positionPanel(dialog);
@@ -1892,6 +1901,26 @@
     if (open && tab) setTab(tab);
     else if (open) setTab(ui.tab);
     applyLayout();
+  }
+  // 모바일: 시트 크기가 바뀌면(노트 칸 자동 늘어남, 키보드) 패널 높이를 다시 맞추고, 패널 밖을 누르면 닫는다.
+  let sheetResizeObs = null;
+  function watchSheet(dialog) {
+    unwatchSheet(dialog);
+    if (typeof ResizeObserver === 'function') {
+      sheetResizeObs = new ResizeObserver(() => { if (ui.panelOpen && mobileMode && activeDialog === dialog) positionPanel(dialog); });
+      sheetResizeObs.observe(dialog);
+    }
+    dialog.addEventListener('pointerdown', onSheetPointerDown, true);
+  }
+  function unwatchSheet(dialog) {
+    if (sheetResizeObs) { sheetResizeObs.disconnect(); sheetResizeObs = null; }
+    if (dialog) dialog.removeEventListener('pointerdown', onSheetPointerDown, true);
+  }
+  function onSheetPointerDown(e) {
+    if (!mobileMode || !ui.panelOpen || !panelEl) return;
+    const t = e.target;
+    if (panelEl.contains(t) || (chipEl && chipEl.contains(t)) || (overlayEl && overlayEl.contains(t))) return;
+    setPanelOpen(false);
   }
 
   /* =========================================================
@@ -1929,6 +1958,7 @@
     dialog.setAttribute(PROCESSED, '1');
     window.addEventListener('keydown', onWindowKeydown, true);
     mountUI(dialog);
+    watchSheet(dialog);
     renderList();
     renderDrafts();
     refreshCounts();
@@ -1947,6 +1977,7 @@
       restoreDialogShift(activeDialog);
       activeDialog.removeAttribute(PROCESSED);
     }
+    unwatchSheet(activeDialog);
     teardownUI();
     window.removeEventListener('keydown', onWindowKeydown, true);
     gmDelete(KEY_APPLIED + getRoomId());
@@ -2002,7 +2033,11 @@
     window.addEventListener('resize', debounce(onResize, 120));
     window.addEventListener('orientationchange', () => setTimeout(onResize, 200));
     // 모바일 키보드 등으로 뷰포트가 바뀔 때만 모바일 패널 높이 재계산.
-    if (window.visualViewport) window.visualViewport.addEventListener('resize', () => { if (ui.panelOpen && activeDialog) positionPanel(activeDialog); });
+    if (window.visualViewport) {
+      const onViewport = () => { if (ui.panelOpen && activeDialog) positionPanel(activeDialog); };
+      window.visualViewport.addEventListener('resize', onViewport);
+      window.visualViewport.addEventListener('scroll', onViewport);
+    }
     window.addEventListener('pagehide', flushAutoSaveDraft);
     window.addEventListener('beforeunload', flushAutoSaveDraft);
     scheduleTick();
