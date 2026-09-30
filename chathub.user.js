@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🧩 Crack Chat Hub (크랙 채팅 허브)
 // @namespace    https://crack.wrtn.ai/
-// @version      1.1.8
+// @version      1.1.9
 // @description  크랙 채팅 합본: 임시저장, 글자수, 채팅창 펼치기, 대시보드(해/달·소설/채팅 즉시 전환), 라디오존데, 채팅·출력 모델 공통 숨김.
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-idle
@@ -3397,6 +3397,7 @@ const hubNotice = (() => {
         profileBox: `<svg width="15.5" height="15.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="chud-btn-icon" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2.25"/><path d="M5.8 16c.55-2.05 1.65-3.1 3.2-3.1s2.65 1.05 3.2 3.1"/><path d="M15 8h3"/><path d="M15 12h3"/><path d="M15 16h2"/></svg>`,
         note: `<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="currentColor" class="chud-btn-icon"><path d="M8 8.35h8v-1.6H8zm8 4H8v-1.6h8zm-8 4h4v-1.6H8z"></path><path fill-rule="evenodd" d="M3.75 3.29c0-.72.58-1.3 1.3-1.3h13.9c.72 0 1.3.58 1.3 1.3v12.6c0 .32-.12.65-.37.9l-4.55 4.8q-.38.4-.95.41H5.05a1.3 1.3 0 0 1-1.3-1.3zm1.6.3V20.4h8.44v-3.8c0-.72.58-1.3 1.3-1.3h3.56V3.6zM17.57 16.9l-2.18 2.3v-2.3z" clip-rule="evenodd"></path></svg>`,
         output: `<svg xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 24 24" width="15" height="15" class="chud-btn-icon"><path d="M21 3.2H3v1.6h18zm0 5.75H3v1.6h18zM10 14.7H3v1.6h7zm10.62 2.29.01-.31-.01-.31.77-.75a.64.64 0 0 0 .11-.77l-.77-1.33a.7.7 0 0 0-.83-.33l-.96.27a4 4 0 0 0-.54-.31l-.26-1.04a.64.64 0 0 0-.62-.48h-1.61c-.3 0-.55.2-.62.48l-.26 1.04a4 4 0 0 0-.54.31l-1.03-.29a.65.65 0 0 0-.73.29l-.8 1.39c-.15.25-.1.57.11.78l.77.74-.01.31.01.31-.77.75a.64.64 0 0 0-.11.77l.8 1.39c.14.25.44.38.73.3l1.03-.29q.26.18.54.31l.26 1.04c.07.29.32.49.62.49h1.61c.29 0 .54-.2.62-.48l.26-1.04q.29-.13.54-.31l1.04.3c.28.08.58-.05.72-.3l.81-1.4a.64.64 0 0 0-.11-.77zm-3.91 1.06a1.38 1.38 0 0 1 0-2.76 1.38 1.38 0 0 1 0 2.76"></path></svg>`,
+        proseStyle: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="15" height="15" class="chud-btn-icon"><path d="m17.83 7.17 1.07 3.2 3.2 1.07a.6.6 0 0 1 0 1.13l-3.2 1.07-1.07 3.2a.6.6 0 0 1-1.13 0l-1.07-3.2-3.2-1.07a.6.6 0 0 1 0-1.13l3.2-1.07 1.07-3.2a.6.6 0 0 1 1.13 0M3.14 13.28a1.28 1.28 0 1 0 0-2.56 1.28 1.28 0 0 0 0 2.56m5.11 0a1.28 1.28 0 1 0 0-2.56 1.28 1.28 0 0 0 0 2.56"></path></svg>`,
         summary: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="15" height="15" class="chud-btn-icon"><path d="M16.25 10.8a5.39 5.39 0 1 0 .02 10.78 5.39 5.39 0 0 0-.02-10.78m0 9.16a3.78 3.78 0 1 1 0-7.57 3.78 3.78 0 0 1 0 7.57"></path><path d="M17.02 13.43h-1.5v3.12l2.02 1.55.91-1.2-1.43-1.09z"></path><path d="M6.8 19.54v-3.29h-3V4.15h14.9V9.5h1.6V3.85c0-.72-.58-1.3-1.3-1.3H3.5c-.72 0-1.3.58-1.3 1.3v12.7c0 .72.58 1.3 1.3 1.3h1.7v3.2a.9.9 0 0 0 .89.89q.3 0 .58-.21l3.35-2.81-1.03-1.22z"></path><path d="M16.5 6.72H6v1.6h10.5zM11 10.03H6v1.6h5z"></path></svg>`,
         image: `<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="currentColor" class="chud-btn-icon"><path d="m11.7 6.08 6.36 3.67-6.36 3.67z"></path><path fill-rule="evenodd" d="M6.71 3.91c0-.94.76-1.7 1.7-1.7H20.1c.94 0 1.7.76 1.7 1.7V15.6c0 .94-.76 1.7-1.7 1.7h-2.81v2.8c0 .94-.76 1.7-1.7 1.7H3.9a1.7 1.7 0 0 1-1.7-1.7V8.41c0-.94.76-1.7 1.7-1.7h2.81zm1.7-.1a.1.1 0 0 0-.1.1V15.6q0 .1.1.1H20.1a.1.1 0 0 0 .1-.1V3.91a.1.1 0 0 0-.1-.1zm0 13.49h7.28v2.8a.1.1 0 0 1-.1.1H3.9a.1.1 0 0 1-.1-.1V8.41q0-.1.1-.1h2.81v7.29c0 .94.76 1.7 1.7 1.7" clip-rule="evenodd"></path></svg>`,
         archive: `<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" class="chud-btn-icon"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>`,
@@ -3428,6 +3429,7 @@ const hubNotice = (() => {
         guide: extractFirstPathD(ICON.guide),
         profile: extractFirstPathD(ICON.profile),
         note: extractFirstPathD(ICON.note),
+        proseStyle: extractFirstPathD(ICON.proseStyle),
         summary: extractFirstPathD(ICON.summary)
     };
 
@@ -4136,6 +4138,28 @@ const hubNotice = (() => {
         else openDialogBySpanText('최대 출력량');
     }
 
+    // 크랙은 이 방에 고를 문체가 있을 때만 채팅방 메뉴에 '문체 변경'을 그린다. 없으면 허브 버튼도 숨긴다.
+    const PROSE_STYLE_TITLE = '문체 변경';
+    function getProseStyleTrigger() {
+        for (const p of document.querySelectorAll(`path[d="${ICON_PATHS.proseStyle}"]`)) {
+            const btn = p.closest('button, [role="button"]');
+            if (btn && !isOwnEl(btn) && !btn.closest('[role="dialog"]')) return btn;
+        }
+        for (const span of document.querySelectorAll('[role="button"] span')) {
+            if (span.textContent.trim() !== PROSE_STYLE_TITLE) continue;
+            const btn = span.closest('[role="button"]');
+            if (btn && !isOwnEl(btn) && !btn.closest('[role="dialog"]')) return btn;
+        }
+        return null;
+    }
+    function openProseStyleDialog() {
+        const open = Array.from(document.querySelectorAll('[role="dialog"][data-state="open"]')).some((el) => el.querySelector('h2')?.textContent?.trim() === PROSE_STYLE_TITLE);
+        if (open) return;
+        const trigger = getProseStyleTrigger();
+        if (trigger) fireClickSequence(trigger);
+        else { shared.heavyStale = true; scheduleUpdate(); }
+    }
+
     function getContextImageSwitch() {
         for (const span of document.querySelectorAll('span')) {
             if (span.textContent.trim() === '상황 이미지 보기') {
@@ -4803,7 +4827,7 @@ const hubNotice = (() => {
     const Sidebar = (() => {
         const DEFAULT_VISIBLE = {
             modelButton: true, themeButton: true, episodeModeButton: true,
-            guideButton: true, profileButton: true, profileBoxButton: true, noteButton: true, outputButton: true,
+            guideButton: true, profileButton: true, profileBoxButton: true, noteButton: true, outputButton: true, proseStyleButton: true,
             summaryButton: true, imageButton: true, archiveButton: true, externalArchiveButton: true, roomBackgroundButton: true, scenePainterButton: true, wishManagerButton: true, sceneBlurButton: true, startButton: true, loreButton: true, translatorButton: true, aiSummaryButton: true, aiWriterButton: true, gameHudButton: true
         };
 
@@ -4892,6 +4916,9 @@ const hubNotice = (() => {
             btns.profileBox.dataset.cpmExternalProfileLauncher = 'true';
             btns.note = makeBtn('chud-note-btn', ICON.note, () => openDialogByIconPath(ICON_PATHS.note, '유저 노트'));
             btns.output = makeBtn('chud-output-btn', ICON.output, openOutputDialog);
+            btns.proseStyle = makeBtn('chud-prose-style-btn', ICON.proseStyle, openProseStyleDialog);
+            btns.proseStyle.title = '문체 변경';
+            btns.proseStyle.setAttribute('aria-label', '문체 변경');
             btns.summary = makeBtn('chud-summary-btn', ICON.summary, () => openDialogByIconPath(ICON_PATHS.summary, '요약 메모리'));
             btns.image = makeBtn('chud-image-btn', ICON.image, toggleContextImage);
             btns.archive = makeBtn('chud-archive-btn', ICON.archive, openNativeImageArchive);
@@ -4924,7 +4951,7 @@ const hubNotice = (() => {
             btns.gameHud.title = '게임 HUD';
             btns.gameHud.setAttribute('aria-label', '게임 HUD');
 
-            content.append(btns.model, btns.theme, btns.episodeMode, btns.guide, btns.profile, btns.profileBox, btns.note, btns.output, btns.summary, btns.image, btns.archive, btns.external, btns.roomBackground, btns.scenePainter, btns.wishManager, btns.sceneBlur, btns.start, btns.lore, btns.translator, btns.aiSummary, btns.aiWriter, btns.gameHud);
+            content.append(btns.model, btns.theme, btns.episodeMode, btns.guide, btns.profile, btns.profileBox, btns.note, btns.output, btns.proseStyle, btns.summary, btns.image, btns.archive, btns.external, btns.roomBackground, btns.scenePainter, btns.wishManager, btns.sceneBlur, btns.start, btns.lore, btns.translator, btns.aiSummary, btns.aiWriter, btns.gameHud);
             el.append(content, settingsBtn);
             container.appendChild(el);
 
@@ -4964,7 +4991,7 @@ const hubNotice = (() => {
                 { key: 'guideButton', label: '플레이 가이드' },
                 { key: 'profileButton', label: '대화 프로필' },
                 { key: 'profileBoxButton', label: '프로필 박스' }, { key: 'noteButton', label: '유저노트 표시' },
-                { key: 'outputButton', label: '출력량 조절' }, { key: 'summaryButton', label: '요약 메모리' },
+                { key: 'outputButton', label: '출력량 조절' }, { key: 'proseStyleButton', label: '문체 변경' }, { key: 'summaryButton', label: '요약 메모리' },
                 { key: 'imageButton', label: '이미지 ON/OFF' }, { key: 'archiveButton', label: '이미지 보관함' },
                 { key: 'externalArchiveButton', label: '외부 이미지 보관함' }, { key: 'roomBackgroundButton', label: '직접 방 이미지 배경' },
                 { key: 'scenePainterButton', label: 'AI 삽화 · Scene Painter' }, { key: 'wishManagerButton', label: 'Wish RP Manager' }, { key: 'sceneBlurButton', label: 'SP 배경 블러' }, { key: 'startButton', label: '시작 설정' },
@@ -5269,6 +5296,7 @@ const hubNotice = (() => {
             set(btns.profile, visible.profileButton !== false);
             set(btns.note, visible.noteButton !== false);
             set(btns.output, visible.outputButton !== false);
+            set(btns.proseStyle, shared.proseStyleAvailable && visible.proseStyleButton !== false);
             set(btns.summary, visible.summaryButton !== false);
             set(btns.start, visible.startButton !== false);
             set(btns.lore, shared.loreAvailable && visible.loreButton !== false);
@@ -5290,6 +5318,7 @@ const hubNotice = (() => {
             const rowVis = (key, on) => { const r = menu?.querySelector(`[data-part="${key}"]`); if (r) r.style.display = on ? 'flex' : 'none'; };
             rowVis('imageButton', shared.imageSwitchAvailable);
             rowVis('archiveButton', shared.nativeArchiveAvailable);
+            rowVis('proseStyleButton', shared.proseStyleAvailable);
             rowVis('externalArchiveButton', shared.externalArchiveAvailable);
             rowVis('loreButton', shared.loreAvailable);
             rowVis('translatorButton', shared.translatorAvailable);
@@ -5379,7 +5408,7 @@ const hubNotice = (() => {
         models: [], meta: null, currentModel: null,
         balance: null, logs: null, cumulative: null, cumBusy: false,
         imageSwitchAvailable: false, imageSwitchState: false,
-        nativeArchiveAvailable: false, externalArchiveAvailable: false,
+        nativeArchiveAvailable: false, externalArchiveAvailable: false, proseStyleAvailable: false,
         loreAvailable: false, translatorAvailable: false, aiSummaryAvailable: false, aiWriterAvailable: false, gameHudAvailable: false, roomBackgroundAvailable: false, scenePainterAvailable: false, wishManagerAvailable: false, profileBoxAvailable: false, sceneBlurAvailable: false,
         heavyStale: true
     };
@@ -5548,6 +5577,7 @@ const hubNotice = (() => {
         const imgSwitch = getContextImageSwitch();
         shared.nativeArchiveAvailable = !!getNativeImageArchiveTrigger();
         shared.externalArchiveAvailable = !!getExternalImageArchiveTrigger();
+        shared.proseStyleAvailable = !!getProseStyleTrigger();
         shared.loreAvailable = isLoreToolsInstalled();
         shared.translatorAvailable = isTranslatorInstalled();
         shared.aiSummaryAvailable = isAiSummaryInstalled();
