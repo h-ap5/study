@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Crack Char Clock Badge (크랙 글자수·시간 배지) 🕒
 // @namespace    crack char clock badge
-// @version      1.2.8-integrated.8
+// @version      1.2.8-integrated.9
 // @description  글자수·시간 배지, 선택 글자수, 입력 감싸기, 수정창 도구, 버블 메뉴·바로 수정·단어 줄바꿈을 통합합니다.
 // @author       Assistant
 // @match        https://crack.wrtn.ai/*
@@ -392,12 +392,19 @@
         overflow: hidden;
         border: 1px solid rgba(127, 127, 127, 0.26);
         border-radius: 20px;
-        background: color-mix(in srgb, var(--background, #101114) 94%, transparent);
-        color: var(--text_primary, var(--foreground, #f4f4f5));
+        background: color-mix(in srgb, var(--bg_elevated_primary, #ffffff) 96%, transparent);
+        color: var(--text_primary, #1a1918);
         box-shadow: 0 20px 72px rgba(0, 0, 0, 0.38);
         backdrop-filter: blur(16px);
         -webkit-backdrop-filter: blur(16px);
         font-family: inherit;
+      }
+
+      /* 크랙의 --background·--brand·--ring은 색이 아니라 HSL 숫자라 color-mix 안에서 무효가 된다.
+         그러면 창이 투명해져 화면만 어두워 보였다. 크랙의 16진수 색 토큰을 쓴다. */
+      body[data-theme="dark"] .cerc-modal {
+        background: color-mix(in srgb, var(--bg_elevated_primary, #242321) 96%, transparent);
+        color: var(--text_primary, #f0efeb);
       }
 
       .cerc-head {
@@ -530,8 +537,20 @@
       .cerc-input:focus,
       .cerc-select:focus,
       .cerc-textarea:focus {
-        border-color: color-mix(in srgb, var(--ring, #8ab4ff) 62%, transparent);
-        box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring, #8ab4ff) 18%, transparent);
+        border-color: color-mix(in srgb, var(--text_tertiary, #8a8a8a) 62%, transparent);
+        box-shadow: 0 0 0 3px color-mix(in srgb, var(--text_tertiary, #8a8a8a) 18%, transparent);
+      }
+
+      /* 입력칸·미리보기의 검은 채움은 어두운 창 기준이라 라이트 테마에서는 옅게 깐다. */
+      body:not([data-theme="dark"]) .cerc-input,
+      body:not([data-theme="dark"]) .cerc-select,
+      body:not([data-theme="dark"]) .cerc-textarea,
+      body:not([data-theme="dark"]) .cerc-highlight-box {
+        background: rgba(0, 0, 0, 0.045);
+      }
+
+      body:not([data-theme="dark"]) .cerc-rule {
+        background: rgba(0, 0, 0, 0.035);
       }
 
       .cerc-row {
@@ -560,8 +579,8 @@
       .cerc-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
       .cerc-primary {
-        border-color: color-mix(in srgb, var(--brand, #7aa2ff) 50%, transparent);
-        background: color-mix(in srgb, var(--brand, #7aa2ff) 25%, transparent);
+        border-color: color-mix(in srgb, var(--surface_brand_primary, #ff4432) 50%, transparent);
+        background: color-mix(in srgb, var(--surface_brand_primary, #ff4432) 25%, transparent);
       }
 
       .cerc-danger { background: rgba(255, 80, 80, 0.13); }
@@ -596,8 +615,8 @@
       .cerc-chip:hover { background: rgba(127, 127, 127, 0.22); }
 
       .cerc-chip[data-selected="true"] {
-        border-color: color-mix(in srgb, var(--brand, #7aa2ff) 55%, transparent);
-        background: color-mix(in srgb, var(--brand, #7aa2ff) 22%, transparent);
+        border-color: color-mix(in srgb, var(--surface_brand_primary, #ff4432) 55%, transparent);
+        background: color-mix(in srgb, var(--surface_brand_primary, #ff4432) 22%, transparent);
       }
 
       .cerc-chip-text {
@@ -691,8 +710,8 @@
       }
 
       .cerc-tab[data-active="true"] {
-        background: color-mix(in srgb, var(--brand, #7aa2ff) 22%, transparent);
-        border-color: color-mix(in srgb, var(--brand, #7aa2ff) 45%, transparent);
+        background: color-mix(in srgb, var(--surface_brand_primary, #ff4432) 22%, transparent);
+        border-color: color-mix(in srgb, var(--surface_brand_primary, #ff4432) 45%, transparent);
       }
 
       .cerc-highlight-box {
