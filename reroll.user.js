@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Crack Reroll Suite (리롤 · 클린 리롤 · 믹서) 🧩✨
 // @namespace    http://tampermonkey.net/
-// @version      2.4.3
+// @version      2.4.6
 // @description  꾹 눌러 리롤, 클린 리롤, 카드형 리롤 믹서와 AI 자연 혼합 도구를 제공합니다. RP Manager 본문 호환.
 // @author       Assistant
 // @match        https://crack.wrtn.ai/*
@@ -291,6 +291,32 @@
             console.warn('[reroll-mixer] GM_setValue failed:', e);
             return false;
         }
+    }
+
+    // 복구용 백업은 크랙 사이트 저장소(localStorage)가 아니라 스크립트 저장소(GM)에 둡니다.
+    // 사이트 저장소는 크랙과 다른 확프가 함께 쓰는 약 10MB라, 꽉 차면 백업 저장이 막혀
+    // 클린 리롤과 덮어쓰기가 멈췄습니다. 예전 사이트 저장소 사본은 옮긴 뒤 지웁니다.
+    const BACKUP_LIMIT = 30;
+
+    function loadBackupList(key) {
+        const stored = gmGet(key, []);
+        const list = Array.isArray(stored) ? stored : [];
+        let legacy = null;
+        try { legacy = JSON.parse(localStorage.getItem(key) || 'null'); } catch (e) {}
+        if (!Array.isArray(legacy)) return list;
+        const merged = [...list, ...legacy].slice(0, BACKUP_LIMIT);
+        if (gmSet(key, merged) && Array.isArray(gmGet(key, null))) {
+            try { localStorage.removeItem(key); } catch (e) {}
+        }
+        return merged;
+    }
+
+    // 저장한 뒤 다시 읽어 맨 앞 항목이 이번 백업인지 확인합니다.
+    function saveBackupEntry(key, entry, isSame) {
+        const list = loadBackupList(key);
+        if (!gmSet(key, [entry, ...list].slice(0, BACKUP_LIMIT))) return false;
+        const saved = gmGet(key, null);
+        return Array.isArray(saved) && !!saved[0] && isSame(saved[0]);
     }
 
     function normalizeAiSettings(raw = {}) {
@@ -1158,21 +1184,10 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
     }
 
     function saveOverwriteBackup({ chatId, messageId, beforeText, afterText, label }) {
-        try {
-            const key = `${SCRIPT_NS}:overwrite-backups`;
-            const list = JSON.parse(localStorage.getItem(key) || '[]');
-            list.unshift({
-                savedAt: new Date().toISOString(),
-                chatId,
-                messageId,
-                label,
-                beforeText,
-                afterText
-            });
-            localStorage.setItem(key, JSON.stringify(list.slice(0, 30)));
-        } catch (e) {
-            throw new Error('답변 덮어쓰기 백업을 저장하지 못했습니다. 서버 변경을 중단했습니다.');
-        }
+        const entry = { savedAt: new Date().toISOString(), chatId, messageId, label, beforeText, afterText };
+        const saved = saveBackupEntry(`${SCRIPT_NS}:overwrite-backups`, entry,
+            first => first.savedAt === entry.savedAt && first.messageId === messageId);
+        if (!saved) throw new Error('답변 덮어쓰기 백업을 저장하지 못했습니다. 서버 변경을 중단했습니다.');
     }
 
     function getMessageGroups() {
@@ -2840,11 +2855,18 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
                     normalizeForVerify(getRawMessageContent(updated)) === normalizeForVerify(serverText) &&
                     normalizeForVerify(getMessageContent(updated)) === normalizeForVerify(text);
 
+                // 서버 확인이 끝나면 새로고침 없이 크랙 화면만 맞춥니다. 안 되면 예전처럼 새로고침합니다.
+                if (verified && await refreshMessageInPlace(chatId, targetId, serverText)) {
+                    toast('답변 덮어쓰기 완료.', 'success', 1600);
+                    closeModal();
+                    return;
+                }
+
                 if (!verified) {
                     // 기본 alert는 닫을 때까지 아래 새로고침을 막았다. 창을 닫은 뒤 새로고침한다.
                     await uiNotice('요청은 성공했지만, 다시 확인했을 때 내용이 완전히 일치하지 않았어요. 새로고침 후 확인해 주세요.', '덮어쓰기 확인');
                 } else {
-                    toast('답변 덮어쓰기 완료. 새로고침할게.', 'success', 1300);
+                    toast('답변 덮어쓰기 완료. 화면에 바로 반영하지 못해 새로고침할게.', 'success', 1600);
                 }
 
                 setTimeout(() => location.reload(), 650);
@@ -4586,16 +4608,252 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
         return null;
     }
 
+    // 모바일 일부 브라우저의 확장 관리자는 스크립트를 페이지와 분리된 공간에서 돌립니다.
+    // 그 공간에서는 DOM은 보여도 크랙 React 내부(__reactFiber$)가 보이지 않아 위 탐색이 실패합니다.
+    // 그때만 페이지에 아래 연결부를 넣고, 연결부가 같은 방식으로 찾은 크랙 자체 삭제·전송 함수를
+    // 대신 부릅니다. 두 공간 사이에는 문자열(JSON)만 주고받습니다.
+    const PAGE_BRIDGE_REQUEST = `${SCRIPT_NS}:page-bridge-request`;
+    const PAGE_BRIDGE_RESPONSE = `${SCRIPT_NS}:page-bridge-response`;
+    const pageBridge = { installed: false, seq: 0, waiters: new Map() };
+
+    // 문자열로 바꿔 페이지에 넣는 함수라 바깥 변수를 쓰지 않습니다.
+    function crackRerollPageBridge(requestType, responseType) {
+        if (window.__crackRerollPageBridge) return;
+        window.__crackRerollPageBridge = true;
+        const fiberOf = node => {
+            for (let el = node, depth = 0; el && depth < 12; depth += 1, el = el.parentElement) {
+                const key = Object.getOwnPropertyNames(el).find(name =>
+                    name.startsWith('__reactFiber$') || name.startsWith('__reactInternalInstance$'));
+                if (key && el[key]) return el[key];
+            }
+            return null;
+        };
+        const valuesOf = fiber => {
+            const values = [];
+            for (const candidate of [fiber, fiber && fiber.alternate]) {
+                if (!candidate) continue;
+                for (const props of [candidate.memoizedProps, candidate.pendingProps]) {
+                    const value = props && props.value;
+                    if (value && typeof value === 'object' && !values.includes(value)) values.push(value);
+                }
+            }
+            return values;
+        };
+        const isActions = value => typeof value.sendMessage === 'function' && typeof value.removeMessage === 'function' &&
+            typeof value.stopMessage === 'function' && typeof value.autoPlay === 'function';
+        const isStatus = (value, chatId) => String(value.chatId || '') === String(chatId) &&
+            typeof value.status === 'string' && Object.prototype.hasOwnProperty.call(value, 'selectedMessageId');
+        const isStore = value => typeof value.getState === 'function' && typeof value.subscribe === 'function' &&
+            !!value.getState() && typeof value.getState().messages?.get === 'function';
+        const anchorsOf = () => {
+            const recent = Array.from(document.querySelectorAll('div[data-message-group-id]')).slice(0, 3);
+            return [...recent, ...recent.flatMap(group => Array.from(group.querySelectorAll('button'))),
+                document.querySelector('.__chat_input_textarea[contenteditable="true"], .tiptap.ProseMirror[contenteditable="true"]')];
+        };
+        const storeOf = () => {
+            for (const anchor of anchorsOf()) {
+                if (!anchor || !anchor.isConnected) continue;
+                for (let fiber = fiberOf(anchor), depth = 0; fiber && depth < 10000; depth += 1, fiber = fiber.return) {
+                    for (const value of valuesOf(fiber)) {
+                        try { if (isStore(value)) return value; } catch (e) {}
+                    }
+                }
+            }
+            return null;
+        };
+        const locate = chatId => {
+            const anchors = anchorsOf();
+            for (const anchor of anchors) {
+                if (!anchor || !anchor.isConnected) continue;
+                let actions = null;
+                let status = null;
+                for (let fiber = fiberOf(anchor), depth = 0; fiber && depth < 10000; depth += 1, fiber = fiber.return) {
+                    for (const value of valuesOf(fiber)) {
+                        try {
+                            if (!actions && isActions(value)) actions = value;
+                            if (!status && isStatus(value, chatId)) status = value;
+                        } catch (e) {}
+                    }
+                    if (actions && status) return { actions, status };
+                }
+            }
+            return null;
+        };
+        const reply = (id, payload) => document.dispatchEvent(new CustomEvent(responseType, {
+            detail: JSON.stringify(Object.assign({ id }, payload))
+        }));
+        document.addEventListener(requestType, event => {
+            let request = null;
+            try { request = JSON.parse(event.detail); } catch (e) {}
+            if (!request || !request.id) return;
+            if (request.op === 'read') {
+                let store = null;
+                try { store = storeOf(); } catch (e) {}
+                const message = store && store.getState().messages.get(request.messageId);
+                reply(request.id, { ok: !!store, content: message && typeof message.content === 'string' ? message.content : null });
+                return;
+            }
+            const native = locate(request.chatId);
+            if (!native) {
+                reply(request.id, { ok: false, error: 'not-found' });
+            } else if (request.op === 'resync') {
+                if (typeof native.actions.resyncMessage !== 'function') {
+                    reply(request.id, { ok: false, error: 'no-resync' });
+                    return;
+                }
+                Promise.resolve().then(() => native.actions.resyncMessage(request.messageId)).then(
+                    () => reply(request.id, { ok: true }),
+                    error => reply(request.id, { ok: false, error: String((error && error.message) || error) }));
+            } else if (request.op === 'status') {
+                reply(request.id, { ok: true, state: {
+                    status: native.status.status,
+                    chatId: String(native.status.chatId || ''),
+                    selectedMessageId: native.status.selectedMessageId || null
+                } });
+            } else if (request.op === 'remove') {
+                Promise.resolve().then(() => native.actions.removeMessage(request.messageId)).then(
+                    () => reply(request.id, { ok: true }),
+                    error => reply(request.id, { ok: false, error: String((error && error.message) || error) }));
+            } else if (request.op === 'send') {
+                try {
+                    native.actions.sendMessage(request.text, {
+                        actionType: 'click',
+                        onFail: detail => reply(request.id, { ok: false, phase: 'fail', code: String((detail && detail.code) || '') })
+                    });
+                    reply(request.id, { ok: true, phase: 'started' });
+                } catch (error) {
+                    reply(request.id, { ok: false, error: String((error && error.message) || error) });
+                }
+            }
+        });
+    }
+
+    function onPageBridgeResponse(event) {
+        let response = null;
+        try { response = JSON.parse(event.detail); } catch (e) {}
+        const waiter = response && pageBridge.waiters.get(response.id);
+        if (!waiter) return;
+        if (waiter.settled) {
+            // 전송을 시작한 뒤 크랙이 거절하면 원래 onFail로 넘깁니다.
+            if (response.phase === 'fail') {
+                pageBridge.waiters.delete(response.id);
+                clearTimeout(waiter.timer);
+                waiter.onFail?.({ code: response.code });
+            }
+            return;
+        }
+        waiter.settled = true;
+        clearTimeout(waiter.timer);
+        if (response.phase === 'started' && waiter.onFail) {
+            waiter.timer = setTimeout(() => pageBridge.waiters.delete(response.id), 120000);
+        } else {
+            pageBridge.waiters.delete(response.id);
+        }
+        waiter.resolve(response);
+    }
+
+    function callPageBridge(request, timeoutMs, onFail = null) {
+        if (!pageBridge.installed) {
+            pageBridge.installed = true;
+            document.addEventListener(PAGE_BRIDGE_RESPONSE, onPageBridgeResponse);
+            const script = document.createElement('script');
+            script.textContent = `(${crackRerollPageBridge})(${JSON.stringify(PAGE_BRIDGE_REQUEST)}, ${JSON.stringify(PAGE_BRIDGE_RESPONSE)});`;
+            (document.head || document.documentElement).appendChild(script);
+            script.remove();
+        }
+        return new Promise(resolve => {
+            pageBridge.seq += 1;
+            const id = `${Date.now().toString(36)}-${pageBridge.seq}`;
+            const waiter = { resolve, onFail, settled: false };
+            waiter.timer = setTimeout(() => {
+                pageBridge.waiters.delete(id);
+                resolve({ ok: false, error: 'timeout' });
+            }, timeoutMs);
+            pageBridge.waiters.set(id, waiter);
+            document.dispatchEvent(new CustomEvent(PAGE_BRIDGE_REQUEST, { detail: JSON.stringify({ ...request, id }) }));
+        });
+    }
+
+    // 지금 공간에서 크랙 함수가 보이면 그대로 쓰고, 안 보이면 페이지 연결부로 같은 일을 합니다.
+    async function findNativeChat(button, chatId) {
+        const direct = findNativeChatController(button, chatId);
+        if (direct) return direct;
+        const found = await callPageBridge({ op: 'status', chatId }, 3000);
+        if (!found.ok || !found.state) return null;
+        return {
+            status: found.state,
+            actions: {
+                async removeMessage(messageId) {
+                    const result = await callPageBridge({ op: 'remove', chatId, messageId }, 20000);
+                    if (!result.ok) throw new Error(`크랙 내부 삭제 함수를 부르지 못했어요 (${result.error}).`);
+                },
+                async sendMessage(text, options = {}) {
+                    const result = await callPageBridge({ op: 'send', chatId, text }, 5000, options.onFail);
+                    if (result.phase === 'fail') options.onFail?.({ code: result.code });
+                    else if (!result.ok) throw new Error(`크랙 내부 전송 함수를 부르지 못했어요 (${result.error}).`);
+                },
+                async resyncMessage(messageId) {
+                    const result = await callPageBridge({ op: 'resync', chatId, messageId }, 15000);
+                    if (!result.ok) throw new Error(`크랙 메시지 다시 받기에 실패했어요 (${result.error}).`);
+                }
+            }
+        };
+    }
+
+    function isMessageStore(value) {
+        try {
+            if (typeof value?.getState !== 'function' || typeof value.subscribe !== 'function') return false;
+            return typeof value.getState()?.messages?.get === 'function';
+        } catch (e) {
+            return false;
+        }
+    }
+
+    // 크랙 화면은 메시지 저장소(zustand)에서 그려집니다. 저장소에 든 메시지 글을 읽고,
+    // 이 공간에서 저장소가 안 보이면 페이지 연결부로 읽습니다.
+    async function readNativeMessage(chatId, messageId) {
+        for (const anchor of [...getMessageGroups().slice(0, 3), findComposer()]) {
+            if (!(anchor instanceof Element) || !anchor.isConnected) continue;
+            for (let fiber = getReactFiber(anchor), depth = 0; fiber && depth < 10000; depth += 1, fiber = fiber.return) {
+                for (const value of providerValues(fiber)) {
+                    if (!isMessageStore(value)) continue;
+                    const message = value.getState().messages.get(messageId);
+                    return typeof message?.content === 'string' ? message.content : null;
+                }
+            }
+        }
+        const result = await callPageBridge({ op: 'read', chatId, messageId }, 3000);
+        return result.ok && typeof result.content === 'string' ? result.content : null;
+    }
+
+    // 덮어쓴 답변을 새로고침 없이 화면에 반영합니다(핀셋과 같은 방식). 크랙의 resyncMessage가
+    // 서버에서 그 메시지를 다시 받아 저장소를 고치면 화면이 따라 바뀝니다. 저장소 글이 서버 글과
+    // 같아진 것까지 확인되지 않으면 false를 돌려주고, 그때만 예전처럼 새로고침합니다.
+    async function refreshMessageInPlace(chatId, messageId, expectedRaw) {
+        try {
+            const native = await findNativeChat(null, chatId);
+            if (typeof native?.actions?.resyncMessage !== 'function') return false;
+            await native.actions.resyncMessage(messageId);
+            const stored = await readNativeMessage(chatId, messageId);
+            return stored !== null && normalizeForVerify(stored) === normalizeForVerify(expectedRaw);
+        } catch (error) {
+            log('in-place refresh failed', error);
+            return false;
+        }
+    }
+
     function startNativeSend(actions, message) {
         // Only rejects; success is confirmed from the server-side USER message.
         return new Promise((_, reject) => {
+            const fail = error => reject(error instanceof Error ? error : new Error(String(error)));
             try {
-                actions.sendMessage(message, {
+                // 페이지 연결부를 거치면 전송 함수가 Promise를 돌려줍니다.
+                Promise.resolve(actions.sendMessage(message, {
                     actionType: 'click',
                     onFail: detail => reject(new Error(`크랙 내부 전송이 거부되었습니다${detail?.code ? ` (${detail.code})` : ''}.`))
-                });
+                })).catch(fail);
             } catch (error) {
-                reject(error instanceof Error ? error : new Error(String(error)));
+                fail(error);
             }
         });
     }
@@ -4623,18 +4881,13 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
 
     function saveCleanBackup(chatId, target) {
         // 저장을 다시 읽어 확인하지 못하면 아무것도 지우지 않습니다.
-        const stored = localStorage.getItem(CLEAN_BACKUP_KEY);
-        const list = stored ? JSON.parse(stored) : [];
-        if (!Array.isArray(list)) throw new Error('클린 리롤 백업 형식을 확인할 수 없어요.');
         const backup = {
             savedAt: new Date().toISOString(), chatId,
             aiId: target.aiId, userId: target.userId, aiText: target.aiRaw, userText: target.userText
         };
-        localStorage.setItem(CLEAN_BACKUP_KEY, JSON.stringify([backup, ...list].slice(0, 30)));
-        const saved = JSON.parse(localStorage.getItem(CLEAN_BACKUP_KEY) || 'null');
-        if (!Array.isArray(saved) || saved[0]?.aiId !== target.aiId || saved[0]?.userId !== target.userId) {
-            throw new Error('클린 리롤 원문 백업을 확인하지 못해 지우지 않았어요.');
-        }
+        const saved = saveBackupEntry(CLEAN_BACKUP_KEY, backup,
+            first => first.aiId === target.aiId && first.userId === target.userId);
+        if (!saved) throw new Error('클린 리롤 원문 백업을 확인하지 못해 지우지 않았어요.');
     }
 
     async function waitUntilCleanDeleted(chatId, deletedId, expectedLatestId, knownIds, timeoutMs = 5000) {
@@ -4727,7 +4980,7 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
 
         try {
             if (!chatId) throw new Error('현재 채팅방을 확인하지 못했어요.');
-            let native = findNativeChatController(button, chatId);
+            let native = await findNativeChat(button, chatId);
             if (!native) throw new Error('크랙 내부 전송 함수를 찾지 못했어요. 페이지를 새로고침한 뒤 다시 눌러 주세요.');
             if (native.status.status !== 'IDLE') throw new Error('답변 생성이 끝난 뒤 다시 눌러 주세요.');
 
@@ -4758,14 +5011,14 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
             if (messageIdOf(beforeAiDelete) !== aiId || extractChatIdFromUrl() !== chatId) {
                 throw new Error('최근 AI 답변이 바뀌어 지우지 않았어요.');
             }
-            native = findNativeChatController(button, chatId);
+            native = await findNativeChat(button, chatId);
             if (!native || native.status.status !== 'IDLE') throw new Error('답변 생성 상태가 바뀌어 지우지 않았어요.');
 
             deletionAttempted = true;
             await Promise.resolve(native.actions.removeMessage(aiId));
             await waitUntilCleanDeleted(chatId, aiId, userId, knownIds);
 
-            native = findNativeChatController(null, chatId);
+            native = await findNativeChat(null, chatId);
             if (!native) throw new Error('크랙 내부 전송 함수가 사라져 USER 메시지는 그대로 두었어요.');
             if (native.status.status !== 'IDLE') throw new Error('답변 생성이 시작되어 USER 메시지는 그대로 두었어요.');
             const beforeUserDelete = (await fetchAllMessages(chatId, 1))[0];
@@ -4776,7 +5029,7 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
             await Promise.resolve(native.actions.removeMessage(userId));
             await waitUntilCleanDeleted(chatId, userId, previousId, knownIds);
 
-            native = findNativeChatController(null, chatId);
+            native = await findNativeChat(null, chatId);
             if (!native || extractChatIdFromUrl() !== chatId || String(native.status.chatId || '') !== String(chatId)) {
                 throw new Error('삭제 중 채팅방이 바뀌어 자동 전송을 멈췄어요.');
             }
