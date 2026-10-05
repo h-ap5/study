@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Crack Reroll Suite (리롤 · 클린 리롤 · 믹서) 🧩✨
 // @namespace    http://tampermonkey.net/
-// @version      2.4.7
+// @version      2.4.10
 // @description  꾹 눌러 리롤, 클린 리롤, 카드형 리롤 믹서와 AI 자연 혼합 도구를 제공합니다. RP Manager(0.x·2.x·Core) 호환.
 // @author       Assistant
 // @match        https://crack.wrtn.ai/*
@@ -130,6 +130,7 @@
             item.style.transform = 'translateY(8px)';
             setTimeout(() => item.remove(), 240);
         }, ms);
+        return item;
     }
 
     // 크롬 기본 alert/confirm 대신 쓰는 화면 가운데 창. 기본 창은 페이지 전체를 멈추고
@@ -4705,6 +4706,21 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
                 reply(request.id, { ok: !!store, content: message && typeof message.content === 'string' ? message.content : null });
                 return;
             }
+            if (request.op === 'compose') {
+                // 크랙 입력창(tiptap)이 비어 있을 때만 줄마다 문단으로 넣습니다.
+                const el = document.querySelector('.__chat_input_textarea[contenteditable="true"], .tiptap.ProseMirror[contenteditable="true"]');
+                const editor = el && el.editor;
+                let filled = false;
+                try {
+                    if (editor && editor.isEmpty && typeof editor.commands.setContent === 'function') {
+                        const content = String(request.text || '').split('\n').map(line => ({ type: 'paragraph', content: line ? [{ type: 'text', text: line }] : [] }));
+                        editor.commands.setContent({ type: 'doc', content }, true);
+                        filled = true;
+                    }
+                } catch (e) {}
+                reply(request.id, { ok: true, filled });
+                return;
+            }
             if (request.op === 'expire') {
                 // 타이머 함수는 서버 확인이 이미 왔으면 아무것도 하지 않는 크랙 자체 코드입니다.
                 const entry = ackTimers.get(request.key);
@@ -4959,13 +4975,35 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
         if (result.added) log('re-added the resent USER message to the crack store');
     }
 
+    // 클린 리롤이 기다리는 동안 계속 떠 있는 진행 알림 한 줄입니다. 내용만 바꾸고 끝나면 지웁니다.
+    const cleanStatus = { item: null };
+    function setCleanStatus(message) {
+        if (cleanStatus.item?.isConnected) cleanStatus.item.textContent = message;
+        else cleanStatus.item = toast(message, 'info', 600000);
+    }
+
+    function clearCleanStatus() {
+        const item = cleanStatus.item;
+        cleanStatus.item = null;
+        if (!item?.isConnected) return;
+        item.style.opacity = '0';
+        item.style.transform = 'translateY(8px)';
+        setTimeout(() => item.remove(), 240);
+    }
+
+    // 다시 보내지 못했으면 원문을 비어 있는 입력창에 넣어 둡니다(크랙 입력창 편집기로 넣어 보내기 버튼도 켜짐).
+    async function fillComposerWith(text) {
+        const result = await callPageBridge({ op: 'compose', text }, 3000);
+        return !!result.filled;
+    }
+
     // Wish RP Manager 2.x와 Core는 자동 기억 정리·주입 준비 같은 방 작업을 이 잠금으로 묶고, 전송 직전
     // 준비도 이 잠금을 기다립니다. 잠금이 풀린 뒤에 지우고 보내야 준비가 짧고, Wish·Core가 잠금 대기
     // 30초를 넘겨 전송을 포기하지 않습니다. Wish·Core가 없거나 잠금 API가 없으면 바로 지나갑니다.
     async function waitForWishRoomIdle(chatId, timeoutMs, onWait = null) {
         const name = `${WISH_ROOM_LOCK_PREFIX}${chatId}`;
-        const deadline = Date.now() + timeoutMs;
-        let waiting = false;
+        const started = Date.now();
+        const deadline = started + timeoutMs;
         for (;;) {
             let busy = false;
             try {
@@ -4976,10 +5014,8 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
             }
             if (!busy) return true;
             if (Date.now() >= deadline) return false;
-            if (!waiting) {
-                waiting = true;
-                onWait?.();
-            }
+            // 기다리는 동안 경과 초를 넘겨 진행 알림을 계속 고칩니다.
+            onWait?.(Math.round((Date.now() - started) / 1000));
             await waitMs(400);
         }
     }
@@ -5055,15 +5091,25 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
     // Wish·로어가 전송 전 맥락을 준비하는 동안 실제 전송이 늦을 수 있어 넉넉히 기다립니다.
     async function waitForNewUserMessage(chatId, knownIds, text, watchComposer = true, timeoutMs = 100000) {
         const deadline = Date.now() + timeoutMs;
+        // 서버 확인은 처음 0.7초 간격에서 Wish·Core 준비가 길어질수록 최대 2.5초 간격으로 늘립니다.
+        // 입력창 되돌림(취소) 확인은 요청이 아니라서 계속 0.7초마다 합니다.
+        let nextFetchAt = 0;
+        let fetchGap = 700;
         do {
             if (extractChatIdFromUrl() !== chatId) throw new Error('채팅방이 바뀌어 새 USER 메시지 확인을 멈췄어요.');
-            const messages = await fetchAllMessages(chatId, 12);
-            const fresh = messages.filter(msg => isUserMessage(msg) && messageIdOf(msg) && !knownIds.has(messageIdOf(msg)));
-            // 로어 인젝터가 앞뒤에 참고 블록을 붙여도 보낸 문장이 들어 있으면 같은 전송입니다.
-            const sent = fresh.find(msg => normalizeCleanText(getRawMessageContent(msg)).includes(text));
-            if (sent) return sent;
-            if (fresh.some(msg => getRawMessageContent(msg).trim())) {
-                throw new Error('다른 USER 메시지가 먼저 저장되어 완료로 보지 않았어요. 대화방을 확인해 주세요.');
+            if (Date.now() >= nextFetchAt) {
+                const messages = await fetchAllMessages(chatId, 12);
+                nextFetchAt = Date.now() + fetchGap;
+                fetchGap = Math.min(2500, Math.round(fetchGap * 1.3));
+                const fresh = messages.filter(msg => isUserMessage(msg) && messageIdOf(msg) && !knownIds.has(messageIdOf(msg)));
+                // 로어 인젝터가 앞뒤에 참고 블록을 붙여도 보낸 문장이 들어 있으면 같은 전송입니다.
+                const sent = fresh.find(msg => normalizeCleanText(getRawMessageContent(msg)).includes(text));
+                if (sent) return sent;
+                if (fresh.some(msg => getRawMessageContent(msg).trim())) {
+                    const error = new Error('다른 USER 메시지가 먼저 저장되어 완료로 보지 않았어요. 대화방을 확인해 주세요.');
+                    error.otherUserSaved = true;
+                    throw error;
+                }
             }
             // Wish는 전송 준비에 실패하면 원문을 입력창에 되돌립니다.
             if (watchComposer && composerHolds(text)) throw new Error('전송이 취소되어 원문이 입력창으로 돌아왔어요.');
@@ -5101,8 +5147,10 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
         let userId = '';
         let sendText = '';
         let deletionAttempted = false;
+        let userDeleted = false;
         let answerEmitted = false;
         let sentConfirmed = false;
+        let sendTicker = null;
 
         try {
             if (!chatId) throw new Error('현재 채팅방을 확인하지 못했어요.');
@@ -5131,11 +5179,11 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
 
             // Wish·Core가 이 방을 정리하는 중이면 끝난 뒤에 지웁니다. 끝내 안 끝나면 아무것도 지우지 않습니다.
             const roomIdle = await waitForWishRoomIdle(chatId, 60000,
-                () => toast('Wish가 이 방을 정리하는 중이에요. 끝나면 클린 리롤을 시작해요.', 'info', 5000));
-            if (!roomIdle) throw new Error('Wish가 이 방 작업을 아직 하고 있어 지우지 않았어요. 잠시 뒤 다시 눌러 주세요.');
+                seconds => setCleanStatus(`Wish가 이 방을 정리하는 중이라 기다려요 · ${seconds}초 (아직 아무것도 안 지웠어요)`));
+            if (!roomIdle) throw new Error('Wish가 1분 넘게 이 방을 정리하고 있어 지우지 않았어요. 잠시 뒤 다시 눌러 주세요.');
 
             saveCleanBackup(chatId, { aiId, userId, aiRaw, userText: userRaw });
-            toast('클린 리롤 중… AI 답변과 USER 메시지를 지우고 새로 보내요.', 'info', 5000);
+            setCleanStatus('클린 리롤 중 · AI 답변과 USER 메시지를 지우고 새로 보내요.');
 
             // 첫 삭제 직전에 최신 답변과 생성 상태를 다시 확인합니다.
             const beforeAiDelete = (await fetchAllMessages(chatId, 1))[0];
@@ -5159,10 +5207,12 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
 
             await Promise.resolve(native.actions.removeMessage(userId));
             await waitUntilCleanDeleted(chatId, userId, previousId, knownIds);
+            userDeleted = true;
 
-            // 지운 턴에 맞춰 Wish·Core가 방을 다시 정리하는 중이면 끝난 다음 보냅니다. 길어져도 전송은 이어 갑니다.
-            await waitForWishRoomIdle(chatId, 30000,
-                () => toast('Wish가 지운 턴을 정리하는 중이에요. 끝나면 이어서 보내요.', 'info', 5000));
+            // 지운 턴에 맞춰 Wish·Core가 방을 다시 정리하는 중이면 끝난 다음 보냅니다. Wish의 전송 준비도
+            // 같은 잠금을 기다리므로, 그동안 보내면 Wish 준비 한도(90초)만 깎입니다. 90초가 지나면 그냥 보냅니다.
+            await waitForWishRoomIdle(chatId, 90000,
+                seconds => setCleanStatus(`Wish가 지운 턴을 정리하는 중이라 끝나면 보내요 · ${seconds}초 (원문은 백업돼 있어요)`));
 
             native = await findNativeChat(null, chatId);
             if (!native || extractChatIdFromUrl() !== chatId || String(native.status.chatId || '') !== String(chatId)) {
@@ -5182,6 +5232,10 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
             // 같은 문장이 이미 입력창에 있었다면 되돌림 감지는 쓰지 않습니다.
             const watchComposer = !composerHolds(sendText);
             const sendTicket = {};
+            const sendStarted = Date.now();
+            const showSending = () => setCleanStatus(`새 메시지로 보냈어요 · 서버에 저장되길 기다려요 · ${Math.round((Date.now() - sendStarted) / 1000)}초`);
+            showSending();
+            sendTicker = setInterval(showSending, 1000);
             let sent;
             try {
                 sent = await Promise.race([
@@ -5195,16 +5249,24 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
             sentConfirmed = true;
             void ensureSentUserShown(chatId, sent);
             emitCleanEvent(CLEAN_RESENT_EVENT, { chatId, userId: messageIdOf(sent), turnId: String(sent.turnId || '') });
+            clearInterval(sendTicker);
+            clearCleanStatus();
             toast('클린 리롤 완료 · 새 메시지로 보냈어요.', 'success', 2600);
         } catch (error) {
+            clearInterval(sendTicker);
+            clearCleanStatus();
             if (answerEmitted && !sentConfirmed) emitCleanEvent(CLEAN_CANCEL_EVENT, { chatId, userId });
             console.warn('[reroll-mixer] clean reroll failed', error);
             const reason = error?.message || '알 수 없는 문제가 생겼어요.';
             if (deletionAttempted && sendText) {
                 const copied = copyCleanRecovery(sendText);
-                toast(`클린 리롤 실패 · ${copied ? 'USER 원문을 클립보드에 복사했어요' : 'USER 원문은 클린 리롤 백업에 있어요'}.\n${reason}`, 'error', 7000);
+                // USER까지 지운 뒤 못 보냈으면 원문을 비어 있는 입력창에 넣어 바로 보낼 수 있게 합니다.
+                const filled = userDeleted && !error?.otherUserSaved && await fillComposerWith(sendText);
+                const where = filled ? 'USER 원문을 입력창에 넣어 뒀어요(보내기만 누르면 돼요)'
+                    : copied ? 'USER 원문을 클립보드에 복사했어요' : 'USER 원문은 클린 리롤 백업에 있어요';
+                toast(`클린 리롤 실패 · ${where}.\n${reason}`, 'error', 12000);
             } else {
-                toast(`클린 리롤 실패\n${reason}`, 'error', 5000);
+                toast(`클린 리롤 실패\n${reason}`, 'error', 7000);
             }
         } finally {
             cleanRun.busy = false;
