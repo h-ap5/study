@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Crack Reroll Suite (리롤 · 클린 리롤 · 믹서) 🧩✨
 // @namespace    http://tampermonkey.net/
-// @version      2.4.6
-// @description  꾹 눌러 리롤, 클린 리롤, 카드형 리롤 믹서와 AI 자연 혼합 도구를 제공합니다. RP Manager 본문 호환.
+// @version      2.4.7
+// @description  꾹 눌러 리롤, 클린 리롤, 카드형 리롤 믹서와 AI 자연 혼합 도구를 제공합니다. RP Manager(0.x·2.x·Core) 호환.
 // @author       Assistant
 // @match        https://crack.wrtn.ai/*
 // @grant        GM_addStyle
@@ -4531,10 +4531,20 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
     //   로어 제외를 쓰지 않아 Wish·로어가 전송 전 맥락을 새로 준비합니다.
     // - 답변 비교 n/m처럼 AI 답변이 여러 개인 턴은 아무것도 지우지 않음
     // - 지운 답변은 위의 clean 이벤트로 믹서에 '지운 답변'으로 넘김
+    // - Wish RP Manager 2.x·Core: 방 작업 잠금이 풀린 뒤 지우고 보내며, 전송 준비가 끝날 때까지
+    //   크랙이 USER 말풍선을 지우지 않게 크랙의 30초 확인 대기를 늘립니다(아래 상수 설명).
     // ============================================================
 
     const CLEAN_BUTTON_CLASS = `${SCRIPT_NS}-clean-btn`;
     const CLEAN_BACKUP_KEY = `${SCRIPT_NS}:clean-backups:v1`;
+    // 크랙은 보낸 뒤 30초 안에 서버 확인이 없으면 화면의 USER 말풍선을 지우고 서버의 'USER 저장됨'
+    // 신호도 더 듣지 않습니다. Wish·Core는 전송 전 맥락 준비가 끝날 때까지 실제 전송을 붙잡아 두므로,
+    // 준비가 30초를 넘으면 USER는 서버에만 저장되고 화면에는 AI 답변만 이어 붙습니다.
+    // 클린 리롤 전송 동안만 그 대기를 Wish·Core의 준비 한도(90초)보다 길게 늘립니다.
+    const CRACK_SEND_ACK_MS = 30000;
+    const CLEAN_SEND_ACK_MS = 120000;
+    // Wish RP Manager 2.x와 Core는 방 작업을 이 이름의 브라우저 잠금(뒤에 채팅 ID)으로 묶습니다.
+    const WISH_ROOM_LOCK_PREFIX = 'wish-rp-room:';
     const CLEAN_MULTI_MESSAGE = '답변이 여러 개인 턴은 클린 리롤하지 않아요. 믹서에서 정리한 뒤 다시 눌러 주세요.';
     const CLEAN_ICON_HTML = `
         <svg class="${SCRIPT_NS}-clean-svg" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -4682,6 +4692,8 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
         const reply = (id, payload) => document.dispatchEvent(new CustomEvent(responseType, {
             detail: JSON.stringify(Object.assign({ id }, payload))
         }));
+        // 늘려 둔 크랙 전송 확인 타이머(전송 key별). 취소 때 크랙의 원래 처리로 바로 끝냅니다.
+        const ackTimers = new Map();
         document.addEventListener(requestType, event => {
             let request = null;
             try { request = JSON.parse(event.detail); } catch (e) {}
@@ -4691,6 +4703,49 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
                 try { store = storeOf(); } catch (e) {}
                 const message = store && store.getState().messages.get(request.messageId);
                 reply(request.id, { ok: !!store, content: message && typeof message.content === 'string' ? message.content : null });
+                return;
+            }
+            if (request.op === 'expire') {
+                // 타이머 함수는 서버 확인이 이미 왔으면 아무것도 하지 않는 크랙 자체 코드입니다.
+                const entry = ackTimers.get(request.key);
+                ackTimers.delete(request.key);
+                for (const timer of entry ? entry.timers : []) {
+                    clearTimeout(timer.id);
+                    try { timer.fn(); } catch (e) {}
+                }
+                reply(request.id, { ok: true, expired: entry ? entry.timers.length : 0 });
+                return;
+            }
+            if (request.op === 'ensure-user') {
+                // 크랙이 서버 확인을 놓쳐 지운 USER 말풍선을, 서버에 저장된 그 메시지로 저장소에 다시 넣습니다.
+                let store = null;
+                try { store = storeOf(); } catch (e) {}
+                const message = request.message;
+                if (!store || !message || !message._id) {
+                    reply(request.id, { ok: false, error: 'no-store' });
+                    return;
+                }
+                const state = store.getState();
+                // 크랙이 아직 임시 말풍선으로 기다리는 중이거나 이미 넣었으면 그대로 둡니다.
+                if (state.messages.has('temp') || state.messages.has(message._id)) {
+                    reply(request.id, { ok: true, added: false });
+                    return;
+                }
+                let answer = null;
+                for (const item of state.messages.values()) {
+                    if (item && item.role === 'assistant' && message.turnId && item.parentTurnId === message.turnId) {
+                        answer = item;
+                        break;
+                    }
+                }
+                // 저장소 묶음은 최신이 앞입니다. 새 답변이 이미 있으면 그 바로 뒤(더 오래된 쪽)에 둡니다.
+                if (answer && typeof state.insertMessagesAfter === 'function') state.insertMessagesAfter([message], answer._id);
+                else if (typeof state.addMessage === 'function') state.addMessage(message);
+                else {
+                    reply(request.id, { ok: false, error: 'no-action' });
+                    return;
+                }
+                reply(request.id, { ok: true, added: true });
                 return;
             }
             const native = locate(request.chatId);
@@ -4715,15 +4770,33 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
                     () => reply(request.id, { ok: true }),
                     error => reply(request.id, { ok: false, error: String((error && error.message) || error) }));
             } else if (request.op === 'send') {
+                // 크랙 sendMessage는 전송 확인 타이머(request.crackAckMs)를 그 자리에서 바로 겁니다. 이 호출
+                // 동안만 그 길이의 타이머를 request.ackMs로 늘리고, 호출이 끝나면 setTimeout을 되돌립니다.
+                const realSetTimeout = window.setTimeout;
+                const timers = [];
+                if (request.ackMs > request.crackAckMs) {
+                    window.setTimeout = function (fn, ms, ...rest) {
+                        if (Number(ms) !== request.crackAckMs || typeof fn !== 'function') return realSetTimeout.call(window, fn, ms, ...rest);
+                        const timer = { fn, id: 0 };
+                        timer.id = realSetTimeout.call(window, (...args) => { ackTimers.delete(request.key); fn(...args); }, request.ackMs, ...rest);
+                        timers.push(timer);
+                        return timer.id;
+                    };
+                }
                 try {
                     native.actions.sendMessage(request.text, {
                         actionType: 'click',
                         onFail: detail => reply(request.id, { ok: false, phase: 'fail', code: String((detail && detail.code) || '') })
                     });
-                    reply(request.id, { ok: true, phase: 'started' });
                 } catch (error) {
                     reply(request.id, { ok: false, error: String((error && error.message) || error) });
+                    return;
+                } finally {
+                    window.setTimeout = realSetTimeout;
                 }
+                for (const [key, entry] of ackTimers) if (Date.now() - entry.at > 600000) ackTimers.delete(key);
+                if (timers.length && request.key) ackTimers.set(request.key, { at: Date.now(), timers });
+                reply(request.id, { ok: true, phase: 'started', extended: timers.length });
             }
         });
     }
@@ -4775,9 +4848,10 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
     }
 
     // 지금 공간에서 크랙 함수가 보이면 그대로 쓰고, 안 보이면 페이지 연결부로 같은 일을 합니다.
+    // 클린 리롤 재전송은 startCleanSend가 페이지 연결부로 하고, 연결부가 안 될 때만 여기 직접 함수를 씁니다.
     async function findNativeChat(button, chatId) {
         const direct = findNativeChatController(button, chatId);
-        if (direct) return direct;
+        if (direct) return { ...direct, direct: true };
         const found = await callPageBridge({ op: 'status', chatId }, 3000);
         if (!found.ok || !found.state) return null;
         return {
@@ -4786,11 +4860,6 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
                 async removeMessage(messageId) {
                     const result = await callPageBridge({ op: 'remove', chatId, messageId }, 20000);
                     if (!result.ok) throw new Error(`크랙 내부 삭제 함수를 부르지 못했어요 (${result.error}).`);
-                },
-                async sendMessage(text, options = {}) {
-                    const result = await callPageBridge({ op: 'send', chatId, text }, 5000, options.onFail);
-                    if (result.phase === 'fail') options.onFail?.({ code: result.code });
-                    else if (!result.ok) throw new Error(`크랙 내부 전송 함수를 부르지 못했어요 (${result.error}).`);
                 },
                 async resyncMessage(messageId) {
                     const result = await callPageBridge({ op: 'resync', chatId, messageId }, 15000);
@@ -4842,20 +4911,77 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
         }
     }
 
-    function startNativeSend(actions, message) {
-        // Only rejects; success is confirmed from the server-side USER message.
+    // 입력창의 보내기와 같은 크랙 sendMessage를 페이지 연결부로 부르고, 그 동안만 크랙의 전송 확인 대기를
+    // 늘립니다. 성공은 서버의 새 USER 메시지로 확인하므로 거부만 돌려줍니다.
+    function startCleanSend(native, chatId, message, ticket) {
         return new Promise((_, reject) => {
             const fail = error => reject(error instanceof Error ? error : new Error(String(error)));
-            try {
-                // 페이지 연결부를 거치면 전송 함수가 Promise를 돌려줍니다.
-                Promise.resolve(actions.sendMessage(message, {
-                    actionType: 'click',
-                    onFail: detail => reject(new Error(`크랙 내부 전송이 거부되었습니다${detail?.code ? ` (${detail.code})` : ''}.`))
-                })).catch(fail);
-            } catch (error) {
-                fail(error);
-            }
+            ticket.key = `${Date.now().toString(36)}-clean`;
+            ticket.startedAt = Date.now();
+            ticket.extended = 0;
+            const onFail = detail => {
+                // 대기를 못 늘린 채(크랙 코드가 바뀐 경우 등) 코드 없이 늦게 온 실패는 크랙이 기다림만
+                // 끝낸 것일 수 있습니다. Wish·Core가 아직 보내는 중일 수 있어 서버의 새 USER 메시지를 계속 확인합니다.
+                if (!detail?.code && !ticket.extended && Date.now() - ticket.startedAt >= 5000) return;
+                reject(new Error(`크랙 내부 전송이 거부되었습니다${detail?.code ? ` (${detail.code})` : ''}.`));
+            };
+            const sendDirect = () => {
+                try {
+                    Promise.resolve(native.actions.sendMessage(message, { actionType: 'click', onFail })).catch(fail);
+                } catch (error) {
+                    fail(error);
+                }
+            };
+            callPageBridge({ op: 'send', chatId, text: message, key: ticket.key, crackAckMs: CRACK_SEND_ACK_MS, ackMs: CLEAN_SEND_ACK_MS }, 5000, onFail).then(result => {
+                if (result.phase === 'fail') onFail({ code: result.code });
+                else if (result.ok) ticket.extended = result.extended || 0;
+                // 연결부가 없을 때만 직접 부릅니다. 이미 보내는 중이면 크랙이 두 번째 호출을 무시합니다.
+                else if (native.direct && ['not-found', 'timeout'].includes(result.error)) sendDirect();
+                else fail(new Error(`크랙 내부 전송 함수를 부르지 못했어요 (${result.error}).`));
+            });
         });
+    }
+
+    // 전송이 취소됐거나 끝내 확인되지 않으면 늘려 둔 대기를 지금 끝내, 크랙이 임시 말풍선과
+    // 전송 상태를 스스로 정리하게 합니다.
+    function expireCleanSend(ticket) {
+        if (!ticket.extended) return;
+        ticket.extended = 0;
+        void callPageBridge({ op: 'expire', key: ticket.key }, 3000);
+    }
+
+    // 크랙이 서버 확인을 놓쳐 새 USER 말풍선을 지웠다면 서버에 저장된 그 메시지를 화면에 다시 넣습니다.
+    // 크랙이 제때 받았으면(대부분) 아무것도 하지 않습니다.
+    async function ensureSentUserShown(chatId, sent) {
+        await waitMs(1200);
+        if (extractChatIdFromUrl() !== chatId) return;
+        const result = await callPageBridge({ op: 'ensure-user', message: sent }, 3000);
+        if (result.added) log('re-added the resent USER message to the crack store');
+    }
+
+    // Wish RP Manager 2.x와 Core는 자동 기억 정리·주입 준비 같은 방 작업을 이 잠금으로 묶고, 전송 직전
+    // 준비도 이 잠금을 기다립니다. 잠금이 풀린 뒤에 지우고 보내야 준비가 짧고, Wish·Core가 잠금 대기
+    // 30초를 넘겨 전송을 포기하지 않습니다. Wish·Core가 없거나 잠금 API가 없으면 바로 지나갑니다.
+    async function waitForWishRoomIdle(chatId, timeoutMs, onWait = null) {
+        const name = `${WISH_ROOM_LOCK_PREFIX}${chatId}`;
+        const deadline = Date.now() + timeoutMs;
+        let waiting = false;
+        for (;;) {
+            let busy = false;
+            try {
+                const snapshot = await navigator.locks.query();
+                busy = [...(snapshot.held || []), ...(snapshot.pending || [])].some(lock => lock.name === name);
+            } catch (e) {
+                return true;
+            }
+            if (!busy) return true;
+            if (Date.now() >= deadline) return false;
+            if (!waiting) {
+                waiting = true;
+                onWait?.();
+            }
+            await waitMs(400);
+        }
     }
 
     function emitCleanEvent(type, detail) {
@@ -5003,6 +5129,11 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
             const knownIds = new Set(messages.map(messageIdOf).filter(Boolean));
             const previousId = messageIdOf(messages.find(msg => ![userId, aiId].includes(messageIdOf(msg)))) || '';
 
+            // Wish·Core가 이 방을 정리하는 중이면 끝난 뒤에 지웁니다. 끝내 안 끝나면 아무것도 지우지 않습니다.
+            const roomIdle = await waitForWishRoomIdle(chatId, 60000,
+                () => toast('Wish가 이 방을 정리하는 중이에요. 끝나면 클린 리롤을 시작해요.', 'info', 5000));
+            if (!roomIdle) throw new Error('Wish가 이 방 작업을 아직 하고 있어 지우지 않았어요. 잠시 뒤 다시 눌러 주세요.');
+
             saveCleanBackup(chatId, { aiId, userId, aiRaw, userText: userRaw });
             toast('클린 리롤 중… AI 답변과 USER 메시지를 지우고 새로 보내요.', 'info', 5000);
 
@@ -5029,6 +5160,10 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
             await Promise.resolve(native.actions.removeMessage(userId));
             await waitUntilCleanDeleted(chatId, userId, previousId, knownIds);
 
+            // 지운 턴에 맞춰 Wish·Core가 방을 다시 정리하는 중이면 끝난 다음 보냅니다. 길어져도 전송은 이어 갑니다.
+            await waitForWishRoomIdle(chatId, 30000,
+                () => toast('Wish가 지운 턴을 정리하는 중이에요. 끝나면 이어서 보내요.', 'info', 5000));
+
             native = await findNativeChat(null, chatId);
             if (!native || extractChatIdFromUrl() !== chatId || String(native.status.chatId || '') !== String(chatId)) {
                 throw new Error('삭제 중 채팅방이 바뀌어 자동 전송을 멈췄어요.');
@@ -5046,11 +5181,19 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
             // Wish·로어는 새 메시지로 보고 전송 전 맥락을 처음부터 다시 준비합니다.
             // 같은 문장이 이미 입력창에 있었다면 되돌림 감지는 쓰지 않습니다.
             const watchComposer = !composerHolds(sendText);
-            const sent = await Promise.race([
-                waitForNewUserMessage(chatId, knownIds, sendText, watchComposer),
-                startNativeSend(native.actions, sendText)
-            ]);
+            const sendTicket = {};
+            let sent;
+            try {
+                sent = await Promise.race([
+                    waitForNewUserMessage(chatId, knownIds, sendText, watchComposer),
+                    startCleanSend(native, chatId, sendText, sendTicket)
+                ]);
+            } catch (error) {
+                expireCleanSend(sendTicket);
+                throw error;
+            }
             sentConfirmed = true;
+            void ensureSentUserShown(chatId, sent);
             emitCleanEvent(CLEAN_RESENT_EVENT, { chatId, userId: messageIdOf(sent), turnId: String(sent.turnId || '') });
             toast('클린 리롤 완료 · 새 메시지로 보냈어요.', 'success', 2600);
         } catch (error) {
