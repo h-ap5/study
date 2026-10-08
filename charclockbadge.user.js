@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Crack Char Clock Badge (크랙 글자수·시간 배지) 🕒
 // @namespace    crack char clock badge
-// @version      1.2.8-integrated.10
+// @version      1.2.8-integrated.11
 // @description  글자수·시간 배지, 선택 글자수, 입력 감싸기, 수정창 도구, 버블 메뉴·바로 수정·단어 줄바꿈을 통합합니다.
 // @author       Assistant
 // @match        https://crack.wrtn.ai/*
@@ -3998,6 +3998,8 @@
 
     return (
       root.querySelector('.flex.items-center.space-x-2') ||
+      // 10/08 크랙 업데이트로 왼쪽 도구 묶음이 gap-2로 바뀌었다. 흔한 클래스라 입력창 아래 줄의 바로 아래 묶음만 고른다.
+      root.querySelector('.flex.items-center.justify-between > .flex.items-center.gap-2:not([id])') ||
       root.querySelector('[class*="space-x-2"]') ||
       root.querySelector('.flex.items-center')
     );
@@ -4359,7 +4361,7 @@
           const el = node;
           if (
             el.matches?.('.__chat_input_textarea, div.ProseMirror[contenteditable="true"]') ||
-            el.querySelector?.('.__chat_input_textarea, div.ProseMirror[contenteditable="true"], .flex.items-center.space-x-2')
+            el.querySelector?.('.__chat_input_textarea, div.ProseMirror[contenteditable="true"], .flex.items-center.space-x-2, .flex.items-center.justify-between > .flex.items-center.gap-2')
           ) {
             shouldScan = true;
             break;
