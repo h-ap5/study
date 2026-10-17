@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         크랙 소설형 익명 캡처기 v2 + Custom Room 테마
 // @namespace    https://crack.wrtn.ai/
-// @version      2.5.0
-// @description  단계형 화면(① 범위 → ② 편집 → ③ 내보내기)과 크랙 테마를 따르는 유리 패널로 소설형 익명 캡처 · 조판·익명 치환·문단 제외 · 형광펜·밑줄·쪽지 · 원고 색·기울임 지문 · Custom Room 테마 그대로 캡처 · 사이드바 「익명 캡처 설정」(자동 저장) · 메시지 ··· 메뉴 '여기부터 캡처' · PNG/WebP 저장·복사·공유 · 내 글꼴(설치된 글꼴·웹폰트)·자간·가름선 모양 · 무늬·사진 배경
+// @version      2.5.2
+// @description  단계형 화면(① 범위 → ② 편집 → ③ 내보내기)과 크랙 테마를 따르는 유리 패널로 소설형 익명 캡처 · 조판·익명 치환·문단 제외 · 형광펜·밑줄·쪽지 · 원고 색·기울임 지문 · Custom Room 테마 그대로 캡처 · 사이드바 「익명 캡처 설정」(자동 저장) · 메시지 ··· 메뉴 '여기부터 캡처' · PNG/WebP 저장·복사·공유 · 내 글꼴(설치된 글꼴·웹폰트)·자간·가름선 모양 · 무늬·사진 배경 · 낱말 단위 익명 치환(조사 맞춤)
 // @author       그저 로그 캡처가 좋은 뤼붕이 & GPT
 // @match        https://crack.wrtn.ai/*
 // @require      https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js
@@ -160,6 +160,8 @@
         highlightThickness: 1,
         /* 단어 단위로 칠하기: 켜면 마우스 드래그도 단어 끝까지 맞춘다(누르기는 늘 단어) */
         highlightWordSnap: true,
+        /* 2.5.1 익명 치환을 낱말 단위로(다른 낱말 속 글자는 두고 뒤 조사를 바꾼 말에 맞춘다). 끄면 2.5.0처럼 글자 그대로 바꾼다. */
+        maskWordMode: true,
         customHighlightColor: '#ffe05c',
         underlineStyle: 'solid',
         underlineColor: 'graphite',
@@ -252,6 +254,8 @@
             highlightThickness: clampNumber(source.highlightThickness, 0.4, 1.6, DEFAULT_CONFIG.highlightThickness),
             customHighlightColor: normalizeHexColor(source.customHighlightColor, DEFAULT_CONFIG.customHighlightColor),
             highlightWordSnap: source.highlightWordSnap !== false,
+            /* 2.5.1: 예전 설정에는 이 값이 없으니 켠 채로 시작한다. */
+            maskWordMode: source.maskWordMode !== false,
             /* 2.5.0: 모르는 글꼴 열쇠는 명조(2.4.0도 명조로 그렸다). user:<id>는 남겨 두고 쓸 때 찾는다. */
             fontPreset: isKnownFontKey(source.fontPreset) ? source.fontPreset : DEFAULT_CONFIG.fontPreset,
             letterSpacing: Math.round(clampNumber(source.letterSpacing, -0.1, 0.3, -0.01) * 100) / 100,
@@ -321,7 +325,7 @@
     let editorSessionId = 0;
     /* 미리보기 그림 번호(세션이 달라도 겹치지 않는다) */
     let imageIdSeq = 0;
-    /* 이번 편집에서 「치환 적용」으로 건 목록(차례대로). 늦게 글자가 된 SVG 카드에도 같은 치환을 건다. */
+    /* 이번 편집에서 「치환 적용」으로 건 목록과 그때의 낱말 단위 여부({ pairs, word }, 차례대로). 늦게 글자가 된 SVG 카드에도 같은 치환을 건다. */
     let appliedMaskLists = [];
     /* 편집창이 열린 뒤 글자가 된 카드: 그림 번호 → 치환을 건 카드 HTML(되돌리기가 옛 그림을 되살리지 않게) */
     const lateCardMarkup = new Map();
@@ -533,7 +537,7 @@
 
         // 명확하게 유저 클래스만 획득했다면 바로 리턴
         if (isUser && !isCharacter) return 'USER';
-
+        
         // 3. 형제 노드 및 버튼 액션바 레이아웃 구조로 2차 식별 (가장 확실한 방법)
         const rowWrapper = bubble.closest('.flex-row');
         if (rowWrapper) {
@@ -770,7 +774,9 @@
         search: '<svg width="16" height="16" ' + ICON_ATTR + ' stroke-width="2"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>',
         more: '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5.5" cy="12" r="1.7"></circle><circle cx="12" cy="12" r="1.7"></circle><circle cx="18.5" cy="12" r="1.7"></circle></svg>',
         refresh16: '<svg width="16" height="16" ' + ICON_ATTR + ' stroke-width="2"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"></path><path d="M21 3v5h-5"></path></svg>',
-        chevRight16: '<svg width="16" height="16" ' + ICON_ATTR + ' stroke-width="2"><path d="M9 6l6 6-6 6"></path></svg>'
+        chevRight16: '<svg width="16" height="16" ' + ICON_ATTR + ' stroke-width="2"><path d="M9 6l6 6-6 6"></path></svg>',
+        /* 2.5.1 그대로 둔 곳 보기 ‹ */
+        chevLeft16: '<svg width="16" height="16" ' + ICON_ATTR + ' stroke-width="2"><path d="M15 6l-6 6 6 6"></path></svg>'
     };
     /* 테마 상태 칸의 앞 아이콘(2.3.0의 이모지 자리). 글은 그대로다. */
     const STATUS_ICON_OK = '<span class="novcap-status-ico" data-ico="ok" aria-hidden="true">' + ICONS.statusOk + '</span>';
@@ -920,6 +926,381 @@
         if (entry.kind === 'local' && isCanvasSafeFamily(entry.family)) parts.push('"' + fontCssString(entry.family) + '"');
         parts.push((Object.prototype.hasOwnProperty.call(FONT_PRESETS, entry.fallback) ? FONT_PRESETS[entry.fallback] : fallback).value);
         return parts.join(', ');
+    }
+
+    /* ── 2.5.1 장식 기호 글꼴 고정(❝ ❞ ❛ ❜ ✦ ✧ ❥ ➤ 같은 기호) ──
+       이런 기호는 본문 글꼴에 없어서 글꼴 줄 끝(크롬 기본 글꼴 설정·시스템 대체)에서 글꼴이 정해진다. html2canvas는 줄 자리를 복제 문서에서 재고
+       글자는 이 문서의 캔버스에 그리므로, 두 곳이 기호에 다른 글꼴을 고르면 넓은 기호가 좁은 자리에 그려져 다음 글자와 겹친다
+       (자간이 0이 아니면 글자마다 제자리에 따로 그린다).
+       그래서 처음 쓸 때(대화를 고르기 시작할 때, 늦어도 편집을 열 때) 이 브라우저가 기호를 실제로 어떤 글꼴로 그리는지 한 번 재고, 그 글꼴을 이름(local)으로 박는다
+       (글꼴 줄에는 편집을 열 때 넣고, 그 글꼴의 @font-face와 테마 글자·대사는 편집을 연 뒤 쉬는 틈에, 저장할 복제본에 빠진 것은 저장할 때 넣는다).
+       - 글꼴 줄 끝(sans-serif 등)이 기호를 Segoe UI Symbol(윈도우 크롬의 기호 대체 글꼴)로 그리면: 박지 않는다(기본 크롬. 2.5.0과 같다).
+         Segoe UI Symbol로 박으면 박지 않은 옆 기호의 대체 글꼴이 바뀌어(☾⋆의 ⋆가 Cambria Math로) 모양과 폭이 달라진다.
+       - 글꼴 줄 끝의 글꼴이 아는 글꼴 X 자체면(크롬 기본 글꼴을 모나12로 바꾼 PC, 내 글꼴에 넣은 PC 글꼴): 기호 칸 전체를 X로 박는다.
+         X에 없는 글자는 다음 글꼴로 넘어가므로 바뀌지 않는다. 굵은(기울인) 글꼴이 따로 있으면 그것도 박는다.
+       - 맞는 글꼴이 없으면 박지 않는다(2.5.0과 같다). cursive·fantasy로 끝나는 줄도 박지 않는다(재지 않는다).
+       박는 글꼴은 지금 그 자리를 그리는 글꼴과 같으므로 미리보기 모양은 그대로이고, 복제 문서와 캔버스가 같은 이름의 글꼴을 쓰게 된다.
+       글꼴 줄에서는 첫 설정 일반 글꼴(sans-serif·serif·monospace·cursive·fantasy) 바로 앞, 없으면 맨 뒤(std)에 넣는다.
+       앞쪽 글꼴(본문·테마·내 글꼴, system-ui)이 그 글자를 가지면 그 글꼴이 먼저다.
+       재기는 숨긴 iframe 안의 캔버스에서 한다(이 문서의 글꼴 목록을 건드리지 않는다). 시간이 넘치면(1.5초) 박지 않는다. */
+    const SYMBOL_FONT_FAMILY = 'NovcapSymbol';
+    const SYMBOL_FONT_STYLE_ID = 'novcap-symbol-font';
+    const SYMBOL_GENERIC_KEYS = ['sans-serif', 'serif', 'monospace', 'cursive', 'fantasy'];
+    /* 재는 글꼴 줄 끝(std = 설정 일반 글꼴이 없는 줄). 이 끝들을 다 찾으면 글꼴을 더 열어 보지 않는다. */
+    const SYMBOL_MAIN_KEYS = ['sans-serif', 'serif', 'monospace', 'std'];
+    /* 기호 칸: 문장 부호·글자 모양 기호·화살표·수학·기술 기호·도형·딩뱃·보충 문장 부호·CJK 기호. 이모지(Emoji=Yes) 글자는 뺐다. */
+    const SYMBOL_BROAD_RANGES = [
+        [0x2010, 0x2027], [0x2030, 0x203B], [0x203D, 0x2048], [0x204A, 0x205E], [0x2070, 0x20CF], [0x2100, 0x2121], [0x2123, 0x2138], [0x213A, 0x2193],
+        [0x219A, 0x21A8], [0x21AB, 0x2319], [0x231C, 0x2327], [0x2329, 0x23CE], [0x23D0, 0x23E8], [0x23F4, 0x23F7], [0x23FB, 0x24C1], [0x24C3, 0x25A9],
+        [0x25AC, 0x25B5], [0x25B7, 0x25BF], [0x25C1, 0x25FA], [0x25FF, 0x25FF], [0x2605, 0x260D], [0x260F, 0x2610], [0x2612, 0x2613], [0x2616, 0x2617],
+        [0x2619, 0x261C], [0x261E, 0x261F], [0x2621, 0x2621], [0x2624, 0x2625], [0x2627, 0x2629], [0x262B, 0x262D], [0x2630, 0x2637], [0x263B, 0x263F],
+        [0x2641, 0x2641], [0x2643, 0x2647], [0x2654, 0x265E], [0x2661, 0x2662], [0x2664, 0x2664], [0x2667, 0x2667], [0x2669, 0x267A], [0x267C, 0x267D],
+        [0x2680, 0x2691], [0x2698, 0x2698], [0x269A, 0x269A], [0x269D, 0x269F], [0x26A2, 0x26A6], [0x26A8, 0x26A9], [0x26AC, 0x26AF], [0x26B2, 0x26BC],
+        [0x26BF, 0x26C3], [0x26C6, 0x26C7], [0x26C9, 0x26CD], [0x26D0, 0x26D0], [0x26D2, 0x26D2], [0x26D5, 0x26E8], [0x26EB, 0x26EF], [0x26F6, 0x26F6],
+        [0x26FB, 0x26FC], [0x26FE, 0x2701], [0x2703, 0x2704], [0x2706, 0x2707], [0x270E, 0x270E], [0x2710, 0x2711], [0x2713, 0x2713], [0x2715, 0x2715],
+        [0x2717, 0x271C], [0x271E, 0x2720], [0x2722, 0x2727], [0x2729, 0x2732], [0x2735, 0x2743], [0x2745, 0x2746], [0x2748, 0x274B], [0x274D, 0x274D],
+        [0x274F, 0x2752], [0x2756, 0x2756], [0x2758, 0x2762], [0x2765, 0x2794], [0x2798, 0x27A0], [0x27A2, 0x27AF], [0x27B1, 0x27BE], [0x27C0, 0x2933],
+        [0x2936, 0x2B04], [0x2B08, 0x2B1A], [0x2B1D, 0x2B4F], [0x2B51, 0x2B54], [0x2B56, 0x2BFF], [0x2E00, 0x2E7F], [0x3001, 0x302F], [0x3031, 0x303C],
+        [0x303E, 0x303F], [0x3200, 0x3296], [0x3298, 0x3298], [0x329A, 0x32FF]
+    ];
+    /* 재 볼 글자: 기호(❝ ❞ ❛ ✦ ➤) 한 줄 + 그 글꼴 자체인지 볼 글자(A g 가 나 ※) 한 줄 */
+    const SYMBOL_PROBE_SYMBOLS = [0x275D, 0x275E, 0x275B, 0x2726, 0x27A4];
+    const SYMBOL_PROBE_TEXT = [0x41, 0x67, 0xAC00, 0xB098, 0x203B];
+    const SYMBOL_PROBE_SIZE = 24;
+    /* 모나 픽셀 글꼴(굵은 글꼴이 따로 있으면 true). 모나12는 맨 먼저, 나머지는 내 글꼴 다음에 본다. */
+    const SYMBOL_PIXEL_FAMILIES = [
+        ['Mona12', true], ['MonaS12', true], ['Mona10', true], ['MonaS10', true], ['Mona10x12', true], ['MonaS10x12', true], ['Mona8x12', false], ['MonaS8x12', false],
+        ['Mona12 Text KR', false], ['MonaS12 Text KR', false], ['Mona12 Text JP', false], ['MonaS12 Text JP', false], ['Mona12 Text SC', false], ['MonaS12 Text SC', false],
+        ['Mona12 Text TC', false], ['MonaS12 Text TC', false], ['Mona12 Text HK', false], ['MonaS12 Text HK', false]
+    ];
+    const SYMBOL_DETECT_LIMIT_MS = 1500;
+    /* 테마 원고에서 기호 글꼴을 넣어 굳힐 글자 요소(「테마에서도 내 글꼴 쓰기」 규칙과 같은 범위) */
+    const SYMBOL_THEME_TEXT_SEL = '.wrtn-markdown, .wrtn-markdown :is(p, li, blockquote, h1, h2, h3, h4, h5, h6, span, em, i, a, strong, b, td, th)';
+    const SYMBOL_THEME_SKIP_SEL = 'pre, code, kbd, samp, .katex, .novcap-svg-image, [data-sgb-codeblock]';
+    /* null = 아직 안 쟀다. 잰 뒤에는 { alias: { 끝 열쇠: 글꼴 이름 }, faces: [...] } (박을 것이 없으면 faces가 비어 있다) */
+    let symbolPinPlan = null;
+    let symbolPinJob = null;
+
+    function inSymbolRanges(code, ranges) {
+        let lo = 0;
+        let hi = ranges.length - 1;
+        while (lo <= hi) {
+            const mid = (lo + hi) >> 1;
+            if (code < ranges[mid][0]) hi = mid - 1;
+            else if (code > ranges[mid][1]) lo = mid + 1;
+            else return true;
+        }
+        return false;
+    }
+
+    /* 글 안의 고정 기호(서로 다른 것만, 96개까지). 고정 칸은 모두 U+2010–U+32FF 안에 있다. */
+    function symbolCharsIn(text, ranges) {
+        const value = String(text || '');
+        const found = new Set();
+        for (let i = 0; i < value.length && found.size < 96; i++) {
+            const code = value.charCodeAt(i);
+            if (code < 0x2010 || code > 0x32FF) continue;
+            if (inSymbolRanges(code, ranges)) found.add(value[i]);
+        }
+        return Array.from(found).join('');
+    }
+
+    function symbolRangeCss(ranges) {
+        return ranges.map(([from, to]) => 'U+' + from.toString(16).toUpperCase() + (to > from ? '-' + to.toString(16).toUpperCase() : '')).join(',');
+    }
+
+    function symbolLocalSrc(names) {
+        return names.map(name => 'local("' + fontCssString(name) + '")').join(',');
+    }
+
+    /* 견줄 글꼴(local 이름은 글꼴 파일의 전체 이름·PostScript 이름): Segoe UI Symbol(윈도우 크롬의 기호 대체 글꼴. 맞는 끝은 박지 않고 재기만 끝낸다),
+       모나12(크롬 기본 글꼴로 쓰는 픽셀 글꼴), 내 글꼴의 PC 글꼴(8개까지), 나머지 모나 글꼴.
+       pixelFirst면 모나12를 Segoe UI Symbol보다 먼저 본다(❝가 한 글자 칸 꽉 차면 픽셀 글꼴일 가능성이 크다). */
+    function symbolFontCandidates(pixelFirst) {
+        const pixel = ([family, bold]) => {
+            const ps = family.split(' ').join('');
+            return { label: family, regular: [family + ' Regular', ps + '-Regular'], bold: bold ? [family + ' Bold', ps + '-Bold'] : null, italic: null };
+        };
+        const segoe = { label: 'Segoe UI Symbol', regular: ['Segoe UI Symbol', 'SegoeUISymbol'], bold: null, italic: null, noPin: true };
+        const list = pixelFirst ? [pixel(SYMBOL_PIXEL_FAMILIES[0]), segoe] : [segoe, pixel(SYMBOL_PIXEL_FAMILIES[0])];
+        readFontLibrary().fonts.filter(entry => entry.kind === 'local').slice(0, 8).forEach(entry => {
+            const byKey = new Map(entry.faces.map(face => [face.k, face]));
+            const names = key => (byKey.get(key)?.names?.length ? byKey.get(key).names.slice(0, 2) : null);
+            const regular = names(entry.pick.regular) || names(entry.faces[0]?.k);
+            if (regular) list.push({ label: entry.label, regular, bold: names(entry.pick.bold), italic: names(entry.pick.italic) });
+        });
+        SYMBOL_PIXEL_FAMILIES.slice(1).forEach(item => list.push(pixel(item)));
+        return list;
+    }
+
+    /* 글꼴 줄 끝(sans-serif·serif·monospace·std)마다 기호를 어떤 글꼴로 그리는지 잰다.
+       후보 글꼴은 크기 조정 50%로 붙이고 두 배 크기로 그린다: 그 글꼴에 있는 글자는 끝과 같은 크기로 같은 픽셀이 나오고,
+       없는 글자는 다른 글꼴로 넘어가 두 배로 그려지므로 다르다(글꼴에 그 글자가 있는지도 한 번에 본다).
+       - Segoe UI Symbol: 기호 줄만 같으면 그 끝은 다 잰 것으로 치고 박지 않는다(본문 글꼴은 다른 글꼴이고 기호만 대체 글꼴이 그린다. 기본 크롬).
+       - 다른 후보: 기호 줄과 글자 줄이 모두 같아야 한다(그 끝의 글꼴 자체). 굵은·기울인 글꼴은 받아지면 같이 박는다(같은 글꼴 가족).
+         굵은·기울인 글꼴을 받다가 시간이 넘치면 그 끝은 박지 않는다(굵은 기호가 가짜 굵기로 바뀌지 않게). */
+    async function detectSymbolPin() {
+        const started = performance.now();
+        const left = () => started + SYMBOL_DETECT_LIMIT_MS - performance.now();
+        const frame = document.createElement('iframe');
+        frame.setAttribute('aria-hidden', 'true');
+        frame.setAttribute('tabindex', '-1');
+        frame.setAttribute('data-html2canvas-ignore', 'true');
+        frame.style.cssText = 'position:fixed;left:-200px;top:-200px;width:100px;height:100px;border:0;opacity:0;visibility:hidden;pointer-events:none';
+        (document.body || document.documentElement).appendChild(frame);
+        try {
+            const view = frame.contentWindow;
+            const doc = frame.contentDocument;
+            if (!view || !doc?.body || !doc.fonts || typeof view.FontFace !== 'function') return null;
+            const lang = document.documentElement.getAttribute('lang');
+            if (lang) doc.documentElement.setAttribute('lang', lang);
+            const size = SYMBOL_PROBE_SIZE;
+            const lines = [SYMBOL_PROBE_SYMBOLS, SYMBOL_PROBE_TEXT].map(codes => String.fromCodePoint(...codes));
+            const canvas = doc.createElement('canvas');
+            canvas.width = size * 8;
+            canvas.height = size * 2;
+            doc.body.appendChild(canvas);
+            const ctx = canvas.getContext('2d', { willReadFrequently: true });
+            if (!ctx) return null;
+            /* 한 줄을 그려 폭과 픽셀을 섞은 값 */
+            const signature = (font, line) => {
+                ctx.font = font;
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.fillText(line, 4, Math.round(size * 1.4));
+                let hash = (2166136261 ^ Math.round(ctx.measureText(line).width * 64)) >>> 0;
+                const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+                for (let i = 3; i < data.length; i += 4) hash = Math.imul(hash ^ data[i], 16777619);
+                return hash >>> 0;
+            };
+            /* 끝마다 기호 줄을 먼저 잰다. 글자 줄은 Segoe UI Symbol이 아닌 후보가 기호 줄까지 맞을 때만 잰다(기본 크롬에서는 재지 않는다). */
+            const ends = SYMBOL_MAIN_KEYS.map(key => {
+                const font = size + 'px ' + (key === 'std' ? 'NovcapNoSuchFamily' : key);
+                return { key, font, symbols: signature(font, lines[0]), text: null, plan: null };
+            });
+            const textOf = end => {
+                if (end.text === null) end.text = signature(end.font, lines[1]);
+                return end.text;
+            };
+            ctx.font = size + 'px sans-serif';
+            const pixelFirst = Math.abs(ctx.measureText(lines[0][0]).width - size) < 0.01;
+            let seq = 0;
+            /* 받으면 그 글꼴, 이 PC에 없으면 null, 시간이 넘치면 false */
+            const load = async (family, names, descriptors) => {
+                if (!names) return null;
+                if (left() <= 0) return false;
+                const face = new view.FontFace(family, symbolLocalSrc(names), descriptors);
+                const ok = await Promise.race([face.load().then(() => true, () => null), fontTimeout(left(), false)]);
+                if (!ok) return ok;
+                doc.fonts.add(face);
+                return face;
+            };
+            /* Segoe UI Symbol로 그리는 끝(박지 않음) */
+            const noPin = { candidate: null };
+            for (const candidate of symbolFontCandidates(pixelFirst)) {
+                if (!ends.some(end => !end.plan) || left() <= 0) break;
+                const family = 'NovcapProbe' + (++seq);
+                const regular = await load(family, candidate.regular, { sizeAdjust: '50%' });
+                if (regular === false) break;
+                if (!regular) continue;
+                const probeFont = (size * 2) + 'px "' + family + '"';
+                const symbols = signature(probeFont, lines[0]);
+                let hits = ends.filter(end => !end.plan && end.symbols === symbols);
+                if (hits.length && candidate.noPin) {
+                    hits.forEach(end => { end.plan = noPin; });
+                    continue;
+                }
+                if (hits.length) {
+                    const text = signature(probeFont, lines[1]);
+                    hits = hits.filter(end => textOf(end) === text);
+                }
+                if (!hits.length) continue;
+                const bold = await load(family + 'B', candidate.bold, { weight: '700' });
+                const italic = bold === false ? false : await load(family + 'I', candidate.italic, { style: 'italic' });
+                if (bold === false || italic === false) break;
+                const plan = { candidate, bold: Boolean(bold), italic: Boolean(italic) };
+                hits.forEach(end => { end.plan = plan; });
+            }
+            const faces = [];
+            const alias = {};
+            ends.forEach(end => {
+                if (!end.plan?.candidate) return;
+                let face = faces.find(item => item.plan === end.plan);
+                if (!face) {
+                    const candidate = end.plan.candidate;
+                    face = {
+                        plan: end.plan,
+                        family: SYMBOL_FONT_FAMILY + (faces.length ? String(faces.length + 1) : ''),
+                        label: candidate.label,
+                        regular: candidate.regular,
+                        bold: end.plan.bold ? candidate.bold : null,
+                        italic: end.plan.italic ? candidate.italic : null,
+                        ranges: SYMBOL_BROAD_RANGES
+                    };
+                    faces.push(face);
+                }
+                alias[end.key] = face.family;
+            });
+            faces.forEach(face => { delete face.plan; });
+            return { alias, faces, segoe: ends.filter(end => end.plan === noPin).map(end => end.key), ms: Math.round(performance.now() - started) };
+        } finally {
+            frame.remove();
+        }
+    }
+
+    /* 잰 결과를 둔다(박을 글꼴 <style>은 attachSymbolFontStyle이 편집을 연 뒤 쉬는 틈에, 늦어도 저장할 때 붙인다). */
+    function installSymbolPin(plan) {
+        symbolPinPlan = plan?.faces?.length ? plan : { alias: {}, faces: [], segoe: plan?.segoe || [], ms: plan?.ms ?? -1 };
+        try {
+            performance.measure?.('novcap-symbol-pin', { start: 0, duration: 0, detail: { ms: symbolPinPlan.ms, alias: symbolPinPlan.alias, segoe: symbolPinPlan.segoe, faces: symbolPinPlan.faces.map(face => face.family + '=' + face.label + (face.bold ? '+bold' : '') + (face.italic ? '+italic' : '')) } });
+        } catch (error) {
+            /* 기록은 없어도 된다 */
+        }
+    }
+
+    /* 박을 글꼴을 이 문서에 <style>로 붙인다(html2canvas가 복제 문서로 옮긴다. FontFace로 넣은 글꼴은 옮기지 않는다).
+       편집을 연 뒤 쉬는 틈에 붙이고(whenSymbolIdle), 저장할 때 아직 없으면 그때 붙인다. 한 번 붙이면 그대로 둔다.
+       편집 미리보기는 이 글꼴 없이도 기호를 같은 글꼴로 그린다(넣는 글꼴 = 그 자리를 지금 그리는 글꼴. 글꼴 줄의 NovcapSymbol은 붙이기 전에는
+       없는 글꼴이라 건너뛴다). 웹 글꼴이 없는 문서에서는 첫 @font-face가 문서 전체 글꼴을 다시 잡게 해(편집을 열 때·저장할 때 느려진다) 쉬는 틈에 붙인다.
+       붙이지 못하면 false — 그 저장은 박지 않은 것과 같다(2.5.0). 다음에 다시 붙인다. */
+    function attachSymbolFontStyle() {
+        const plan = symbolPinPlan;
+        if (!plan?.faces.length) return false;
+        if (document.getElementById(SYMBOL_FONT_STYLE_ID)) return true;
+        try {
+            const style = document.createElement('style');
+            style.id = SYMBOL_FONT_STYLE_ID;
+            style.textContent = plan.faces.map(face => {
+                const range = symbolRangeCss(face.ranges);
+                const rule = (names, weight, fontStyle) => '@font-face{font-family:"' + face.family + '";src:' + symbolLocalSrc(names) + ';font-weight:' + weight + (fontStyle ? ';font-style:' + fontStyle : '') + ';unicode-range:' + range + '}';
+                return rule(face.regular, 400, '') + (face.bold ? rule(face.bold, 700, '') : '') + (face.italic ? rule(face.italic, 400, 'italic') : '');
+            }).join(String.fromCharCode(10));
+            (document.head || document.documentElement).appendChild(style);
+            return true;
+        } catch (error) {
+            return false;
+        }
+    }
+
+    /* 박을 글꼴이 있으면 fn을 조금 뒤(0.8초) 쉬는 틈에 부른다(편집을 연 뒤: @font-face 붙이기 · 테마 미리보기에 기호 글꼴 넣기).
+       열린 화면의 첫 그림·첫 손길과 겹치지 않게 미룬다(큰 테마 원고에서 0.1–0.2초 일). 그 전에 저장하면 저장할 때 복제본에 넣는다. 박을 것이 없으면(기본 크롬) 아무것도 안 한다. */
+    function whenSymbolIdle(fn) {
+        if (!symbolPinPlan?.faces.length) return;
+        setTimeout(() => {
+            if (typeof requestIdleCallback === 'function') requestIdleCallback(() => fn(), { timeout: 2000 });
+            else fn();
+        }, 800);
+    }
+
+    /* 처음 한 번만 잰다(대화를 고르기 시작할 때 warmSymbolPin이 시작하고, 편집을 열 때 끝나기를 기다린다). 실패하거나 시간이 넘치면 박지 않는다.
+       박기(installSymbolPin)가 실패하면 이번에는 박지 않고(2.5.0과 같다) 기억해 둔 일을 지워, 같은 탭에서 다음에 열 때 다시 잰다. */
+    function ensureSymbolPin() {
+        if (!symbolPinJob) {
+            const job = detectSymbolPin().catch(() => null).then(plan => {
+                installSymbolPin(plan);
+                return symbolPinPlan;
+            }).catch(() => {
+                symbolPinPlan = { alias: {}, faces: [], segoe: [], ms: -1 };
+                if (symbolPinJob === job) symbolPinJob = null;
+                return symbolPinPlan;
+            });
+            symbolPinJob = job;
+        }
+        return symbolPinJob;
+    }
+
+    /* 글꼴 줄의 첫 설정 일반 글꼴 바로 앞(없으면 맨 뒤)에 그 끝의 기호 글꼴을 넣는다. inherit·var() 같은 값, 이미 넣은 줄, 박을 것이 없는 끝은 그대로 둔다. */
+    function withSymbolFont(stack) {
+        const value = String(stack || '').trim();
+        const plan = symbolPinPlan;
+        if (!plan?.faces.length || !value || value.includes(SYMBOL_FONT_FAMILY)) return value;
+        const lower = value.toLowerCase();
+        if (/^(inherit|initial|unset|revert|revert-layer|default)$/.test(lower) || lower.startsWith('var(')) return value;
+        const parts = splitCssLayers(value).filter(Boolean);
+        const at = parts.findIndex(part => SYMBOL_GENERIC_KEYS.includes(part.toLowerCase()));
+        const family = plan.alias[at < 0 ? 'std' : parts[at].toLowerCase()];
+        if (!family) return value;
+        parts.splice(at < 0 ? parts.length : at, 0, '"' + family + '"');
+        return parts.join(', ');
+    }
+
+    /* 글에 고정 기호가 하나라도 있는지(고정 칸은 모두 U+2010–U+32FF 안에 있다) */
+    function hasSymbolChar(text, ranges) {
+        for (let i = 0; i < text.length; i++) {
+            const code = text.charCodeAt(i);
+            if (code >= 0x2010 && code <= 0x32FF && inSymbolRanges(code, ranges)) return true;
+        }
+        return false;
+    }
+
+    /* 글에 박을 기호가 있는지(박을 글꼴이 없으면 false) — 테마 대사·글자 요소는 기호가 든 것만 기호 글꼴을 넣는다(넣을 글꼴은 기호 칸만 그려 기호가 없으면 모양이 같다).
+       “ ” ‘ ’ …도 기호 칸이다. */
+    function hasPinnedSymbol(text) {
+        const plan = symbolPinPlan;
+        const value = String(text || '');
+        return Boolean(plan?.faces.length && value) && plan.faces.some(face => hasSymbolChar(value, face.ranges));
+    }
+
+    /* 대화를 고르기 시작할 때 미리 잰다(처음 한 번 · 편집을 열 때 기다리지 않게). */
+    function warmSymbolPin() {
+        setTimeout(() => ensureSymbolPin(), 0);
+    }
+
+    /* 테마 원고: 글자 요소에 지금 글꼴 줄에 기호 글꼴을 넣어 인라인으로 굳힌다(표시 data-novcap-sym-font). 대사를 굳힌(stabilizeCustomRoomQuotes) 뒤에 부른다:
+       편집 미리보기에는 편집을 연 뒤 쉬는 틈에(열 때 넣으면 기호가 든 글자마다 글꼴을 다시 만드느라 큰 테마 원고에서 여는 시간이 늘어난다 — 대사 800여 개.
+       넣는 글꼴은 그 기호를 이미 그리는 글꼴이라 넣기 전후 모양이 같다), 저장할 복제본에는 글꼴을 굳히기 전에(미리보기에서 넣은 것은 건너뛴다). 기호가 든 것만 넣는다:
+       - 굳힌 대사(data-novcap-frozen-quote)는 기호가 든 것만, 굳힌 글꼴 줄(인라인)에 넣는다 — 계산 글꼴을 읽지 않는다.
+         (대사를 굳히는 2.5.0 순서(대사마다 읽고 쓰기)는 그대로 두고 여기서 한 번에 쓴다: 대사마다 글꼴이 바뀌면 굳힐 때마다 글꼴을 다시 만든다.)
+       - 글자 요소는 먼저 글을 훑어 기호가 든 글 노드를 찾고, 그 글이 글꼴을 물려받는 가장 가까운 글자 요소(테마 글자 범위 · 코드 따위 안은 건너 위로 ·
+         굳힌 대사에서 멈춤)만 계산 글꼴을 읽어 넣는다. 대사를 먼저 쓰고, 글자 요소는 다 읽고 나서 쓴다. */
+    function pinThemeSymbolFonts(root) {
+        const plan = symbolPinPlan;
+        if (!plan?.faces.length || !root) return;
+        const doc = root.ownerDocument;
+        const view = doc.defaultView;
+        const owners = new Set();
+        const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+            if (!hasPinnedSymbol(node.nodeValue)) continue;
+            for (let element = node.parentElement; element && element !== root; element = element.parentElement) {
+                if (owners.has(element) || element.hasAttribute('data-novcap-frozen-quote')) break;
+                if (element.matches(SYMBOL_THEME_TEXT_SEL) && !element.parentElement?.closest(SYMBOL_THEME_SKIP_SEL)) {
+                    owners.add(element);
+                    break;
+                }
+            }
+        }
+        root.querySelectorAll('[data-novcap-frozen-quote]').forEach(quote => {
+            const value = quote.style.getPropertyValue('font-family');
+            if (!value || !hasPinnedSymbol(quote.textContent)) return;
+            const pinned = withSymbolFont(value);
+            if (pinned !== value) quote.style.setProperty('font-family', pinned, quote.style.getPropertyPriority('font-family'));
+        });
+        const records = [];
+        owners.forEach(element => {
+            const value = view.getComputedStyle(element).fontFamily;
+            const pinned = withSymbolFont(value);
+            if (pinned !== value) records.push([element, pinned]);
+        });
+        records.forEach(([element, pinned]) => {
+            element.style.setProperty('font-family', pinned, 'important');
+            element.setAttribute('data-novcap-sym-font', '');
+        });
+    }
+
+    /* 저장 직전: 원고(또는 복제본)에 박은 기호가 있으면 그 문서에서 기호 글꼴(보통·굵게)을 받아 둔다(캔버스는 아직 안 받은 글꼴을 건너뛴다). */
+    async function loadSymbolFont(doc, root, timeout = 3000) {
+        const plan = symbolPinPlan;
+        if (!plan?.faces.length || !doc?.fonts?.load || !root) return false;
+        const text = root.textContent || '';
+        const loads = [];
+        plan.faces.forEach(face => {
+            const chars = symbolCharsIn(text, face.ranges);
+            if (!chars) return;
+            ['400', '700'].concat(face.italic ? ['italic 400'] : []).forEach(style => loads.push(doc.fonts.load(style + ' 16px "' + face.family + '"', chars).catch(() => null)));
+        });
+        if (!loads.length) return false;
+        await Promise.race([Promise.all(loads), fontTimeout(timeout, null)]);
+        return true;
     }
 
     function fontKeyLabel(key, fallbackKey = 'serif') {
@@ -1823,7 +2204,7 @@
             if (page.classList.contains('novcap-div-' + name) !== on) page.classList.toggle('novcap-div-' + name, on);
         });
         const override = themeActive && config.themeUserFont === true;
-        setOrRemoveStyleVar(page, '--nov-theme-user-font', override ? resolveFontStack(bodyKey, 'serif') : null);
+        setOrRemoveStyleVar(page, '--nov-theme-user-font', override ? withSymbolFont(resolveFontStack(bodyKey, 'serif')) : null);
         toggleAttr(page, 'data-novcap-theme-font', override);
         const keys = fontKeysInUse(page, themeActive);
         if (keys.length) ensureFontFacesFor(keys);
@@ -1834,7 +2215,7 @@
     function syncThemeQuoteFonts(page) {
         if (!page) return;
         const on = page.hasAttribute('data-novcap-theme-font');
-        page.querySelectorAll('[data-novcap-frozen-quote]').forEach(element => {
+        page.querySelectorAll('[data-novcap-frozen-quote], [data-novcap-sym-font]').forEach(element => {
             const saved = element.getAttribute('data-novcap-font-orig');
             if (on) {
                 if (saved === null) {
@@ -3438,7 +3819,7 @@
         const notes = Array.from(editorPage?.querySelectorAll(':scope > .novcap-comment') || []).filter(comment => comment.dataset.fontPreset === key);
         notes.forEach(comment => {
             comment.dataset.fontPreset = entry.fallback;
-            comment.style.fontFamily = resolveFontStack(entry.fallback, 'system');
+            comment.style.fontFamily = withSymbolFont(resolveFontStack(entry.fallback, 'system'));
         });
         if (changed) {
             saveConfig();
@@ -4963,6 +5344,8 @@
     const CAT_KEYS = NOVCAP_CATS.map(cat => cat.key);
     const CAT_HELP = {
         type: ['원고 폭을 바꾸면 줄바꿈을 다시 맞춰요.', '문단 제외를 켜고 원고의 문단을 누르면 빠지고, 다시 누르면 돌아와요.', '익명 치환은 왼쪽 말을 오른쪽 말로 바꿔요. 적용한 뒤엔 저절로 돌아가지 않아요.',
+            '낱말 단위로 바꾸기를 켜면 다른 낱말 속 글자(들린다의 린)는 그대로 두고, 은/는·이/가 같은 조사도 바꾼 말에 맞춰요.',
+            '그대로 둔 곳이 있으면 적용 알림의 보기로 하나씩 살펴보고, 이름이면 그 곳만 바꿀 수 있어요.',
             '글꼴 추가에서 PC에 설치된 글꼴이나 웹폰트를 내 글꼴로 넣어요.', '자간과 가름선 모양은 기본 조판에만 써요.', '「테마에서도 내 글꼴 쓰기」를 켜면 고른 글씨체를 테마 글에도 써요.'],
         pen: ['색을 고른 뒤 시작 단어와 끝 단어를 차례로 누르면 칠해져요. 같은 단어를 두 번 누르면 그 단어만 칠해요.', 'PC에서는 원고를 드래그해도 돼요. 단어 단위를 켜면 드래그가 단어 끝까지 맞춰져요.', '지우기를 켜고 칠한 곳을 누르거나 드래그하면 지워져요.'],
         note: ['쪽지 편집을 켜고 원고의 빈 곳을 누르면 쪽지가 붙어요. 새 쪽지는 보이는 화면 가운데에 붙어요.', '쪽지를 끌면 옮겨지고, 오른쪽 아래 손잡이로 폭을, 둥근 손잡이로 기울기를 바꿔요.', '쪽지는 20개까지 붙일 수 있어요.'],
@@ -4974,6 +5357,7 @@
     };
     const CAT_HELP_SETTINGS = {
         type: ['원고 폭을 바꾸면 줄바꿈을 다시 맞춰요.', '익명 치환은 왼쪽 말을 오른쪽 말로 바꿔요. 여기 적은 줄은 새 캡처마다 미리 채워져요.',
+            '낱말 단위로 바꾸기를 켜면 다른 낱말 속 글자(들린다의 린)는 그대로 두고, 은/는·이/가 같은 조사도 바꾼 말에 맞춰요.',
             '글꼴 추가에서 PC에 설치된 글꼴이나 웹폰트를 내 글꼴로 넣어요.', '자간과 가름선 모양은 기본 조판에만 써요.', '「테마에서도 내 글꼴 쓰기」를 켜면 고른 글씨체를 테마 글에도 써요.'],
         pen: ['PC에서 드래그할 때 단어 단위를 켜면 단어 끝까지 맞춰 칠해요.'],
         note: ['새로 붙이는 쪽지가 이 모양으로 시작해요.', '원고의 쪽지를 끌면 옮겨지고, 누르면 편집 화면에서 고칠 수 있어요.'],
@@ -12577,6 +12961,219 @@
                 inset: -6px;
             }
         }
+
+        /* ── 2.5.1 그대로 둔 곳 보기 ──
+           원고 표시는 CSS Highlight라 원고 DOM에 들어가지 않는다(저장 그림·되돌리기 기록에 없다). 막대는 알림 자리에 뜨고, 알림은 그 위로 올린다. */
+        ::highlight(novcap-mask-skip) {
+            background-color: rgba(255, 190, 60, .26);
+            text-decoration-line: underline;
+            text-decoration-style: dotted;
+            text-decoration-color: rgba(204, 112, 0, .95);
+            text-decoration-thickness: 2px;
+            text-underline-offset: 3px;
+        }
+
+        ::highlight(novcap-mask-skip-now) {
+            background-color: rgba(255, 166, 26, .5);
+            text-decoration-line: underline;
+            text-decoration-style: solid;
+            text-decoration-color: rgba(204, 96, 0, 1);
+            text-decoration-thickness: 2px;
+            text-underline-offset: 3px;
+        }
+
+        /* Highlight를 못 쓰는 브라우저: 지금 자리만 무대 안 상자로 */
+        .novcap-review-box {
+            position: absolute;
+            z-index: 3;
+            pointer-events: none;
+            border-radius: 4px;
+            background: rgba(255, 166, 26, .3);
+            box-shadow: 0 0 0 2px rgba(204, 96, 0, .9);
+        }
+
+        /* 알림 끝 단추(보기) */
+        .novcap-ui .novcap-toast[data-act] {
+            pointer-events: auto;
+            padding-right: 6px;
+        }
+
+        .novcap-ui .novcap-toast-act {
+            height: 28px;
+            margin-left: 4px;
+            padding: 0 12px;
+            border: 0;
+            border-radius: 999px;
+            background: rgba(255,255,255,.16);
+            color: inherit;
+            font-family: inherit;
+            font-size: 13px;
+            font-weight: 700;
+            line-height: 28px;
+            cursor: pointer;
+        }
+
+        .novcap-ui .novcap-toast-act[hidden] {
+            display: none;
+        }
+
+        .novcap-ui .novcap-toast-act:focus-visible {
+            outline: 2px solid #F0EFEB;
+            outline-offset: 2px;
+        }
+
+        /* 막대: 알림 자리(무대가 보이는 폭 가운데 아래) */
+        #novcap-review-host {
+            position: absolute;
+            left: var(--novcap-gut);
+            bottom: 108px;
+            width: var(--novcap-vis-w, calc(100% - 32px));
+            display: flex;
+            justify-content: center;
+            pointer-events: none;
+        }
+
+        #novcap-review-host[hidden],
+        #novcap-editor-overlay[data-novcap-step="3"] #novcap-review-host,
+        #novcap-editor-overlay[data-novcap-mode="settings"] #novcap-review-host,
+        #novcap-editor-overlay[data-novcap-font-dialog] #novcap-review-host {
+            display: none;
+        }
+
+        #novcap-editor-overlay[data-novcap-review]:not([data-novcap-font-dialog]) #novcap-toast-host {
+            transform: translateY(-56px);
+        }
+
+        .novcap-review-bar {
+            pointer-events: auto;
+            display: inline-flex;
+            align-items: center;
+            gap: 2px;
+            max-width: 100%;
+            height: 44px;
+            padding: 0 6px;
+            box-sizing: border-box;
+            border-radius: 999px;
+            background: var(--nc-pop-bg);
+            -webkit-backdrop-filter: blur(16px);
+            backdrop-filter: blur(16px);
+            color: #F0EFEB;
+            font-family: var(--nc-font);
+            font-size: 13px;
+            line-height: 18px;
+            font-weight: 500;
+            white-space: nowrap;
+            box-shadow: 0 0 0 1px var(--nc-pop-ring), 0 10px 24px rgba(13,13,12,.28);
+        }
+
+        .novcap-ui .novcap-review-ib {
+            width: 32px;
+            height: 32px;
+            flex: 0 0 32px;
+            padding: 0;
+            border: 0;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: transparent;
+            color: inherit;
+            cursor: pointer;
+        }
+
+        .novcap-ui .novcap-review-ib[aria-disabled="true"] {
+            opacity: .4;
+            cursor: default;
+        }
+
+        .novcap-review-where {
+            display: inline-flex;
+            align-items: baseline;
+            justify-content: center;
+            gap: 6px;
+            min-width: 64px;
+            padding: 0 4px;
+        }
+
+        .novcap-review-word {
+            max-width: 7em;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            font-weight: 700;
+        }
+
+        .novcap-review-count {
+            font-variant-numeric: tabular-nums;
+            opacity: .76;
+        }
+
+        .novcap-ui .novcap-review-do {
+            height: 32px;
+            margin: 0 2px 0 6px;
+            padding: 0 14px;
+            border: 0;
+            border-radius: 999px;
+            background: #F0EFEB;
+            color: #1A1918;
+            font-family: inherit;
+            font-size: 13px;
+            font-weight: 700;
+            cursor: pointer;
+        }
+
+        .novcap-ui .novcap-review-bar :focus-visible {
+            outline: 2px solid #F0EFEB;
+            outline-offset: 2px;
+        }
+
+        @media (hover: hover) {
+            .novcap-ui .novcap-toast-act:hover,
+            .novcap-ui .novcap-review-ib:not([aria-disabled="true"]):hover {
+                background-color: rgba(255,255,255,.14);
+            }
+            .novcap-ui .novcap-review-do:hover {
+                background-color: #FFFFFF;
+            }
+        }
+
+        @media (min-width: 701px) and (max-height: 560px) {
+            #novcap-review-host {
+                bottom: 80px;
+            }
+        }
+
+        /* 휴대폰: 시트 위, 누르는 칸 44 */
+        @media (max-width: 700px) {
+            #novcap-review-host {
+                left: 12px;
+                right: 12px;
+                width: auto;
+                bottom: calc(var(--novcap-foot-h) + var(--novcap-sheet-vis) + 12px);
+            }
+            #novcap-editor-overlay[data-typing] #novcap-review-host {
+                visibility: hidden;
+            }
+            #novcap-editor-overlay[data-novcap-review]:not([data-novcap-font-dialog]) #novcap-toast-host {
+                transform: translateY(-60px);
+            }
+            .novcap-review-bar {
+                height: 52px;
+                padding: 0 4px;
+            }
+            .novcap-ui .novcap-review-ib {
+                width: 44px;
+                height: 44px;
+                flex-basis: 44px;
+            }
+            .novcap-ui .novcap-review-do {
+                height: 44px;
+                padding: 0 16px;
+            }
+            .novcap-ui .novcap-toast-act {
+                height: 32px;
+                line-height: 32px;
+            }
+        }
     `;
     }
 
@@ -12792,6 +13389,7 @@
                                     <div class="novcap-acc" data-open="true" data-acc="mask">
                                         <button type="button" class="novcap-acc-head" aria-expanded="true" aria-controls="novcap-acc-mask"><span class="novcap-acc-title">익명 치환<span id="novcap-mask-count" class="novcap-count-chip">0줄</span></span><span class="novcap-acc-chev">${ICONS.chev18}</span></button>
                                         <div class="novcap-acc-body" id="novcap-acc-mask"><div class="novcap-acc-inner">
+                                            <label class="novcap-switch-row novcap-switch-row-tight novcap-mask-word-row"><span class="novcap-switch-text">낱말 단위로 바꾸기</span><input type="checkbox" id="novcap-mask-word" class="novcap-switch" role="switch" checked></label>
                                             <div class="novcap-mask-cols" aria-hidden="true"><span>가릴 말</span><span></span><span>바꿀 말</span><span></span></div>
                                             <div id="novcap-editor-mask-pairs" role="list" aria-label="치환 목록"></div>
                                             <div class="novcap-mask-actions">
@@ -13153,7 +13751,16 @@
             </div>
         </div>
         <div class="novcap-layer-top novcap-chrome">
-            <div id="novcap-toast-host" role="status" aria-live="polite"><div class="novcap-toast" hidden>${ICONS.check16}<span class="novcap-toast-text"></span></div></div>
+            <div id="novcap-toast-host" role="status" aria-live="polite"><div class="novcap-toast" hidden>${ICONS.check16}<span class="novcap-toast-text"></span><button type="button" class="novcap-toast-act" aria-label="보기" hidden></button></div></div>
+            <div id="novcap-review-host" hidden>
+                <div class="novcap-review-bar" role="group" aria-label="그대로 둔 곳">
+                    <button type="button" id="novcap-review-prev" class="d-ico novcap-review-ib" aria-label="이전 곳">${ICONS.chevLeft16}<span class="novcap-tip novcap-tip-t" aria-hidden="true">이전 곳</span></button>
+                    <span class="novcap-review-where" aria-live="polite"><span id="novcap-review-word" class="novcap-review-word"></span><span id="novcap-review-count" class="novcap-review-count">0/0</span></span>
+                    <button type="button" id="novcap-review-next" class="d-ico novcap-review-ib" aria-label="다음 곳">${ICONS.chevRight16}<span class="novcap-tip novcap-tip-t" aria-hidden="true">다음 곳</span></button>
+                    <button type="button" id="novcap-review-replace" class="d-ico novcap-review-do">바꾸기<span class="novcap-tip novcap-tip-t" aria-hidden="true">이 곳만 바꾸기</span></button>
+                    <button type="button" id="novcap-review-close" class="d-ico novcap-review-ib" aria-label="끄기">${ICONS.closeSmall}<span class="novcap-tip novcap-tip-t" aria-hidden="true">끄기</span></button>
+                </div>
+            </div>
         </div>
         <div id="novcap-fullview" class="novcap-fullview novcap-chrome" aria-label="완성 이미지 크게 보기" data-fit="width" hidden>
             <div class="novcap-fullview-top">
@@ -13400,6 +14007,8 @@
         const step = n === 3 ? '3' : '2';
         if (editorOverlay.dataset.novcapStep === step) return;
         editorOverlay.setAttribute('data-novcap-step', step);
+        /* 2.5.1: ③으로 가면 그대로 둔 곳 보기를 닫는다(표시는 원래 저장 그림에 들어가지 않는다). */
+        if (step === '3') closeMaskReview();
         const states = step === '3' ? ['done', 'done', 'now'] : ['done', 'now', 'todo'];
         const labels = [
             '1단계 범위, 완료',
@@ -13737,6 +14346,8 @@
     function showToast(text) {
         const toast = editorOverlay?.querySelector('#novcap-toast-host .novcap-toast');
         if (!toast) return;
+        /* 2.5.1: 보통 알림은 끝 단추(보기)를 숨긴다(단추가 없던 알림이면 아무것도 쓰지 않는다). */
+        if (toastAction || toast.hasAttribute('data-act')) clearToastAction(toast);
         const textNode = toast.querySelector('.novcap-toast-text');
         /* 글은 같은 글자 노드의 data만 바꾼다(노드를 새로 만들지 않아 childList 기록이 없다).
            같은 알림을 다시 띄우면 읽기 프로그램이 다시 읽도록 비웠다가 다음 프레임에 다시 쓴다(A11Y-10). */
@@ -13764,6 +14375,8 @@
     }
 
     function hideToast() {
+        const shownToast = editorOverlay?.querySelector('#novcap-toast-host .novcap-toast');
+        if (toastAction || shownToast?.hasAttribute('data-act')) clearToastAction(shownToast);
         clearTimeout(toastTimer);
         toastTimer = null;
         setHiddenIfChanged(editorOverlay?.querySelector('#novcap-toast-host .novcap-toast'), true);
@@ -14690,6 +15303,12 @@
             calmStageFocus();
             return;
         }
+        /* 2.5.1 그대로 둔 곳 보기(펜 시작점 다음, 휴대폰 시트보다 먼저) */
+        if (maskReview && editorOverlay.style.display === 'block') {
+            take();
+            closeMaskReview(true);
+            return;
+        }
         if (editorOverlay.style.display === 'block' && !isSettingsOnlyMode() && editorOverlay.dataset.novcapStep === '2' &&
             isPhoneLayout() && getPanel()?.dataset.sheet === 'open' && !editorOverlay.hasAttribute('data-typing')) {
             take();
@@ -15020,6 +15639,8 @@
         document.body.classList.add('novcap-picking');
         showPickingBar('start');
         pickingStartedAt = Date.now();
+        /* 2.5.1: 기호 글꼴 고정 재기를 대화를 고르는 동안 한다(처음 한 번). 편집을 열 때는 끝난 것을 쓴다. */
+        warmSymbolPin();
         return true;
     }
 
@@ -16718,7 +17339,2668 @@
         });
     }
 
-    function applyMaskPairs(root, pairs) {
+    /* ── 2.5.1 익명 치환 「낱말 단위로 바꾸기」(config.maskWordMode, 기본 켬) ──
+       가릴 말이 다른 낱말 속에 있으면(들린다·실린의 '린') 그대로 두고, 낱말 첫머리에서 시작해 낱말 끝이나
+       조사(은/는·이/가·에게·님…)·서술격(이었다면·이자…)으로 끝날 때만 바꾼다. 바꾼 말이 완성 글자로 끝나면 바로 뒤 조사를 그 받침에 맞춘다.
+       정규식을 만들지 않고 글자 번호로만 본다(줄 100개 · 긴 원고도 줄마다 한 번 훑기). 끄면 2.5.0처럼 글자 그대로 바꾼다.
+       감추기가 먼저다: 실제 이름 뒤에 올 수 있는 끝(조사 줄임꼴·서술격 활용·호칭)은 넓게 받고, 가르는 일은 왼쪽 경계(앞 글자)가 맡는다.
+       (수정 2) 문장부호로 쓰는 홀자모(ㅡ ㅣ ㆍ)는 부호로 본다 · 인/일/임 뒤와 받침 없는 두 글자 이상 이름 뒤 라/란/자/던/건/거/든/나/랑 뒤는 끝이 열려 있다 ·
+       두(=도)·늘인 부름(야아아·아앗)·얌·가족 호칭을 받는다 · 받침 없는 이름 + 야는 뒤에 물음표가 오면 서술격, 아니면 부름말.
+       (수정 3) 두 글자 이상 한글 이름은 오른쪽이 열려 있다: 왼쪽 경계만 지나면 뒤에 무엇이 붙어도 바꾼다(서윤때문에 · 지호다운 · 지호오오오),
+       조사·서술격·부름말이 읽히면 여전히 받침을 맞춘다. 낱말을 지키는 일은 왼쪽 경계가 맡는다(마리아 · 아시아 · 러시아 속 이름은 그대로).
+       왼쪽 경계는 같은 글자 갈래만 막는다: 홀자모(ㅋㅋ서윤 · ㅠㅠ서윤아)와 라틴 글자·숫자 뒤 한글 이름(서윤x지호)은 낱말 첫머리다.
+       두 글자 이상 이름 앞에는 흔한 성(한서윤 · 남궁서윤)·적어 둔 이름(서윤지호 · 서윤서윤아)·애칭 앞말(우리 · 애기…)만 붙어 있어도 된다.
+       한 글자 이름은 닫힌 목록 그대로(이별 · 한결 · 이온은 그대로)에 붙여 쓴 말(때문 · 덕분 · 대신 · 빼고 · 말고 · 좀 · 편)을 더 받는다.
+       받침 없는 두 글자 이상 이름의 줄임꼴(지혼 = 지호는 · 시안 = 시아는)도 낱말 끝이면 바꾸고 조사를 풀어 쓴다.
+       (수정 4) 성에 류 · 우 · 소를 더했다(류다은 · 우채원 · 소수아) · 앞 덩이에 늘인 웃음(하하 · 킄킄)과 '아가'도 받는다 ·
+       적어 둔 이름 바로 뒤가 조사로 읽히면(이든이든 = 이든 + 조사 '이든') 이름으로 다시 읽지 않는다 · 라틴 이름 끝 글자 늘임(Leooo)과 뒤 숫자(Leo2)도 바꾼다 ·
+       한글 이름 뒤 라틴 글자(솔x빈)는 낱말 끝 · 줄임꼴 + 요(민선요 = 민서는요) · 애칭 '이' + 같은/거(하준이 같은 놈 → 도하 같은 놈 · 하준이 거야) ·
+       이름이 아닌 꼴은 그대로 둔 곳으로 센다: '진'으로 끝나는 이름 + 않/마(채우진 않았다 = 채우지는) · 'A이든 B든' 짝(안이든 밖이든).
+       (수정 5) 음절을 이루지 않는 첫가끝 자모(ᆢ)는 부호 · 사람일 수 있는 성 + 이름 낱말(우유나 씨)은 지키지 않는다 · 한 글자 이름 + 줄임 조사(까진 · 부턴 · 밖엔 · 한테까진)·땜에·탓 ·
+       '진 않/마'는 성·애칭 앞말이 붙은 때만(바른 않 활용 · 마 + 문장부호) · 같은/같아는 다시 주격, 애칭 '이' + 가족 호칭 + 가/이/은/는(소율이 엄마가 → 미나 엄마가) ·
+       성·앞말과 줄임꼴을 함께 받지 않는다(주도한) · 한 글자 이름 뒤 인/일/임은 정해 둔 글자 앞에서만(강인한은 그대로) · 세 글자 이상 영문 이름의 큰 글자 꼴(THEO) ·
+       라틴 이름 사이 x(TheoxLuna) · 감탄 앞말 갓 · 헐 · 막내.
+       (수정 6) 줄임꼴 뒤에 붙여 쓴 인데·인가·인지·일걸·일지도(채안데 · 로한가 · 채알걸) · 성·앞말 때문에 둔 줄임꼴(김채안)도 그대로 둔 곳으로 센다 ·
+       받침 없는 한 글자 이름 + 더라·랬잖아·라곤·라고는·네서·네집 · '같은 애/놈/사람'은 애칭 '이' · 앞말 자기 · 내 · 부른 이름 되풀이(하람아하람아) ·
+       작은 글자 영문 이름은 바로 뒤에 한글이 붙을 때만(nova야) · 홀소리 한 번 늘임(Novaa) · x 뒤가 조사면 이름 글자(Lux가).
+       (수정 7) 서한은 줄임꼴로 읽는다 · 앞말 내 · 자기는 다시 뺐다(내리나 · 내가온다 · 자기다운) · 입말 더라 · 라고는…은 흔한 움직씨 줄기와 같은 한 글자 이름 뒤에서 읽지 않는다(하더라 · 보라고는) · 리더 ·
+       붙여 쓴 줄임꼴은 뒤가 조사·서술격 끝으로 읽힐 때만(지날수록 · 보안지침은 그대로) · ㄹ 줄임꼴 + 요(은홀요) ·
+       한 글자 이름도 두 글자 이상 이름 앞 덩이에 온다(혁이솔) · 한 글자·영문 이름 바로 뒤가 적어 둔 이름이면 이어 쓴 이름(혁이솔 · Ivy이솔) · x 뒤가 적어 둔 이름이면 커플 표기(Theox이든) ·
+       부른 이름 되풀이의 앞 부름말도 받침에 맞춘다(서하야서하야 → 지율아지율아) · 애칭 '이' + 띄어 쓴 가족 호칭(진이 오빠 왔어?) · '이' + ^ ♡(진이^^) ·
+       작은 글자 영문 이름 + 한글은 사람 뒤 조사일 때만(max로 · eve에 · rose향은 그대로) · 조사 꼴 한 글자 이름이 닫는 따옴표·라틴 글자·숫자나 성이 아닌 낱말 바로 뒤에서
+       조사로 읽히면 앞말의 조사(Sam은 · 「봄」은 · 사랑은: 바꾸지도 세지도 않는다) · 그대로 둔 곳 셈: 앞뒤가 바뀌어 이제 바꿀 자리가 된 이름(바꾼 말 속 글자는 빼고)과
+       영문 이름의 다른 큰/작은 글자 꼴(zoe · LiA, 낱말 하나일 때)도 센다.
+       (수정 8) 조사 꼴 한 글자 이름은 앞 소리의 받침으로 가른다: 닫는 따옴표·괄호·문장부호를 건너 마지막 글자(숫자는 읽은 소리: 1 일 · 3 삼)의 받침에
+       조사가 맞을 때만 조사로 두고(따옴표·괄호 뒤는 그대로 둔 곳으로 센다), 안 맞으면 이름으로 바꾼다(【알림】란 · No.1란) · 라틴 글자 뒤는 조사로 두되 센다 ·
+       닫는 따옴표 바로 뒤 하고 · 하며 · 하는은 인용 · 앞 줄이 바로 앞에 바꿔 쓴 이름이면 원래 이름의 받침으로 본다(나윤란 → 지아예솔) ·
+       붙여 쓴 줄임꼴 뒤 인가봐 · 인줄 · 인듯 · 인척 · 일수도는 서술격으로 받고(아란가봐 → 민혁인가봐), 그 밖에 읽지 못한 뒷글은 그대로 둔 곳으로 센다.
+       (수정 9) 닫는 따옴표 바로 뒤 하고 · 하며 · 하는과 숫자 뒤 조사 꼴 이름(No.3은)은 조사로 두되 센다 · 낱말 첫머리 줄임꼴에 붙은 한글은
+       무엇이든 읽지 못한 뒷글로 센다(리울때가 · 아란탓이야) · 닫는 괄호·따옴표 뒤 조사 꼴 이름 + 띄어 쓴 님/씨는 이름(【알림】은 님이) ·
+       한 글자 이름 + 받침에 맞는 부름말을 붙여 되풀이한 덩이(하야하야 · 란아란아)는 바꾼다 · 셀 때 바꾼 이름 뒤 조사 꼴 이름은 지금 앞 글자 받침에도
+       맞아야 조사로 둔다(바꿀 말이 원문에 쓰인 민준란) · 영문 이름의 가운데 글자를 늘인 꼴(Fiiinn)도 센다.
+       (수정 10) 한 번 적용하는 동안 이 기능이 쓴 글(바꾼 말 · 그 뒤에 조사로 읽어 둔 · 지운 · 받침을 맞춘 조사)은 뒤 줄이 다시 이름으로 읽지도,
+       그대로 둔 곳으로 세지도 않는다(하린이가 → 채아가의 '가' · 유나가의 '가' · 맞바꾼 두 줄). 그 기록은 문단 글자마다 남겨 보기·되돌리기 뒤에도 쓴다 ·
+       닫는 괄호·따옴표·숫자 뒤 조사 꼴 이름은 이름 한 글자만 조사로 읽고 뒤에 조사·님/씨가 더 붙으면 이름(【알림】이님이 · 【시스템】이가 · No.1이가) ·
+       조사 꼴이 아닌 한 글자 이름 · 영문 이름이 바로 앞에 바꾼 이름이나 적어 둔 다른 가릴 말에 붙어 있고 뒤가 낱말 끝·닫힌 조사면 이름(은서결 · 결온 · TheoRin) ·
+       글자 노드 둘 이상에 걸친 이름(굵게·검색 표시로 나뉜 하|린)도 같은 규칙으로 바꾼다: 바꿀 말은 첫 노드에, 나머지 노드의 이름 글자는 지우고 표시는 둔다.
+       형광펜·밑줄 경계가 이름 속을 지나면 바꾸지 않고 그대로 둔 곳으로 센다(보기에서 걸음·바꾸기).
+       (수정 11) 쓴 글 기록은 문단 글에 더해 묶음 · 문단 차례(빈 문단 빼고) · 문단 수로 찾는다: 맞바꾼 두 줄로 앞 문단을 바꾼 글이 뒤 문단 원문과 같아도
+       뒤 문단은 그 기록을 빌리지 않는다(자기Theo → 자기민준 다음 자기민준의 민준은 센다). 「원고에 적용」을 다시 눌러도 앞서 쓴 글은 다시 읽지 않는다
+       (하결 → 수하하결 · 맞바꾼 줄이 되돌아가지 않는다) · 받침을 모르는 이름(영문)을 바꾼 말 뒤 조사 꼴 이름은 조사로 두되 센다(Theo은 커플),
+       조사로 읽히지 않으면 이름(Theo도가 · Ella하 커플) · 괄호·숫자·라틴 글자 뒤 조사 꼴 이름 바로 뒤에 쉼표로 다른 이름을 이어 적으면 이름 목록(【알림】은, 하, 도 님이) ·
+       바꾼 뒤 글이 비게 된 형광펜·밑줄은 지운다.
+       (수정 12) 바꾼 이름 바로 뒤 글은 원래 이름 끝 받침으로만 조사로 읽어 두고, 입말 오타 꼴(윤랑 · 나윤를 · 윤야)은 조사로 읽어 두지 않는다(그 자리는 그 이름의 줄이 가른다:
+       윤랑 → 하나예솔). 조사로 읽어 둔 원문(하린이가의 가 · “민준”은 · 하나께서)은 다시 읽지 않되 그대로 둔 곳 셈에서는 빼지 않는다(2.5.1보다 덜 세지 않는다) ·
+       쓴 글 기록은 문단 묶음 요소의 속성(data-novcap-mask-own: 그 안 글 덩이 차례 · 글 열쇠 · 쓴 자리 · 읽어 둔 자리)에 둔다: 다른 문단을 더하거나 지워도 그대로 쓰고
+       되돌리기·다시실행 HTML에도 따라간다. 글이 바뀐 문단만 기록 없이 읽는다(2.5.1처럼) · 한 글자 한글 이름 둘을 붙여 쓴 짝(이별 · 가린 · 가솔린)은 뒤에 커플 표시
+       (띄어 쓴 커플 · 콤비 · 조합 · 듀오 · cp · CP / x · × · ♡ · ♥ · ❤ · & · +)가 오거나 짝만 괄호·따옴표 안에 있을 때만 커플 표기로 바꾼다(그 밖은 2.5.1처럼 센다).
+       (수정 13) 2.5.1보다 나빠진 읽기는 2.5.1로 돌린다: 한 글자 한글 이름 둘의 짝(이별 · 이윤 · 결온)은 커플 표시·괄호가 있어도 바꾸지 않고 센다(2 + 1 · 2 + 2는 그대로) ·
+       닫는 따옴표·괄호·숫자 뒤 조사 꼴 이름 + 조사(“지은”이는 · [민준]이가 · 【알림】이님이 · No.1이가)는 두고 센다(띄어 쓴 님 · 씨는 수정 9 그대로) ·
+       받침에 맞춰 고친 조사의 원문이 가릴 말이면(“하나”랑 → “민준”이랑 · 린랑 → 솔이랑) 그 고친 글은 다시 읽지 않되 센다 · 셀 때 맞바꾼·이어지는 줄은 2.5.1처럼
+       그다음 바꿀 말의 받침으로도 가르고(솔 → 별 · 별 → 태현: 별이가의 이를 센다), 바꾼 말 + 원문 글자가 바꿀 말 꼴이 된 자리(별이 + 랑 = 이랑)의 이름도 센다 ·
+       기록은 'v2' 줄 단위: 글 있는 덩이마다 글 열쇠(+ 쓴 자리 · 읽어 둔 자리 · 자리 해시)를 적어, <br> 줄을 더하거나 지워도 남은 줄은 기록을 쓰고
+       글이 바뀐 줄은 바뀌지 않은 앞뒤 글 속 자리를 옮겨 쓴다(맞바꾼 이름이 되돌아가지 않는다). 글자 노드 기록(WeakMap)도 두어 노드를 옮겨 붙인 문단에서 쓴다 ·
+       다시 누를 때 앞서 쓴 글 뒤 조사 꼴 이름은 첫 적용처럼 원래 받침을 짐작해 읽는다.
+       (수정 14) 셀 때 이 문단의 쓴 글 기록(빈 쓴 자리라도)이 있으면 그 기록 자리에 닿은 가릴 말은 기록대로 가른다: 쓴 글이 아니면 다른 줄의 바꿀 말과 같은 글자여도
+       빼지 않고 판정대로 센다(맞바꾼·이어지는 줄: 「가」나 씨가 · [Kai]나윤 님이의 원래 이름). 기록이 없는 글은 예전처럼 바꿀 말 속 글자를 뺀다 ·
+       괄호·따옴표 속 이름을 바꾼 뒤에도 닫는 괄호·따옴표 뒤 조사 꼴 이름 + 띄어 쓴 님/씨는 수정 9대로 이름이다: 조사로 읽어 두지 않아 그 이름의 줄이 바꾼다(【다온】은 님이 → 【하늘】보라 님이).
+       (수정 15) 셀 때 남는 기록(maskRecordNeeded)이 있으면 그 줄 전체를 기록대로 가른다(쓴 글 둘레만이 아니라: 민석이나민석 · '도'도가의 원래 이름도 센다).
+       남지 않는 기록은 보기와 같게 쓰지 않는다 · 셀 때 같은 낱말 앞쪽에 이 기능이 바꿔 쓴 말이 있고 그 뒤 조사(쓴 것이든 원문이든) 다음에 붙은 조사 꼴 이름은
+       조사가 이어지지 않거나('란'이나란 · 란이나란) 원래 받침을 모르거나(Rin란 → 민석이란) 이어지는 줄이면(시아란 → 나윤이란, 나윤 → 지호) 센다(2.5.1처럼) ·
+       셀 때 이어지는 줄은 2.5.1처럼 그다음 바꿀 말로 끝나는 모든 바꿀 말(가은 속 은)의 원래 받침으로 가르고 받침 모르는 이름이 있으면 센다 ·
+       다시 누른 「원고에 적용」은 앞서 쓴 글이 이름 둘레(같은 낱말 · 닫는 괄호·따옴표 건너 · 쉼표로 이은 다음 이름)에 닿은 이름을 다시 읽지 않는다:
+       첫 적용이 원래 글로 가른 것을 그대로 둔다('지호'나재민하늘 · '도'도가 · 민석이나민석 · ‘시아’란, 은란은이 두 번째에 바뀌지 않는다 — 그 기록은 남긴다). */
+
+    /* 문장부호로 쓰는 홀자모: ㅡ(줄표·ㅡㅡ) · ㅣ(세로 막대) · ㆍ ᆞ(가운뎃점). 앞뒤 낱말을 가르는 부호로 본다(그때였다ㅡ은서가 · 은서ㆍ도윤). */
+    const MASK_PUNCT_JAMO = new Set([0x3161, 0x3163, 0x318D, 0x119E]);
+
+    /* 글자 종류: h 한글 음절 · j 한글 자모 · l 라틴 글자·숫자 · c 한자 · k 가나 · '' 그 밖(띄어쓰기·문장부호·부호로 쓴 자모·따옴표·괄호·이모지) */
+    function maskCharKind(code) {
+        if (code >= 0xAC00 && code <= 0xD7A3) return 'h';
+        if (MASK_PUNCT_JAMO.has(code)) return '';
+        if ((code >= 0x1100 && code <= 0x11FF) || (code >= 0x3131 && code <= 0x318E) || (code >= 0xA960 && code <= 0xA97F) || (code >= 0xD7B0 && code <= 0xD7FF)) return 'j';
+        if ((code >= 0x30 && code <= 0x39) || (code >= 0x41 && code <= 0x5A) || (code >= 0x61 && code <= 0x7A)) return 'l';
+        if (code >= 0xC0 && code <= 0x24F && code !== 0xD7 && code !== 0xF7) return 'l';
+        if ((code >= 0xFF10 && code <= 0xFF19) || (code >= 0xFF21 && code <= 0xFF3A) || (code >= 0xFF41 && code <= 0xFF5A)) return 'l';
+        if ((code >= 0x4E00 && code <= 0x9FFF) || (code >= 0x3400 && code <= 0x4DBF) || (code >= 0xF900 && code <= 0xFAFF)) return 'c';
+        if ((code >= 0x3041 && code <= 0x30FA) || code === 0x30FC || (code >= 0x31F0 && code <= 0x31FF) || (code >= 0xFF66 && code <= 0xFF9D)) return 'k';
+        return '';
+    }
+
+    /* (수정 5) 첫가끝 자모(U+1100–U+11FF)가 앞뒤 글자와 한 음절을 이루지 않으면 문장부호로 본다(천지인 자판의 ᆢ: 그날ᆢ소율이 · 미안해ᆢ린아).
+       첫소리는 바로 뒤에 가운뎃소리가, 가운뎃소리는 바로 앞에 첫소리가, 끝소리는 바로 앞에 가운뎃소리나 받침 없는 완성 글자가 있어야 음절이다. */
+    function maskLooseJamoAt(text, i) {
+        const code = text.charCodeAt(i);
+        if (!(code >= 0x1100 && code <= 0x11FF)) return false;
+        if (code <= 0x115F) {
+            const next = i + 1 < text.length ? text.charCodeAt(i + 1) : -1;
+            return !((next >= 0x1160 && next <= 0x11A7) || (next >= 0xD7B0 && next <= 0xD7C6));
+        }
+        const prev = i > 0 ? text.charCodeAt(i - 1) : -1;
+        if (code <= 0x11A7) return !((prev >= 0x1100 && prev <= 0x115F) || (prev >= 0xA960 && prev <= 0xA97C));
+        return !((prev >= 0x1160 && prev <= 0x11A7) || (prev >= 0xD7B0 && prev <= 0xD7C6) || (prev >= 0xAC00 && prev <= 0xD7A3 && (prev - 0xAC00) % 28 === 0));
+    }
+
+    /* 자리 i 글자의 종류(maskCharKind). 음절을 이루지 않는 첫가끝 자모는 '' (부호) */
+    function maskKindAt(text, i) {
+        const kind = maskCharKind(text.charCodeAt(i));
+        return kind === 'j' && maskLooseJamoAt(text, i) ? '' : kind;
+    }
+
+    /* (수정 3) 앞 글자가 가릴 말을 다른 낱말 속에 묶는지: 같은 글자 갈래만 막는다.
+       한글 이름: 한글 음절과 음절을 이루는 옛 자모(첫가끝)만 · 홀자모(0x3131–0x318E: ㅋ ㅎ ㅠ ㅜ…)·라틴 글자·숫자·부호는 경계.
+       라틴 이름: 라틴 글자·숫자만 · 한자·가나 이름: 같은 갈래만 · 홀자모로 시작하는 말: 한글 음절·자모.
+       (수정 5) text[i]를 본다: 음절을 이루지 않는 첫가끝 자모(ᆢ)는 부호다. */
+    function maskLeftBlocks(text, i, head) {
+        const code = text.charCodeAt(i);
+        const kind = maskKindAt(text, i);
+        if (head === 'h') return kind === 'h' || (kind === 'j' && !(code >= 0x3131 && code <= 0x318E));
+        if (head === 'j') return kind === 'h' || kind === 'j';
+        return Boolean(kind) && kind === head;
+    }
+
+    /* 한글 음절로만 된 말인지 */
+    function maskAllHangul(word) {
+        for (let k = 0; k < word.length; k++) {
+            const code = word.charCodeAt(k);
+            if (code < 0xAC00 || code > 0xD7A3) return false;
+        }
+        return word.length > 0;
+    }
+
+    /* 완성 글자의 받침: V 없음 · L ㄹ · C 그 밖 · '' 완성 글자가 아님 */
+    function maskFinalOf(code) {
+        if (!(code >= 0xAC00 && code <= 0xD7A3)) return '';
+        const final = (code - 0xAC00) % 28;
+        return final === 0 ? 'V' : final === 8 ? 'L' : 'C';
+    }
+
+    /* 닫는 따옴표·괄호(뒤에 붙은 조사는 따옴표 안 말에 맞춘다: '린'이라고 → '하나'라고) */
+    const MASK_CLOSE_CODES = new Set([0x22, 0x27, 0x29, 0x5D, 0x7D, 0xBB, 0x2019, 0x201D, 0x3009, 0x300B, 0x300D, 0x300F, 0x3011, 0xFF09, 0xFF3D]);
+    /* 말이 끝나는 글자: 쉼표·느낌표·물음표·말줄임·물결·줄표(부호로 쓴 ㅡ·ㆍ 포함)·줄바꿈과 닫는 따옴표·괄호. 애칭 '이'·홀로 '요'를 가를 때 쓴다(마침표는 따로). */
+    const MASK_STOP_CODES = new Set([0x0A, 0x0D, 0x21, 0x2C, 0x3F, 0x7E, 0x2014, 0x2015, 0x2025, 0x2026, 0x3001, 0xFF01, 0xFF0C, 0xFF1F, 0xFF5E, ...MASK_CLOSE_CODES, ...MASK_PUNCT_JAMO]);
+
+    /* (수정 8) 닫는 따옴표·괄호 바로 뒤 조사 꼴 한 글자 이름: 앞으로 거슬러 볼 때 건너뛰는 글자(닫는 따옴표·괄호와 . , ! ? ~ … ‥ — ― 。 、 ！ ， ． ？ ～) */
+    const MASK_BACK_SKIP_CODES = new Set([...MASK_CLOSE_CODES, 0x2E, 0x2C, 0x21, 0x3F, 0x7E, 0x2025, 0x2026, 0x2014, 0x2015, 0x3001, 0x3002, 0xFF01, 0xFF0C, 0xFF0E, 0xFF1F, 0xFF5E]);
+    /* 거슬러 가다 여기서 멈추면 앞에 낱말이 없다(따옴표가 여는 따옴표다): 띄어쓰기·줄바꿈과 여는 따옴표·괄호 ( [ { « ‘ “ 〈 《 「 『 【 （ ［ */
+    const MASK_BACK_STOP_CODES = new Set([0x20, 0x09, 0x0A, 0x0D, 0xA0, 0x3000, 0x28, 0x5B, 0x7B, 0xAB, 0x2018, 0x201C, 0x3008, 0x300A, 0x300C, 0x300E, 0x3010, 0xFF08, 0xFF3B]);
+    /* 닫는 따옴표(괄호는 빼고): " ' » ’ ” 」 』 — 바로 뒤 '하' + 고 · 며 · 는은 인용하는 말(“됐어.”하고 말했다) */
+    const MASK_CLOSE_QUOTE_CODES = new Set([0x22, 0x27, 0xBB, 0x2019, 0x201D, 0x300D, 0x300F]);
+    const MASK_QUOTE_VERB_NEXT = new Set([0xACE0, 0xBA70, 0xB294]);
+    /* 숫자를 읽은 소리의 받침(0 영 · 1 일 · 2 이 · 3 삼 · 4 사 · 5 오 · 6 육 · 7 칠 · 8 팔 · 9 구). 0으로 끝나는 수(십 · 백 · 천 · 영)는 받침 있음. */
+    const MASK_DIGIT_FINALS = 'CLVCVVCLLV';
+
+    function maskStopAt(text, index, withPeriod) {
+        if (index >= text.length) return true;
+        const code = text.charCodeAt(index);
+        if (withPeriod && (code === 0x2E || code === 0x3002)) return true;
+        return MASK_STOP_CODES.has(code) || maskLooseJamoAt(text, index);
+    }
+
+    /* 뒤에 물음표가 오는지(띄어쓰기·마침표·말줄임은 건너뛴다): 은서야? · 은서야 ? · 은서야…? */
+    function maskAskAt(text, index) {
+        for (let k = index; k < text.length; k++) {
+            const code = text.charCodeAt(k);
+            if (code === 0x3F || code === 0xFF1F) return true;
+            if (code !== 0x20 && code !== 0x09 && code !== 0xA0 && code !== 0x3000 && code !== 0x2E && code !== 0x2025 && code !== 0x2026 && !maskLooseJamoAt(text, k)) return false;
+        }
+        return false;
+    }
+
+    /* 늘인 부름말 꼬리(은서야아아 · 도윤아앗 · 하린아앙): 부름말 '아/야' 바로 뒤에 이어지면 같은 부름으로 본다. 아 앗 앙 야 얏 */
+    const MASK_STRETCH_CODES = new Set([0xC544, 0xC557, 0xC559, 0xC57C, 0xC58F]);
+
+    /* 조사 자료. 자리: S 뒤붙이(님·씨·호칭·애칭 '이'·거/쪽) · T 뒤에 더 붙지 않는 격조사(이/가·을/를·아/야) · G '의' · K 격조사 ·
+       O 뒤에 보조사가 더 붙는 보조사(만·까지·부터…) · D 끝나는 보조사(은/는·도·이나…) · Q 줄임꼴(한텐·에겐·께선…) · P 서술격 · Y '요'.
+       차례: S{0,3} 다음 T | G | K (O|D){0,2} | O·D 한두 개 | Q | P, 그 뒤에 '요' 하나. 진짜 짝만 받는다(만은·까지도 O, 나는·도는 X).
+       조사는 앞 글자 받침에 맞는 꼴만 읽는다(린다는 '린'+'다'가 아니다).
+       짝 [받침 뒤, 받침 없는 뒤, 자리, 종류]. 종류 r = 으로/로(ㄹ 받침 뒤는 로) · p = 서술격('이' 꼴은 받침 없는 말 뒤 문어체에도 쓴다) ·
+       n = 애칭 '이'(뒤에 조사가 더 붙을 때만) · v = 부름말(뒤에 '요'가 붙지 않는다) */
+    const MASK_JOSA_FAMILIES = [
+        ['이', '가', 'T'], ['을', '를', 'T'], ['과', '와', 'K'], ['아', '야', 'T', 'v'], ['이여', '여', 'T', 'v'], ['이랑', '랑', 'K'],
+        ['으로', '로', 'K', 'r'], ['으로서', '로서', 'K', 'r'], ['으로써', '로써', 'K', 'r'], ['으로부터', '로부터', 'K', 'r'],
+        ['으론', '론', 'Q', 'r'], ['으로선', '로선', 'Q', 'r'],
+        /* (수정 5) 보조사 줄임꼴은 격조사 뒤에도 온다(린한테로부턴) */
+        ['으로부턴', '로부턴', 'D', 'r'], ['으로썬', '로썬', 'D', 'r'],
+        ['은', '는', 'D'], ['이나', '나', 'D'], ['이라도', '라도', 'D'], ['이야말로', '야말로', 'D'], ['이나마', '나마', 'D'],
+        ['이든', '든', 'D'], ['이든지', '든지', 'D'], ['이든가', '든가', 'D'],
+        ['이라든가', '라든가', 'D'], ['이라던가', '라던가', 'D'], ['이라든지', '라든지', 'D'], ['이라던지', '라던지', 'D'],
+        ['이', '', 'S', 'n'],
+        ['이에요', '예요', 'P', 'p'], ['이어서', '여서', 'P', 'p'], ['이어도', '여도', 'P', 'p'], ['이어야', '여야', 'P', 'p'], ['이어요', '여요', 'P', 'p']
+    ];
+    /* 서술격: '이'+끝 / 끝(받침 없는 말 뒤는 이 목록만 받는다 — 유나이티드는 '유나'+'이티드'가 아니다) */
+    const MASK_COPULA_ENDINGS = '다 야 라 라고 라고요 라는 라는데 라면 라면서 라서 라서요 라니 라니까 라니요 라며 라던 라던데 란 란다 랍니다 라네 라네요 라지 라지만 라야 ' +
+        '래 래요 래서 랬다 랬어 랬지 지 지만 지요 죠 고 고요 며 면 면서 네 네요 니 니까 냐 구나 군요 잖아 잖아요 거든 거든요 거나 요 자 자면 던 던데 던가 던지 건 건데 건만 ' +
+        '세요 신 신데 신가 신지 시죠 십니다 시다 시고 시며 시면 시니 시니까 시지 시네 시네요 시군요 시구나 시던 시잖아요 셔서 셔도 ' +
+        /* (수정 2) 입말 끝. 받침 있는 이름은 '이' 뒤가, 받침 없는 두 글자 이상 이름은 라·건… 뒤가 열려 있어 한 글자 이름(미·세)에만 쓰인다. */
+        '라더라 라더니 라더군 라더군요 라길래 라기에 라구 라구요 라냐 라냐고 라니깐 라잖아 라잖아요 라든 냐고 니깐 래도 ' +
+        '건가 건가요 건지 건지도 건데요 자나 자나요 던데요 던걸 던걸요 넹 지롱';
+    /* (수정 6) 입말(은호더라 → 민준이더라 · 휘더라 → 지민이더라 · 랬잖아 · 라곤 · 라고는).
+       (수정 7) 아주 흔한 움직씨 줄기와 같은 한 글자 이름(MASK_ONE_VERB_STEMS: 하더라 · 주더라 · 보라고는) 바로 뒤에서는 읽지 않는다 — 그 자리는 그대로 둔 곳으로 센다. */
+    const MASK_COPULA_ENDINGS_LONG = '더라 더라고 더라고요 더라구 더라구요 랬잖아 랬잖아요 랬는데 랬는데요 랬던 랬나 라곤 라고는 라고도 라고만';
+    /* (수정 7) 받침 없는 한 글자 이름 가운데 아주 흔한 움직씨·그림씨 줄기(하다 · 가다 · 오다 · 보다 · 주다 · 자다 · 서다 · 지다 · 나다 · 사다 · 타다 · 차다 · 두다 · 쓰다 ·
+       피다 · 비다 · 세다 · 내다 · 되다 · 치다 · 뜨다 · 크다 · 쉬다 · 메다 · 새다 · 베다 · 끄다 · 기다) */
+    const MASK_ONE_VERB_STEMS = new Set('하 가 오 보 주 자 서 지 나 사 타 차 두 쓰 피 비 세 내 되 치 뜨 크 쉬 메 새 베 끄 기'.split(' '));
+    /* 받침과 상관없는 조사·호칭(뒤에 조사가 더 붙어도 된다). '요'는 다른 조사 뒤에만(린은요 · 린한테요) — 이름 바로 뒤 '요'는 문장 끝일 때만 따로 본다. */
+    const MASK_JOSA_FREE = [
+        /* (수정 3) '편'(윤편이야 · 지호편에서): '쪽'처럼 붙여 쓴다. 한편 · 남편 같은 낱말은 MASK_WORD_EXCEPTIONS가 지킨다. */
+        ['S', '님 씨 군 양 들 네 언니 오빠 누나 형 형님 누님 오라버니 선배 후배 선생 선생님 쌤 아저씨 아줌마 이모 삼촌 고모 쨩 짱 찡 상 쿤 사마 거 꺼 것 쪽 측 편 ' +
+            /* (수정 2) 붙여 쓴 가족·사이 호칭(은서엄마 · 도윤아빠 · 하린친구) */
+            '엄마 아빠 어머니 아버지 어머님 아버님 엄니 아부지 동생 형아 언냐 할머니 할아버지 할매 할배 친구 남친 여친 남편 아내 와이프 부인 아들 딸 ' +
+            '조카 사촌 이모부 고모부 외삼촌 숙모 큰엄마 큰아빠 작은엄마 작은아빠 ' +
+            /* (수정 6) 네서(= 네에서: 휘네서 자고 왔어) · 네집(휘네집 가자) · 쟝(휘쟝) */
+            '네서 네집 쟝'],
+        ['T', '건 걸 껀'],
+        ['G', '의'],
+        ['K', '에 에게 에게서 에게로 에게다 한테 한테서 한테로 한테다 께 께서 에서 에다 에다가 하고 보다 처럼 만큼 대로 더러 보고 마냥 같이'],
+        ['O', '까지 부터 마저 조차 밖에 만 뿐'],
+        /* '두'는 입말 '도'(은서두 · 은서한테두) · (수정 3) '좀'은 붙여 쓴 부사(윤좀 봐 · 윤한테좀) */
+        ['D', '도 두 좀 ' +
+            /* (수정 5) 보조사·격조사 줄임꼴(린까진 · 강밖엔 · 연부턴 · 린한테까진 · 한에게까진): 끝나는 보조사라 격조사 뒤에도 붙는다 */
+            '까진 부턴 밖엔 대론 보곤 에다간 에게론 한테론'],
+        ['Q', '한텐 한테선 에겐 에게선 께선 에선 엔 하곤 보단'],
+        ['Y', '요'],
+        ['P', '인 인데 인데요 인데도 인가 인가요 인가봐 인지 인지도 인지라 인지요 인걸 인걸요 인즉 인들 일까 일까요 일지 일지도 일지라도 일걸 일걸요 일텐데 일테니 일 임 임에도 임을 입니다 입니까']
+    ];
+    /* 끝이 열린 서술격: 이 다음은 낱말 끝까지 무엇이 와도 받는다(이었다면서 · 이자 · 이라던가…, 활용 끝은 다 셀 수 없다).
+       [꼴, 앞 글자 조건, 받침 맞춤 짝]. '이'는 받침 있는 말 뒤에만. 인·일·임(인줄 · 일거야 · 인듯)은 받침과 상관없이.
+       넷째 칸 true(인·일): 바로 뒤가 명사에 붙는 조사(이 을 은 과 의 에 도 으로…)면 열지 않는다. 서술격 '인/일' 뒤에는 오지 못하니
+       이름이 남을 일은 없고, 연인이 · 생일은 · 내일도 같은 낱말만 지킨다(인/일 + 낱말 끝, 인데·인지·일까 같은 닫힌 꼴은 그대로 받는다).
+       W = 받침 없는 말 뒤, 이름이 두 글자 이상일 때만(바로 뒤가 아니면 = 호칭 뒤면 이름 길이는 보지 않는다).
+       한 글자 이름(미·세·수·하·가·보·나)은 이 끝을 열지 않고 닫힌 목록(MASK_COPULA_ENDINGS)만 받는다:
+       열면 미라클 · 미나리 · 미란다 · 세라믹 · 수건 · 수거 · 하던 · 하든지 · 가자 · 가든 · 보자 · 보건 · 나라 · 나랑 같은 흔한 낱말이 이름 + 끝으로 읽힌다. */
+    const MASK_OPEN_FORMS = [
+        /* '였'·'셨'은 받침 있는 이름 뒤 입말 줄임(도윤였는데 · 도윤셨나)도 받는다(받침 있는 말로 바꾸면 '이었'·'이셨') */
+        ['이', 'C', ['이', '']], ['이었', 'F', ['이었', '였']], ['이셨', 'F', ['이셨', '셨']], ['였', '', ['이었', '였']], ['셨', '', ['이셨', '셨']], ['같', '', null],
+        /* 흔한 잘못 쓴 꼴 '이였'(은서이였다 = 은서였다) */
+        ['이였', 'F', ['이었', '였']],
+        ['인', '', null, true], ['일', '', null, true], ['임', '', null],
+        ['라', 'W', ['이라', '라']], ['란', 'W', ['이란', '란']], ['자', 'W', ['이자', '자']], ['던', 'W', ['이던', '던']], ['건', 'W', ['이건', '건']],
+        /* '거'는 '것'(은서거야 = 은서 것이야)이 더 흔해 받침을 맞추지 않는다 */
+        ['거', 'W', null], ['든', 'W', ['이든', '든']], ['나', 'W', ['이나', '나']], ['랑', 'W', ['이랑', '랑']],
+        /* (수정 3) 붙여 쓴 말(윤때문에 · 윤덕분이야 · 윤대신 · 윤빼고 · 윤말고도): 뒤 활용은 열어 둔다. 한 글자 이름 + 이 말로 된 흔한 낱말은 없다. */
+        ['때문', '', null], ['덕분', '', null], ['대신', '', null], ['빼고', '', null], ['말고', '', null],
+        /* (수정 5) 땜에(= 때문에) · 탓(린땜에 · 강탓이야). '답게'는 넣지 않는다(정답게 · 아름답게). */
+        ['땜에', '', null], ['탓', '', null]
+    ];
+    /* (수정 5) 한 글자 이름 뒤 인/일/임은 바로 뒤 글자가 이 목록일 때만 연다(강인데 · 린인줄 · 연일까 · 한임에도 ↔ 강인한 · 연인이).
+       뒤가 낱말 끝이면 닫힌 목록(인 · 일 · 임)이 받는다. 두 글자 이상 이름은 그대로 열려 있다. */
+    /* (수정 6) '인' 뒤에 냥 · 채 · 겨(린인냥 · 린인채 · 린인겨)를 더했다 */
+    const MASK_ONE_OPEN_NEXT = {
+        '인': '데 대 뎅 뎁 지 진 줄 듯 가 감 갑 걸 거 것 게 건 즉 들 만 바 셈 양 척 디 냥 채 겨',
+        '일': '거 걸 것 꺼 껄 지 진 줄 까 듯 텐 테 터 수 리 뿐 께 게 세',
+        '임': '에 을 이 은 다 니 당 돠 요'
+    };
+    /* 명사 뒤 조사의 첫 글자: 이 을 를 은 는 과 와 의 에 엔 도 두 으 로 */
+    const MASK_NOUN_PARTICLE_CODES = new Set([0xC774, 0xC744, 0xB97C, 0xC740, 0xB294, 0xACFC, 0xC640, 0xC758, 0xC5D0, 0xC5D4, 0xB3C4, 0xB450, 0xC73C, 0xB85C]);
+    /* 가릴 말 + 뒤붙이처럼 보여도 한 낱말인 말(하나님은 '하나'+'님'이 아니다). 한 글자 이름과 호칭·거/쪽·같·자가 만나는 흔한 낱말. */
+    const MASK_WORD_EXCEPTIONS = ('하나님 하나같이 한결같 똑같 감쪽같 꿈같 불같 주님 신랑 명랑 리더 날씨 글씨 말씨 솜씨 맵씨 아씨 불씨 꽃씨 마음씨 몸짱 얼짱 연이어 연이은 안이한 안이하 ' +
+        '세상 영상 현상 진상 정상 인상 지상 수상 대상 사상 이상 환상 화상 선상 무상 기상 비상 상상 형상 감상 손상 명상 망상 향상 연상 예상 증상 일상 양상 외상 조상 회상 책상 밥상 천상 해상 시상 실상 고상 부상 최상 ' +
+        '인형 유형 지형 모형 대형 소형 원형 체형 외형 정형 사형 변형 선형 기형 성형 중형 신형 구형 전형 도형 균형 조형 ' +
+        '태양 서양 동양 고양 해양 영양 수양 모양 사양 대양 교양 요양 휴양 한양 석양 평양 하양 양양 부양 배양 ' +
+        '해군 공군 육군 아군 적군 장군 대군 주군 진군 행군 국군 미군 원군 반군 ' +
+        '한쪽 서쪽 남쪽 동쪽 북쪽 양쪽 반쪽 이쪽 저쪽 그쪽 왼쪽 오른쪽 위쪽 앞쪽 뒤쪽 안쪽 옆쪽 양측 추측 관측 예측 ' +
+        '선거 근거 증거 과거 주거 수거 이거 저거 그거 철거 점거 사건 조건 물건 수건 안건 용건 여건 요건 문건 보건 이걸 그걸 저걸 이것 그것 저것 ' +
+        '여자 가자 사자 의자 부자 모자 과자 기자 저자 이자 주자 유자 효자 도자 하자 보자 ' +
+        /* (수정 3) 한 글자 + 편(붙여 쓴 '편'을 받으면서 지킬 낱말) */
+        '한편 남편 단편 장편 중편 전편 후편 속편 본편 송편 인편 상편 하편 반편 시편 옥편 방편 형편 저편 이편 그편 양편 우편 좌편 동편 서편 북편 뒤편 앞편 첫편 새편 각편').split(' ');
+
+    /* (수정 3) 두 글자 이상 이름으로 시작하는 흔한 낱말: 오른쪽이 열린 이름 뒤에 조사·서술격이 읽히지 않을 때만 지킨다
+       (사라지다 · 유리창 · 시아버지 · 유나이티드). 조사가 읽히면 이름이 먼저다(수정한테 · 지원하고 · 유리한테). 지킨 곳은 그대로 둔 곳으로 센다. */
+    const MASK_OPEN_EXCEPTIONS = ('시아버지 시아버님 시아주버니 하나하나 하나둘 하나씩 유리창 유리병 유리잔 유리컵 유리문 유리알 유리구슬 유리벽 유리조각 ' +
+        '유리하 유리한 유리해 유리했 보라색 보라빛 하늘색 하늘빛 하루종일 하루하루 하루빨리 하루살이 은하수 은하계 이슬비 이슬방울 소라게 미라클 미나리 세라믹 ' +
+        '마리아 마리오 아리송 아라비아 아라비안 예지력 예지몽 지우개 우주선 유나이티드 미소짓 미소지 사라지 사라진 사라졌 사라질 사라져 사라짐 아름다 아름답 ' +
+        '다정하 다정한 다정히 다정해 다정했 다정다감 시원하 시원한 시원해 시원했 시원스 지원하 지원한 지원해 지원했 지원금 지원서 지원자 ' +
+        '수정하 수정한 수정해 수정했 수정된 수정본 보람차 보람있 보람된 지혜롭 슬기롭').split(' ');
+
+    /* (수정 3) 두 글자 이상 이름 앞에 붙어도 되는 성(한서윤 · 김지호 · 윤예린). 인구가 많은 성(대략 80위 안쪽) 가운데 65개(류(柳)는 '유'와 따로 적는다).
+       (수정 4) 류 · 우 · 소를 넣었다: 실제 이름(류다은 · 우채원 · 소수아)을 남기는 것이 더 나쁘다. 우리아빠 · 우리아이(우 + 리아…)는 애칭 앞말 '우리'가
+       이름 첫 글자와 겹치면 두는 규칙(maskRunOk)이, 우정은 · 우수하다 · 우유나 같은 낱말은 MASK_RUN_EXCEPTIONS가 지킨다.
+       뺀 성: 마(73위 · 마리아 = 마 + 리아 · 마리오는 이름이 아니라 낱말로 읽혀야 한다) · 그보다 드문 성(기 · 반 · 라 · 왕 · 금 · 옥 · 인 · 은 · 모 · 제…)은
+       이름보다 낱말(기도 · 반지 · 금요일 · 인사 · 은하…)을 만들 때가 많아 넣지 않았다. 한 글자 이름에는 쓰지 않는다(이별 · 한결 · 이온 · 고별). */
+    const MASK_SURNAMES = new Set(('김 이 박 최 정 강 조 윤 장 임 한 오 서 신 권 황 안 송 전 홍 유 류 고 문 양 손 배 백 허 남 심 노 하 곽 성 차 주 우 구 나 ' +
+        '민 진 지 엄 채 원 천 방 공 현 함 변 염 여 추 도 소 석 선 설 길 연 위 표 명').split(' '));
+    const MASK_SURNAMES_2 = '남궁 황보 제갈 선우 독고 사공 서문'.split(' ');
+    /* 애칭 앞말(우리예린이 · 애기지호 · 울서윤 · 아가하준) · (수정 5) 붙여 쓴 감탄 앞말(갓서윤 · 헐서윤 · 막내지안이).
+       (수정 7) 수정 6의 자기 · 내는 뺐다: 내리나 · 내린다 · 내가온다 · 내세운 · 안내 · 자기다운처럼 낱말 속 이름을 바꾼다. 내하람이 · 자기하람아는 그대로 둔 곳으로 센다. */
+    const MASK_NAME_PREFIXES = '우리 울 애기 아기 아가 꼬마 갓 헐 막내'.split(' ');
+    /* 성·앞말 + 이름이 흔한 낱말이 되는 꼴: 낱말 첫머리부터 이 말이면 두기.
+       (수정 5) 감추기가 먼저다: 안에 든 이름이 사람(성 + 이름)으로 읽힐 수 있는 말은 뺐다(우유나 · 우정은 · 소리나 · 소지한 · 한여름 · 이미지 · 오로라 · 한마리).
+       남긴 말: 우리나라(우리 + 나라) · 헐리우드(헐 + 리우) · 갓난(갓난아기) · 우수한/우수해/우수했(수한 · 수해는 드문 이름) · 하소연/우수하/소유하는 이름 뒤 조사로 읽히지 않는 활용 꼴만
+       (하소연했다 · 우수하게 · 소유하기 ↔ 소유하는 · 하소연하고 · 우수하가는 이름일 수 있어 바꾼다). */
+    const MASK_RUN_VERB_TAILS = '다 고 게 기 지 며 면 던 겠 였 여 셨 시 잖 더 듯 니 냐'.split(' ');
+    const MASK_RUN_EXCEPTIONS = '우리나라 헐리우드 갓난 우수한 우수해 우수했 하소연할 하소연해 하소연했 하소연함 하소연합'.split(' ')
+        .concat(MASK_RUN_VERB_TAILS.filter(tail => tail !== '고').map(tail => '하소연하' + tail))
+        .concat(MASK_RUN_VERB_TAILS.map(tail => '우수하' + tail), MASK_RUN_VERB_TAILS.map(tail => '소유하' + tail));
+    /* (수정 7) MASK_RUN_EXCEPTIONS · MASK_NAME_PREFIXES의 첫 글자(덩이 첫머리가 이 글자일 때만 두 목록을 대 본다) */
+    const MASK_RUN_HEADS = new Set(MASK_RUN_EXCEPTIONS.concat(MASK_NAME_PREFIXES).map(word => word.charAt(0)));
+    /* (수정 4) 이름 앞에 붙여 쓴 늘인 웃음·울음(하하수아 · 킄킄세린이 · 흑흑지호): 같은 글자가 두 번 넘게 이어지면 앞 덩이로 받는다 */
+    const MASK_LAUGH_CODES = new Set('하 히 호 헤 후 흐 크 킄 큭 킥 키 쿠 캬 꺄 흑 엉 앙 잉 힝 훌 풉 푸 깔 낄 헉 흥 헿 흫'.split(' ').map(s => s.charCodeAt(0)));
+    /* (수정 3) 줄임꼴 가운데 흔한 낱말(미아 → 미안 · 유나 → 유난 · 가나 → 가난 · 소라 → 소란 · 노라 → 노란 · 나나 → 나날 · 이나 → 이날 ·
+       지우 → 지운/지울 · 레아 → 레알…): 줄임꼴로 읽지 않는다 */
+    /* (수정 6) 서울(서울까지 · 서울역 · 서울 야경 ≠ 서우를)을 더했다. 재일(재일 교포)은 넣지 않는다: '재일 찾았어'(= 재이를)가 자연스러운 입말이다.
+       (수정 7) 서한(편지)은 뺐다: 드문 낱말이고 '서한 몰라도 돼'(= 서하는)가 그대로 남아 세지도 않았다. */
+    const MASK_CONTRACT_EXCEPTIONS = '미안 가난 유난 소란 노란 노안 세안 보란 도안 나날 수난 모란 치안 파란 이날 지운 지울 레알 소인 수질 해난 서울'.split(' ');
+    /* (수정 7) 받침 없는 두 글자 이상 이름 가운데 흔한 움직씨·그림씨 줄기(지나다 · 누리다 · 다니다 · 이루다…): 붙여 쓴 줄임꼴(지날까 · 지난지 · 누린거)은 거의 늘 움직씨다.
+       바꾸지 않고 그대로 둔 곳으로 센다. 띄어 쓴 줄임꼴(지난 · 지날)은 다른 이름과 같이 바꾼다(서안 · 시운처럼 받아들인 겹침). */
+    const MASK_VERB_STEM_NAMES = new Set(('지나 누리 지니 아리 다니 이루 미루 도우 노리 그리 가리 바라 자라 세우 채우 배우 마시 가지 나누 지키 고치 만지 미치 다루 비우 키우 ' +
+        '사리 모시 버티 고르 오르 이기 따르 머무 겨루 꾸리 차리 누비 거두 부르 마르 다지 버리 보이 기다리').split(' '));
+    /* (수정 6) 줄임꼴 ㄴ/ㄹ 뒤에 붙여 쓴 서술격의 뒷부분(채안데 = 채아인데 · 로한가 · 재인지 · 채알걸 · 로할지도 · 채알까): 바로 뒤 글자가 이 목록이면
+       낱말 끝까지 받는다. ㄴ은 인데 · 인지 · 인가 · 인걸 · 인거 · 인게 · 인건 · 인줄 · 인듯 · 인척 · 인양 · 인냥 · 인채 · 인셈 · 인즉 · 인겨(한 글자 이름의 '인' 뒤 목록에서
+       흔한 낱말과 겹치는 대 · 감 · 갑 · 들 · 만 · 바 · 디 · 진을 뺐다: 보안대책 · 하인들 · 보안만), ㄹ은 일걸 · 일까 · 일지 · 일거야 · 일텐데 · 일듯 · 일수도 · 일리가 · 일뿐 · 일줄만. */
+    const MASK_CONTRACT_NEXT = ['데 뎅 뎁 지 가 걸 거 것 게 건 줄 듯 척 양 냥 채 셈 즉 겨', '거 걸 것 꺼 껄 지 줄 까 듯 텐 테 수 리 뿐']
+        .map(list => new Set(list.split(' ').map(s => s.charCodeAt(0))));
+    /* (수정 8) 붙여 쓴 줄임꼴 뒤의 분명한 서술격(인가봐 · 인줄 · 인듯 · 인척 / 일수도): 그 뒤에 무엇이 붙어도(아란줄알았어 · 리운듯해 · 별할수도있어) 받는다 */
+    const MASK_CONTRACT_CLEAR = [['가봐', '줄', '듯', '척'], ['수도']];
+    /* (수정 3) 애칭 '이' 뒤에 띄어 쓴 말(서윤이 때문에 = 서윤 때문에): 이 말들 앞 '이'는 주격이 아니라 애칭으로 본다.
+       (수정 5) 같은 · 같아 · 같다는 다시 주격으로 읽는다(서윤이 같은 말을 반복했다 → 하나가 같은 말을) */
+    const MASK_NICK_NEXT = '때문 덕분 처럼 같이 만큼 보다 한테 대신'.split(' ');
+    /* (수정 6) '같은' 뒤에 띄어 쓴 사람 이름씨가 오면 '~ 같은 사람'(유안이 같은 애는 → 리나 같은 애는 · 하준이 같은 놈): 이름씨 뒤는 낱말 끝이거나 이 글자로 시작하는 조사 */
+    const MASK_LIKE_NOUNS = '애 놈 사람 녀석 새끼 남자 여자 여자애 남자애 아이 인간 타입 스타일 캐릭터 존재'.split(' ');
+    const MASK_LIKE_NEXT = new Set('은 는 이 가 을 를 도 만 들 의 과 와 랑 한 에 처 보 야 였 라'.split(' ').map(s => s.charCodeAt(0)));
+    /* (수정 5) 애칭 '이' 뒤 가족·친구 호칭 + 주격·보조사(소율이 엄마가 데리러 왔다 → 미나 엄마가). 호칭 뒤가 을/를·한테면 주격으로 둔다(소율이 엄마를 불렀다). */
+    const MASK_KIN_NOUNS = ('엄마 아빠 어머니 아버지 어머님 아버님 엄니 아부지 동생 언니 오빠 누나 형 형님 누님 형아 언냐 오라버니 할머니 할아버지 할매 할배 ' +
+        '친구 남친 여친 남자친구 여자친구 남편 아내 와이프 부인 아들 딸 조카 사촌 이모 삼촌 고모 외삼촌 이모부 고모부 숙모').split(' ');
+    const MASK_KIN_PARTICLES = '께서 가 이 은 는'.split(' ');
+    /* (수정 7) 애칭 '이' 바로 뒤에 붙는 웃음·하트 부호(진이^^ · 진이♡): ^ ♡ ♥ ❤ ☆ ★ */
+    const MASK_NICK_MARK_CODES = new Set([0x5E, 0x2661, 0x2665, 0x2764, 0x2606, 0x2605]);
+    /* (수정 4) 애칭 '이' 뒤 '거/꺼/것'(그건 하준이 거야 = 하준이의 것): 거/꺼 뒤가 낱말 끝이거나 이 글자들이면 소유로 본다(거짓말 · 거기 · 거의 · 거만은 아니다).
+       거/꺼 뒤: 야 예 에 다 지 고 잖 니 냐 라 를 는 도 였 임 · 것 뒤: 이 은 을 도 만 인 일 임 */
+    const MASK_POSS_HEADS = new Set([0xAC70, 0xAEBC]);
+    const MASK_POSS_NEXT = new Set('야 예 에 다 지 고 잖 니 냐 라 를 는 도 였 임'.split(' ').map(s => s.charCodeAt(0)));
+    const MASK_POSS_NEXT_GEOT = new Set('이 은 을 도 만 인 일 임'.split(' ').map(s => s.charCodeAt(0)));
+    /* 줄임꼴 ㄴ/ㄹ 뒤 매인 이름씨(지혼 줄 = 지호인 줄 · 지홀 거야 = 지호일 거야): 그때 ㄴ/ㄹ은 '인/일'이다. 한 글자는 낱말 끝일 때, 그 밖은 이 꼴로 시작할 때 */
+    const MASK_BOUND_WORDS = '줄 리 듯 뻔 수 거 것 걸 게'.split(' ');
+    const MASK_BOUND_HEADS = ('줄은 줄도 줄을 줄로 줄만 줄이 리가 리는 리도 리야 리요 듯이 듯한 듯해 듯하 수도 수가 수는 수밖에 수있 ' +
+        '거야 거예 거에 거지 거다 거고 거면 거라 거래 거잖 거든 거니 거같 거나 것이 것도 것은 것을 것만 것같 걸요 걸까 게다').split(' ');
+
+    let maskJosaIndex = null;
+
+    /* 첫 글자 → 조사 목록(긴 것부터). 처음 쓸 때 한 번 만든다. */
+    function getMaskJosaIndex() {
+        if (maskJosaIndex) return maskJosaIndex;
+        const atoms = [];
+        const add = (t, slot, need, fam, extra) => atoms.push({ t, slot, need, fam, more: false, voc: false, open: false, ...extra });
+        const family = (c, v, slot, kind) => {
+            const fam = { C: c, V: v, L: kind === 'r' ? v : c };
+            const extra = kind === 'v' ? { voc: true } : null;
+            add(c, slot, kind === 'r' ? 'X' : kind === 'p' ? 'F' : 'C', fam, kind === 'n' ? { more: true } : extra);
+            if (v) add(v, slot, kind === 'r' ? 'R' : 'V', fam, extra);
+        };
+        MASK_JOSA_FAMILIES.forEach(([c, v, slot, kind]) => family(c, v, slot, kind));
+        MASK_COPULA_ENDINGS.split(' ').forEach(end => family('이' + end, end, 'P', 'p'));
+        /* (수정 7) 받침 없는 꼴은 stemTail: 흔한 움직씨 줄기와 같은 한 글자 이름 바로 뒤에서는 maskWordJudge가 버린다 */
+        MASK_COPULA_ENDINGS_LONG.split(' ').forEach(end => {
+            const fam = { C: '이' + end, V: end, L: '이' + end };
+            add('이' + end, 'P', 'F', fam);
+            add(end, 'P', 'V', fam, { stemTail: true });
+        });
+        MASK_JOSA_FREE.forEach(([slot, list]) => list.split(' ').forEach(t => add(t, slot, '', null)));
+        /* 받침 뒤 받침 없는 꼴(린야·린랑·린를·린와)은 흔한 입말 오타: 감춘다(받침 있는 말로 바꾸면 바른 꼴).
+           받침 뒤 '는'·'가'·'로'는 받지 않는다(신는·남는·한가·진로 같은 낱말).
+           (수정 8) typo: 조사 꼴 한 글자 이름을 앞 소리의 받침으로 가를 때는 이 오타 꼴을 조사로 읽지 않는다(maskParticleFits). */
+        add('야', 'T', 'C', { C: '아', V: '야', L: '아' }, { voc: true, typo: true });
+        add('랑', 'K', 'C', { C: '이랑', V: '랑', L: '이랑' }, { typo: true });
+        add('를', 'T', 'C', { C: '을', V: '를', L: '을' }, { typo: true });
+        add('와', 'K', 'C', { C: '과', V: '와', L: '과' }, { typo: true });
+        /* 애교 끝 '얌'(은서얌 → 지민이얌 · 도윤이얌 → 유나얌). '양'은 호칭(은서양)으로 이미 받는다. */
+        add('얌', 'T', '', { C: '이얌', V: '얌', L: '이얌' }, { voc: true });
+        /* (수정 3) 서술격 '에요'(흔한 잘못 쓴 꼴: 지호에요 = 지호예요 → 민준이에요 · 하나예요) · 애교 끝 '당'(지호당 → 민준이당, 두 글자 이상 이름 뒤) */
+        add('에요', 'P', 'V', { C: '이에요', V: '예요', L: '이에요' });
+        add('당', 'P', 'W', { C: '이당', V: '당', L: '이당' });
+        add('이당', 'P', 'C', { C: '이당', V: '당', L: '이당' });
+        MASK_OPEN_FORMS.forEach(([t, need, pair, nounStop]) => add(t, 'P', need, pair ? { C: pair[0], V: pair[1], L: pair[0] } : null, {
+            open: true,
+            nounStop: Boolean(nounStop),
+            oneNext: MASK_ONE_OPEN_NEXT[t] ? new Set(MASK_ONE_OPEN_NEXT[t].split(' ').map(s => s.charCodeAt(0))) : null
+        }));
+        atoms.sort((a, b) => b.t.length - a.t.length);
+        maskJosaIndex = new Map();
+        atoms.forEach(atom => {
+            const key = atom.t.charAt(0);
+            if (!maskJosaIndex.has(key)) maskJosaIndex.set(key, []);
+            maskJosaIndex.get(key).push(atom);
+        });
+        return maskJosaIndex;
+    }
+
+    /* 조사 조건(앞 글자 받침 final): C 받침 · X ㄹ 아닌 받침 · V 받침 없음 · R 받침 없음이나 ㄹ · F/'' 아무 데나. 받침을 모르면(라틴 이름) 다 된다. */
+    function maskNeedOk(need, final) {
+        if (!need || !final || need === 'F') return true;
+        if (need === 'C') return final !== 'V';
+        if (need === 'X') return final === 'C';
+        if (need === 'V') return final === 'V';
+        return final !== 'C';
+    }
+
+    /* text[at…]에서 조사가 이어지다 낱말이 끝나는 읽기를 모두 찾는다({ len, first, count, rank }). 낱말 끝 = 다음 글자가 한글 음절·라틴 글자·숫자가 아님.
+       rank: 닫힌 읽기는 조사 수, 끝이 열린 서술격은 그보다 한참 뒤(긴 꼴 먼저) — 닫힌 읽기가 있으면 그것으로 받침을 맞춘다.
+       자리 단계: 0 처음·뒤붙이 뒤 · 1 격조사 뒤 · 2 이어지는 보조사 뒤 · 5 끝나는 보조사·줄임꼴 뒤 · 3 격조사(T)·서술격 뒤 · 4 끝
+       long: 가릴 말이 두 글자 이상(W 끝을 이름 바로 뒤에서 연다). (수정 7) closed: 끝이 열린 서술격은 읽지 않는다(닫힌 읽기만 볼 때 — 띄어쓰기 없는 긴 덩이를 끝까지 훑지 않게).
+       want: 이 조건에 맞는 읽기를 하나 찾으면 더 걷지 않는다(있는지만 볼 때). */
+    function maskJosaParses(text, at, final, long, closed, want) {
+        const index = getMaskJosaIndex();
+        const found = [];
+        const seen = new Set();
+        let done = false;
+        const record = (pos, first, count, rank) => {
+            if (want) {
+                const parse = { len: pos - at, first, count, rank };
+                if (want(parse)) {
+                    found.push(parse);
+                    done = true;
+                    return;
+                }
+            }
+            const key = (pos - at) + '|' + rank + '|' + first.t + '|' + first.need + '|' + (first.fam ? first.fam.C + '/' + first.fam.V : '');
+            if (seen.has(key)) return;
+            seen.add(key);
+            found.push({ len: pos - at, first, count, rank });
+        };
+        const walk = (pos, stem, phase, sCount, dCount, first, more, count) => {
+            if (done) return;
+            if (pos > at && !more) {
+                const next = pos < text.length ? maskCharKind(text.charCodeAt(pos)) : '';
+                if (next !== 'h' && next !== 'l') {
+                    record(pos, first, count, count);
+                    return;
+                }
+            }
+            if (phase === 4 || pos - at >= 16 || found.length >= 16) return;
+            const list = index.get(text.charAt(pos));
+            if (!list) return;
+            for (const atom of list) {
+                if (!text.startsWith(atom.t, pos)) continue;
+                if (atom.need === 'W') {
+                    if (stem === 'C' || stem === 'L' || (pos === at && !long)) continue;
+                } else if (!maskNeedOk(atom.need, stem)) continue;
+                const slot = atom.slot;
+                let nextPhase = phase;
+                if (slot === 'S') {
+                    if (phase !== 0 || sCount >= 3) continue;
+                } else if (slot === 'T') {
+                    if (phase !== 0 && phase !== 2) continue;
+                    nextPhase = atom.voc ? 4 : 3;
+                } else if (slot === 'G') {
+                    if (phase > 2) continue;
+                    nextPhase = 4;
+                } else if (slot === 'K') {
+                    if (phase !== 0 && phase !== 2) continue;
+                    nextPhase = 1;
+                } else if (slot === 'O' || slot === 'D') {
+                    if (phase > 2 || dCount >= 2) continue;
+                    nextPhase = slot === 'O' ? 2 : 5;
+                } else if (slot === 'Q') {
+                    if (phase !== 0) continue;
+                    nextPhase = 5;
+                } else if (slot === 'P') {
+                    if (phase !== 0 && phase !== 2) continue;
+                    nextPhase = 3;
+                } else {
+                    if (!first || phase === 4) continue;
+                    nextPhase = 4;
+                }
+                if (atom.open) {
+                    /* 끝이 열린 서술격: 낱말 끝까지(한글 음절만) 받는다. 라틴 글자·숫자로 이어지면 낱말이 아니다. */
+                    if (closed) continue;
+                    let stop = pos + atom.t.length;
+                    if (atom.nounStop && stop < text.length && MASK_NOUN_PARTICLE_CODES.has(text.charCodeAt(stop))) continue;
+                    /* (수정 5) 한 글자 이름: 인/일/임 뒤 글자가 정해 둔 것일 때만(강인한은 '강' + '인한'이 아니다) */
+                    if (!long && atom.oneNext && !atom.oneNext.has(text.charCodeAt(stop))) continue;
+                    while (stop < text.length && maskCharKind(text.charCodeAt(stop)) === 'h') stop++;
+                    if (stop < text.length && maskCharKind(text.charCodeAt(stop)) === 'l') continue;
+                    record(stop, first || atom, count + 1, count + 1 + 100 - 10 * atom.t.length);
+                    continue;
+                }
+                const nextStem = maskFinalOf(atom.t.charCodeAt(atom.t.length - 1));
+                const isD = slot === 'O' || slot === 'D' || slot === 'Q';
+                walk(pos + atom.t.length, nextStem, nextPhase, sCount + (slot === 'S' ? 1 : 0), dCount + (isD ? 1 : 0), first || atom, atom.more, count + 1);
+                if (atom.voc) {
+                    /* 늘인 부름(야아아 · 아앗): 꼬리까지 한 조사로 읽는다. 받침 맞춤은 앞의 부름말만 고친다. */
+                    let stop = pos + atom.t.length;
+                    while (stop < text.length && MASK_STRETCH_CODES.has(text.charCodeAt(stop))) stop++;
+                    if (stop > pos + atom.t.length) walk(stop, '', 4, sCount, dCount, first || atom, false, count + 1);
+                }
+            }
+        };
+        walk(at, final, 0, 0, 0, null, false, 0);
+        return found;
+    }
+
+    const MASK_KEEP = Object.freeze({});
+    /* (수정 4) 이름이 아니라 앞 이름의 조사다(이든이든의 둘째 이든): 바꾸지도, 그대로 둔 곳으로 세지도 않는다 */
+    const MASK_NOT = Object.freeze({ not: true });
+    /* (수정 4) 받침 없는 말 뒤에도 '이'를 붙여 쓰는 서술격 조사의 뒷부분(이든 · 이든지 · 이든가 · 이나 · 이나마 · 이라도) */
+    const MASK_COPULA_JOSA_TAILS = '든지 든가 든 나마 나 라도'.split(' ');
+
+    /* 받침 맞춤: 가장 앞선 읽기들(rank가 같은 것)이 같은 결과를 낼 때만 고친다(갈리면 조사는 그대로 둔다).
+       같은 결과를 내는 고침(이랑 → 랑 · 애칭 이 → 없음)을 모두 넘겨 한 글자 노드 안에 드는 것을 쓰게 한다. */
+    function maskHarmonyVerdict(text, at, rule, parses) {
+        if (!rule.dst || !parses.length) return MASK_KEEP;
+        const fixes = parses.map(parse => {
+            const first = parse.first;
+            let t = first.t;
+            if (first.fam && !(first.need === 'F' && rule.src === 'V')) t = first.fam[rule.dst];
+            return { rank: parse.rank, len: first.t.length, t, same: t === first.t, fixed: t + text.slice(at + first.t.length, at + parse.len) };
+        }).sort((a, b) => a.rank - b.rank);
+        const result = fixes[0].fixed;
+        if (fixes.some(fix => fix.rank === fixes[0].rank && fix.fixed !== result)) return MASK_KEEP;
+        const edits = [];
+        fixes.forEach(fix => {
+            if (fix.fixed === result && !fix.same && !edits.some(edit => edit.len === fix.len)) edits.push({ at, len: fix.len, t: fix.t });
+        });
+        return edits.length ? { edits } : MASK_KEEP;
+    }
+
+    /* (수정 3) 서술문 '야' 앞 낱말의 끝 글자: 은 는 이 가 건 게 것 거(범인은 하나야. · 그게 하나야. · 내 건 하나야.) */
+    const MASK_COPULA_LEAD_CODES = new Set([0xC740, 0xB294, 0xC774, 0xAC00, 0xAC74, 0xAC8C, 0xAC83, 0xAC70]);
+
+    /* 문장이 끝나는 자리(마침표·글 끝)이고, 이름 앞 낱말이 은 는 이 가 건 게 것 거로 끝나고 띄어 쓴 것인지: 범인은 하나야. (서술격) ↔
+       잘 자, 하나야. · 사랑해 하나야. · “하나야.” (부름말) */
+    function maskStatementAt(text, after, start) {
+        const code = after < text.length ? text.charCodeAt(after) : -1;
+        if (code !== -1 && code !== 0x2E && code !== 0x3002 && code !== 0xFF0E) return false;
+        if (start < 2) return false;
+        const space = text.charCodeAt(start - 1);
+        return (space === 0x20 || space === 0xA0 || space === 0x3000) && MASK_COPULA_LEAD_CODES.has(text.charCodeAt(start - 2));
+    }
+
+    /* 띄어 쓴 다음 낱말이 애칭 '이' 뒤에 오는 말(때문 · 처럼…)로 시작하는지 */
+    function maskNickNextAt(text, after) {
+        const code = after < text.length ? text.charCodeAt(after) : -1;
+        if (code !== 0x20 && code !== 0xA0 && code !== 0x3000) return false;
+        if (MASK_NICK_NEXT.some(word => text.startsWith(word, after + 1))) return true;
+        /* (수정 6) 같은 + 띄어 쓴 사람 이름씨(같은 애 · 같은 놈 · 같은 사람들) */
+        const space = text.charCodeAt(after + 3);
+        if (text.startsWith('같은', after + 1) && (space === 0x20 || space === 0xA0 || space === 0x3000)) {
+            const word = after + 4;
+            for (const noun of MASK_LIKE_NOUNS) {
+                if (!text.startsWith(noun, word)) continue;
+                const code = word + noun.length < text.length ? text.charCodeAt(word + noun.length) : -1;
+                const kind = maskKindAt(text, word + noun.length);
+                if ((kind !== 'h' && kind !== 'l') || MASK_LIKE_NEXT.has(code)) return true;
+            }
+        }
+        /* (수정 5) 가족·친구 호칭(들) + 가/이/께서/은/는 + 낱말 끝. (수정 7) 호칭 뒤가 띄어쓰기·문장부호·글 끝이어도(진이 오빠 왔어? · 가온이 누나 진짜 예쁘다) */
+        for (const noun of MASK_KIN_NOUNS) {
+            if (!text.startsWith(noun, after + 1)) continue;
+            let at = after + 1 + noun.length;
+            if (text.charCodeAt(at) === 0xB4E4) at++;
+            const bare = maskKindAt(text, at);
+            if (bare !== 'h' && bare !== 'l' && bare !== 'j') return true;
+            for (const particle of MASK_KIN_PARTICLES) {
+                if (!text.startsWith(particle, at)) continue;
+                const kind = maskKindAt(text, at + particle.length);
+                if (kind !== 'h' && kind !== 'l') return true;
+            }
+        }
+        /* (수정 4) 소유 '거/꺼/것'(하준이 거야 · 하준이 꺼 · 하준이 것이다) */
+        const head = after + 1 < text.length ? text.charCodeAt(after + 1) : -1;
+        const geot = head === 0xAC83;
+        if (!geot && !MASK_POSS_HEADS.has(head)) return false;
+        const tail = after + 2 < text.length ? text.charCodeAt(after + 2) : -1;
+        if (maskCharKind(tail) !== 'h' && maskCharKind(tail) !== 'l') return true;
+        return (geot ? MASK_POSS_NEXT_GEOT : MASK_POSS_NEXT).has(tail);
+    }
+
+    /* 조사 한 글자로 낱말이 끝나는 세 가지는 뒤 글자로 가른다(at = 조사 자리, start = 가릴 말 첫 자리). 해당하지 않으면 undefined. */
+    function maskOneSyllableVerdict(text, at, rule, start) {
+        const after = at + 1;
+        const afterKind = after < text.length ? maskCharKind(text.charCodeAt(after)) : '';
+        if (afterKind === 'h' || afterKind === 'l') return undefined;
+        const one = text.charAt(at);
+        /* 받침 없는 이름(라틴 이름도) + 야: 뒤에 물음표가 오면(띄어쓰기·말줄임 건너) 서술격(은서야? → 지민이야?),
+           아니면(쉼표·느낌표·말줄임·따옴표·띄어쓰기·마침표·글 끝) 부름말(잘 자, 은서야. → 지민아. · 은서야 밥 먹자 → 지민아).
+           다만 마침표·글 끝 앞인데 이름 앞이 낱말 + 띄어쓰기면 서술문으로 본다(범인은 하나야. → 린이야.). 받침 없는 말로 바꾸면 그대로 '야'. */
+        if (one === '야' && (rule.src === 'V' || (!rule.src && rule.tail === 'l'))) {
+            if (!rule.dst || rule.dst === 'V') return MASK_KEEP;
+            const copula = maskAskAt(text, after) || maskStatementAt(text, after, start);
+            return { edits: [{ at, len: 1, t: copula ? '이야' : '아' }] };
+        }
+        /* 받침 있는 이름 + 이 + 쉼표·마침표·느낌표…: 주격이 아니라 애칭(서준이, → 유나,)
+           (수정 3) 이 + 띄어쓰기 + 때문/덕분/처럼/같이/만큼/보다/한테/대신도 애칭(서윤이 때문에 → 하나 때문에 · 도윤이 때문에) */
+        if (one === '이' && rule.src !== 'V' && (maskStopAt(text, after, true) || MASK_NICK_MARK_CODES.has(text.charCodeAt(after)) || maskNickNextAt(text, after))) {
+            if (rule.dst !== 'V') return MASK_KEEP;
+            return { edits: [{ at, len: 1, t: '' }] };
+        }
+        /* 받침 있는 이름 + 요 + 문장 끝: '누구? 린요.' */
+        if (one === '요' && rule.src !== 'V' && maskStopAt(text, after, true)) return MASK_KEEP;
+        return undefined;
+    }
+
+    /* (수정 3) 두 글자 이상 이름 앞 한글 음절 덩이(낱말 첫머리 ~ 이름)가 성 하나(한 글자·두 글자)·적어 둔 이름·애칭 앞말로만 되어 있는지.
+       한서윤 · 남궁서윤 · 서윤지호(적어 둔 두 이름) · 서윤서윤아 · 우리예린이 · 애기지호 ↔ 마리아 · 아시아 · 러시아 · 이탈리아(그대로). */
+    /* plain(수정 5): 성·애칭 앞말 없이(적어 둔 이름 · 늘인 웃음만으로) 되는지 본다 — 줄임꼴 · '진 않/마' 가르기에 쓴다 */
+    function maskRunOk(text, pos, rule, plain) {
+        let start = pos;
+        /* (수정 4) 12글자를 넘으면 더 거스르지 않는다(띄어쓰기 없는 긴 덩이도 자리마다 13글자까지만 본다) */
+        while (start > 0 && pos - start <= 12 && maskCharKind(text.charCodeAt(start - 1)) === 'h') start--;
+        if (pos - start > 12 || (start > 0 && maskLeftBlocks(text, start - 1, 'h'))) return false;
+        if (MASK_RUN_HEADS.has(text.charAt(start))) {
+            for (const word of MASK_RUN_EXCEPTIONS) if (start + word.length > pos && text.startsWith(word, start)) return false;
+            /* (수정 4) 덩이 첫머리의 애칭 앞말이 이름 첫 글자까지 이어지면 두기(우리아빠 · 우리아이: 우 + 리아가 아니라 우리 + 아빠) */
+            for (const word of MASK_NAME_PREFIXES) if (start + word.length > pos && text.startsWith(word, start)) return false;
+        }
+        /* 덩이 속에서 시작한 지킬 낱말이 이 자리까지 이어지면 두기(하나하나의 둘째 하나) */
+        for (let at = start; at < pos; at++) {
+            for (const word of rule.ex) if (at + word.length > pos && text.startsWith(word, at)) return false;
+            for (const word of rule.openEx) if (at + word.length > pos && text.startsWith(word, at)) return false;
+        }
+        const tokens = plain ? rule.plainTokens || rule.listed : rule.runTokens;
+        /* (수정 7) 첫 글자로 묶은 덩이 말(maskLinkRules)이 있으면 그 글자의 말만 본다 */
+        const index = plain ? rule.plainIndex : rule.runIndex;
+        const walk = (at, surname) => {
+            if (at === pos) return true;
+            for (const word of (index ? index.get(text.charAt(at)) || [] : tokens)) if (at + word.length <= pos && text.startsWith(word, at) && walk(at + word.length, surname)) return true;
+            if (surname) return false;
+            /* (수정 4) 늘인 웃음(같은 글자 두 번 넘게): 하하 · 킄킄 · 흑흑흑 */
+            const laugh = text.charCodeAt(at);
+            if (MASK_LAUGH_CODES.has(laugh) && text.charCodeAt(at + 1) === laugh) {
+                for (let stop = at + 2; stop <= pos && text.charCodeAt(stop - 1) === laugh; stop++) if (walk(stop, false)) return true;
+            }
+            if (plain) return false;
+            if (MASK_SURNAMES.has(text.charAt(at)) && walk(at + 1, true)) return true;
+            for (const word of MASK_SURNAMES_2) if (at + 2 <= pos && text.startsWith(word, at) && walk(at + 2, true)) return true;
+            return false;
+        };
+        return walk(start, false);
+    }
+
+    /* 왼쪽 경계(수정 3): 앞 글자가 같은 글자 갈래면 다른 낱말 속이다(들린다 · 플레아 · Brian의 Ian · 아시아의 시아).
+       두 글자 이상 한글 이름은 그 앞 덩이가 성·적어 둔 이름·애칭 앞말이면 낱말 첫머리로 본다(한서윤 · 서윤지호 · 우리예린이).
+       한 글자 한글 이름은 다른 줄의 이름·바꾼 말 바로 뒤면(익명1은 · ㅇㅇ은: 앞 줄이 바꾼 말 + 조사 '은') 두기 — 원문에서 한글 이름 뒤 글자였던 자리다. */
+    function maskLeftOk(text, pos, rule) {
+        const code = text.charCodeAt(pos - 1);
+        if (maskLeftBlocks(text, pos - 1, rule.head)) {
+            /* (수정 5) 라틴 이름 앞 커플 표기 x(TheoxLuna · 현우xLuna) */
+            if (rule.head === 'l' && maskShipXAt(text, pos - 1, rule, -1)) return true;
+            /* (수정 10) 바로 앞에 바꾼 이름·적어 둔 가릴 말에 붙은 한 글자·영문 이름(은서결 · 온결 · RinTheo) */
+            if (!rule.open && maskShipLeftAt(text, pos, rule)) return true;
+            if (!rule.open || maskCharKind(code) !== 'h') return false;
+            if (maskJosaAfterListed(text, pos, rule)) return MASK_NOT;
+            return maskRunOk(text, pos, rule);
+        }
+        const list = rule.glued ? rule.glued.get(code) : null;
+        /* (수정 10) 다른 줄의 라틴·자모 말 뒤에서도 조사 꼴이 아닌 이름은 이름으로 읽는다(Rin결이) */
+        if (list) for (const word of list) if (pos >= word.length && text.startsWith(word, pos - word.length)) return maskShipLeftAt(text, pos, rule);
+        return true;
+    }
+
+    /* (수정 10) 커플 표기로 붙여 쓴 이름 뒤(text[stop…])가 낱말 끝 · 닫힌 조사 · 또 다른 가릴 말인지. word = 앞 이름(받침·글자 갈래를 본다).
+       한글 이름 뒤 라틴 글자는 낱말 끝(숫자는 아니다), 라틴 이름 뒤 라틴 글자는 다른 가릴 말일 때만. */
+    function maskNameTailOk(text, stop, word, rule) {
+        if (stop >= text.length) return true;
+        const kind = maskKindAt(text, stop);
+        if (kind !== 'h' && kind !== 'l') return true;
+        if (kind === 'h') {
+            const closed = parse => parse.rank < 50;
+            if (maskJosaParses(text, stop, maskEndFinal(word), word.length >= 2, true, closed).some(closed)) return true;
+        } else if (maskCharKind(word.charCodeAt(word.length - 1)) === 'h' && !maskDigitCode(text.charCodeAt(stop))) return true;
+        const list = rule.shipHead ? rule.shipHead.get(text.charAt(stop)) : null;
+        return Boolean(list) && list.some(name => text.startsWith(name, stop));
+    }
+
+    /* (수정 10) 한 글자 한글 이름 · 영문 이름 바로 뒤에 적어 둔 다른 가릴 말(W)이 붙은 커플 표기(결온 · 가결 · TheoRin)면 여기서 낱말이 끝난다.
+       W가 조사 꼴 이름(MASK_PARTICLE_SHAPED)이거나 이 이름의 닫힌 조사로 읽히면 지금 읽기대로 둔다 · W 뒤가 낱말 끝 · 닫힌 조사 · 다른 가릴 말이어야 한다(결혼했다는 아니다). */
+    function maskShipNextAt(text, end, rule) {
+        const list = rule.shipHead ? rule.shipHead.get(text.charAt(end)) : null;
+        if (!list) return false;
+        /* (수정 13) 한 글자 한글 이름 바로 뒤의 한 글자 한글 가릴 말은 커플 표기로 읽지 않는다(이별 · 이윤 · 가린 — 커플 표시·괄호가 있어도): 2.5.1처럼 그대로 둔 곳으로 센다 */
+        const one = rule.head === 'h' && rule.from.length === 1;
+        for (const word of list) {
+            /* 같은 이름을 되풀이한 말(린린 · 별별 · 솔솔)은 다른 낱말일 수 있어 지금 읽기대로 */
+            if (word === rule.from || !text.startsWith(word, end)) continue;
+            if (word.length === 1 && MASK_PARTICLE_SHAPED.has(word)) continue;
+            if (maskCharKind(word.charCodeAt(0)) === 'h' && maskJosaCovers(text, end, rule.src, word.length)) continue;
+            if (one && word.length === 1 && maskCharKind(word.charCodeAt(0)) === 'h') continue;
+            if (maskNameTailOk(text, end + word.length, word, rule)) return true;
+        }
+        return false;
+    }
+
+    /* (수정 10) 조사 꼴이 아닌 한 글자 한글 이름 · 영문 이름이 바로 앞의 바꾼 이름(이번 걸음) · 적어 둔 다른 가릴 말에 붙어 있으면(은서결 → 재민결 · 다온온 · 온결 · Rin결이),
+       그 앞말의 닫힌 조사로 읽히지 않고 이름 뒤가 낱말 끝 · 닫힌 조사 · 다른 가릴 말일 때 낱말 첫머리로 본다. 조사 꼴 이름(이 · 가 · 은 · 하…)은 지금 읽기대로. */
+    function maskShipLeftAt(text, pos, rule) {
+        if (rule.open || pos < 1) return false;
+        if (rule.head === 'h' ? rule.from.length !== 1 || MASK_PARTICLE_SHAPED.has(rule.from) : rule.head !== 'l') return false;
+        let final = null;
+        /* (수정 12) 앞 이름이 한 글자 한글 이름이면 그 첫 자리(지금 글: 바꿨으면 바꾼 말 자리) — (수정 13) 한 글자 이름 둘의 짝은 커플 표기로 읽지 않는다 */
+        let start = -1;
+        if (maskMarksNow) {
+            const range = maskMarksReady(maskMarksNow).toAt.get(pos);
+            if (range) {
+                final = range[2];
+                if (range[3]) start = range[0];
+            }
+        }
+        if (final === null) {
+            const list = rule.shipTail ? rule.shipTail.get(text.charAt(pos - 1)) : null;
+            if (list) {
+                /* (수정 13) 같은 끝 글자의 말이 여럿이면(서윤 · 윤) 두 글자 이상 말을 앞 이름으로 본다(2 + 1 커플 표기는 그대로) */
+                for (const word of list) {
+                    if (word === rule.from || pos < word.length || !text.startsWith(word, pos - word.length)) continue;
+                    const single = word.length === 1 && maskCharKind(word.charCodeAt(0)) === 'h';
+                    if (final === null) {
+                        final = maskEndFinal(word);
+                        start = single ? pos - 1 : -1;
+                    } else if (!single) start = -1;
+                }
+            }
+        }
+        if (final === null) return false;
+        if (rule.head === 'h' && maskJosaCovers(text, pos, final, rule.from.length)) return false;
+        /* 이 자리부터 적어 둔 두 글자 이상 이름(솔 → 별이일 때 솔별이의 별이)이면 앞 이름이 그 이름과 이어 쓴 커플 표기로 읽힌 것이라(수정 7) 짝으로 보지 않는다 */
+        if (rule.head === 'h' && start >= 0 && !maskListedAt(text, pos, rule, false)) return false;
+        return maskNameTailOk(text, pos + rule.from.length, rule.from, rule);
+    }
+
+    /* (수정 5) 라틴 이름 사이 커플 표기 x(TheoxLuna · Theox지원 · 현우xLuna): text[x]가 x/X이고 dir 쪽(-1 앞 · 1 뒤)이
+       한글 음절이거나 적어 둔 라틴 이름(큰 글자 작은 글자는 같게)이면 낱말 경계로 본다 */
+    function maskShipXAt(text, x, rule, dir) {
+        const code = text.charCodeAt(x);
+        if (code !== 0x78 && code !== 0x58) return false;
+        /* (수정 6) x 뒤 한글이 조사로 읽혀 낱말이 끝나면(Lux가 · Felix는) x는 이름에 붙은 글자다.
+           (수정 7) x 뒤가 적어 둔 이름(두 글자 이상 · 한 글자 가릴 말)이면 조사 꼴이어도(이든 · 이나 · 은 · 랑) 커플 표기다(Theox이든) */
+        if (maskCharKind(text.charCodeAt(x + dir)) === 'h') {
+            if (dir < 0 || maskListedAt(text, x + 1, rule, true)) return true;
+            return !getMaskJosaIndex().has(text.charAt(x + 1)) || !maskJosaParses(text, x + 1, '', true, true, parse => parse.rank < 50).some(parse => parse.rank < 50);
+        }
+        for (const word of rule.latin) {
+            const at = dir < 0 ? x - word.length : x + 1;
+            if (at >= 0 && at + word.length <= text.length && text.slice(at, at + word.length).toLowerCase() === word.toLowerCase()) return true;
+        }
+        return false;
+    }
+
+    /* (수정 4) text[at…]가 받침 final인 이름 뒤 닫힌 조사로 읽히며 길이 len을 다 덮는지: 이든 뒤 '이든' · 서윤 뒤 '이나'.
+       끝이 열린 서술격(rank 81 이상: 서윤 + 이준 = '이' + 준…)은 빼고 닫힌 읽기(rank = 조사 수, 16 이하)만 본다. */
+    function maskJosaCovers(text, at, final, len) {
+        const covers = parse => parse.rank < 50 && parse.len >= len;
+        if (maskJosaParses(text, at, final, true, true, covers).some(covers)) return true;
+        /* 받침 없는 말 뒤 서술격 '이' + 든/나/라도…(지호이든 누구든 · 친구이나): 맞춤법에 맞는 꼴이라 조사로 본다(이도 · 이가는 아니다) */
+        if (final !== 'V' || text.charCodeAt(at) !== 0xC774) return false;
+        for (const tail of MASK_COPULA_JOSA_TAILS) {
+            const stop = at + 1 + tail.length;
+            if (stop >= len + at && text.startsWith(tail, at + 1) && maskCharKind(text.charCodeAt(stop)) !== 'h' && maskCharKind(text.charCodeAt(stop)) !== 'l') return true;
+        }
+        return false;
+    }
+
+    /* (수정 4) 바로 앞이 적어 둔 가릴 말이고 이 자리의 글이 그 이름 뒤 조사로 읽히면(이든이든 누구든 = 이든 + '이든') 이름이 아니다.
+       서윤서윤아 · 서윤이준(이준 = 이름)은 그대로 이름으로 읽는다. 바꿀 말은 보지 않는다: 앞 줄이 이미 바꾼 말(민준이든 = 원문 지호이든)은 원문의 받침이 아니다. */
+    function maskJosaAfterListed(text, pos, rule) {
+        for (const word of rule.listedFrom) {
+            if (pos < word.length || !text.startsWith(word, pos - word.length)) continue;
+            if (maskJosaCovers(text, pos, maskFinalOf(word.charCodeAt(word.length - 1)), rule.from.length)) return true;
+        }
+        return false;
+    }
+
+    /* (수정 4) 조사와 같은 꼴의 이름(이든 · 이나 · 이랑)이 앞 글자에 붙어 있고, 띄어 쓴 다음 낱말이 같은 조사로 끝나면
+       'A이든 B든' 짝이다(안이든 밖이든 · 강이든 바다든 · 3이든 4든): 이름으로 쓸 수 없는 꼴이라 그대로 둔 곳으로 센다. 낱말 첫머리의 이름(이든 누구든)은 바꾼다. */
+    function maskParallelJosaAt(text, pos, rule) {
+        const from = rule.from;
+        if (pos < 1 || from.charCodeAt(0) !== 0xC774) return false;
+        const left = text.charCodeAt(pos - 1);
+        const kind = maskCharKind(left);
+        if (kind !== 'h' && kind !== 'l') return false;
+        if (!maskJosaCovers(text, pos, maskFinalOf(left), from.length)) return false;
+        const end = pos + from.length;
+        const space = text.charCodeAt(end);
+        if (space !== 0x20 && space !== 0xA0 && space !== 0x3000) return false;
+        let stop = end + 1;
+        while (stop < text.length && maskKindAt(text, stop) !== '') stop++;
+        const word = text.slice(end + 1, stop);
+        const short = from.slice(1);
+        return (word.length > from.length && word.endsWith(from)) || (word.length > short.length && word.endsWith(short));
+    }
+
+    /* (수정 4) 두 글자 이상 이름 바로 뒤가 적어 둔 다른 이름이면(서윤이준 · 서윤지호 커플) 조사가 아니라 이어 쓴 이름이다: 받침을 맞추지 않는다.
+       그 이름이 이 이름 뒤 닫힌 조사로 다 읽히면(서윤이든 · 서윤이나) 조사로 본다.
+       (수정 7) 한 글자 한글 이름 · 영문 이름 뒤에도 쓴다(혁이솔 · Ivy이솔: '이'를 조사로 읽어 지우지 않는다). */
+    function maskShipAt(text, end, rule) {
+        for (const word of (rule.listedIndex ? rule.listedIndex.get(text.charAt(end)) || [] : rule.listed)) {
+            if (text.startsWith(word, end)) return !maskJosaCovers(text, end, rule.src, word.length);
+        }
+        return false;
+    }
+
+    /* (수정 7) text[at…]가 적어 둔 이름(두 글자 이상 한글 가릴 말·바꿀 말, withOnes면 한 글자 한글 가릴 말도)으로 시작하는지 */
+    function maskListedAt(text, at, rule, withOnes) {
+        if ((rule.listedIndex ? rule.listedIndex.get(text.charAt(at)) || [] : rule.listed).some(word => text.startsWith(word, at))) return true;
+        return Boolean(withOnes && rule.ones) && rule.ones.some(word => text.startsWith(word, at));
+    }
+
+    /* (수정 3) 받침 없이 'ㅏ'로 끝나는 두 글자 이상 이름 + 아…(노아아아 · 하나아아): 이름 끝 모음을 늘인 부름. 받침 있는 말로 바꾸면 부름말 '아'를 넣는다(태준아아아). */
+    function maskStretchVerdict(text, end, rule) {
+        if (rule.src !== 'V' || rule.lastVowel !== 0 || text.charCodeAt(end) !== 0xC544) return undefined;
+        let stop = end;
+        while (stop < text.length && text.charCodeAt(stop) === 0xC544) stop++;
+        const kind = stop < text.length ? maskCharKind(text.charCodeAt(stop)) : '';
+        if (kind === 'h' || kind === 'l') return undefined;
+        return rule.dst === 'C' || rule.dst === 'L' ? { edits: [{ at: end, len: 0, t: '아' }] } : MASK_KEEP;
+    }
+
+    /* 숫자(0–9 · 전각 숫자) */
+    function maskDigitCode(code) {
+        return (code >= 0x30 && code <= 0x39) || (code >= 0xFF10 && code <= 0xFF19);
+    }
+
+    /* (수정 4) 라틴 글자로 끝나는 이름 뒤가 숫자(Leo2)이거나, 끝 글자가 두 번 넘게 더 이어진 뒤 낱말이 끝나는지(Leooo · Rubyyy · 큰 글자 작은 글자는 같게) */
+    function maskLatinTailOpen(text, end, rule) {
+        const last = rule.from.charAt(rule.from.length - 1);
+        if (maskDigitCode(last.charCodeAt(0))) return false;
+        if (maskDigitCode(text.charCodeAt(end))) return true;
+        const low = last.toLowerCase();
+        let stop = end;
+        while (stop < text.length && text.charAt(stop).toLowerCase() === low) stop++;
+        /* (수정 6) 세 글자 이상 이름이 홀소리로 끝나면 한 번 늘인 꼴(Novaa · Kaii)도 받는다 · 늘인 뒤 숫자(LEOOO2)도 */
+        if (stop - end < (rule.from.length >= 3 && 'aeiouy'.includes(low) ? 1 : 2)) return false;
+        while (stop < text.length && maskDigitCode(text.charCodeAt(stop))) stop++;
+        return stop >= text.length || maskCharKind(text.charCodeAt(stop)) !== 'l';
+    }
+
+    /* (수정 4) 띄어쓰기 + 않…(않았다 · 않는) 또는 홀로 쓴 마(-지는 않다 · -지는 마). '말고'는 이름 뒤에도 쓴다(우진 말고).
+       (수정 5) 바른 '않' 활용(않았 · 않아 · 않는 · 않을 · 않고 · 않게 · 않으…)만 · '마'는 바로 뒤가 문장부호·글 끝일 때만.
+       않돼 · 않와(= 안 돼 · 안 와) · 마라 · 말라 · 마요 · 말아는 이름 뒤에도 흔히 오니 가르지 않는다(유진 말라 보여 · 서진 마라 먹으러 가자). */
+    const MASK_ANH_NEXT = new Set('았 아 는 은 을 음 고 게 기 길 으 던 더 도 든 다 지 네 니 나 냐 겠 습 잖 군 구 거 소'.split(' ').map(s => s.charCodeAt(0)));
+    function maskNegationAt(text, end) {
+        const space = end < text.length ? text.charCodeAt(end) : -1;
+        if (space !== 0x20 && space !== 0xA0 && space !== 0x3000) return false;
+        const word = end + 1;
+        if (text.charCodeAt(word) === 0xC54A) return MASK_ANH_NEXT.has(text.charCodeAt(word + 1));
+        return text.charCodeAt(word) === 0xB9C8 && maskStopAt(text, word + 1, true);
+    }
+
+    /* (수정 7) 작은 글자 영문 이름 뒤 한글이 사람 뒤에 오는 닫힌 조사로 읽히는지(nova야 · mina는 · zoe한테 ↔ max로 · eve에 · rose향): 첫 조사가 곳·연장의 에/로면 아니다 */
+    const MASK_THING_JOSA = new Set('에 에서 에다 에다가 엔 에선 로 으로 론 으론 로써 으로써 로썬 으로썬 로선 으로선'.split(' '));
+    function maskLowerCallAt(text, end) {
+        if (maskCharKind(text.charCodeAt(end)) !== 'h') return false;
+        const call = parse => parse.rank < 50 && !MASK_THING_JOSA.has(parse.first.t);
+        return maskJosaParses(text, end, '', true, true, call).some(call);
+    }
+
+    /* (수정 8) 앞 줄들이 이 문단에 쓴 글. maskWordApplyValues가 고친 배열(maskMarks)로 다음 줄에 넘기고, 줄을 거는 동안 maskMarksNow에 둔다(셀 때는 null).
+       { prev, edits, f } 고침 한 번(f = 원래 이름 끝 받침) → 쓸 때 maskMarksReady가 펼친다: to = [[처음, 끝, 원래 이름 끝 받침]…] 바꾼 말 ·
+       fix = [[처음, 끝]…] 받침을 맞춰 고쳐 쓴 조사·풀어 쓴 줄임꼴(글 차례) · toEnd = 바꾼 말 끝 자리 → 받침. */
+    let maskMarksNow = null;
+    /* (수정 10) keep = 바꾼 말 뒤에 조사로 읽어 둔 글(받침을 맞춘 것 · 지운 것의 남은 글 포함) · old = 앞서 적용한 걸음들이 쓴 글 ·
+       own = to · fix · keep을 합친 자리 · all = own + old(뒤 줄이 다시 읽지 않고 그대로 둔 곳에서도 뺀다).
+       (수정 11) old도 바꿀지 정할 때 본다: 「원고에 적용」을 다시 눌러도 앞서 쓴 글(바꾼 말 · 둔 조사)을 다시 읽지 않는다(하결 → 수하하결 · 맞바꾼 줄이 되돌아가기).
+       (수정 12) 이 기능이 쓴 글(to · fix · old)과 조사로 읽어 둔 원문(keep · 앞 걸음들 것 oldKeep)을 나눠 둔다. 둘 다 다시 읽지 않지만 그대로 둔 곳 셈에서는 쓴 글만 뺀다
+       (written): 읽어 둔 원문은 원래 이름이 남은 글자라 셈이 가른다(“민준”은 · 하나께서 → 센다, 하나도 → 앞말의 조사). toAt = 바꾼 말 끝 자리 → 그 자리 [처음, 끝, 받침, 한 글자 한글 이름]. */
+    const MASK_NO_MARKS = Object.freeze({ to: [], fix: [], keep: [], old: [], oldKeep: [], toEnd: new Map(), toAt: new Map(), own: [], all: [], written: [] });
+    /* (수정 12) 쓴 글 기록은 문단 묶음 요소의 속성에 둔다(maskReadRecords · maskStoreRecords): 그 요소 안 글 있는 글 덩이 차례 | 글 열쇠 | 쓴 자리 | 읽어 둔 자리.
+       (수정 11의 묶음 · 문단 수 · 차례 열쇠는 다른 문단을 더하거나 지우면 맞지 않아, 다시 누른 「원고에 적용」이 맞바꾼 줄을 되돌리고 쓴 글을 다시 읽었다.) */
+    const MASK_OWN_ATTR = 'data-novcap-mask-own';
+    /* (수정 10) 조사 꼴 한 글자 이름: 다른 이름에 붙어 있어도 지금 읽기(앞말의 조사)를 따른다 */
+    const MASK_PARTICLE_SHAPED = new Set('이 가 은 는 을 를 와 과 랑 란 하 도 만 의 에 로'.split(' '));
+
+    /* (수정 10) 자리 목록(처음 차례, 겹치지 않게 합친 것)이 [at, at + len)과 겹치는지 */
+    function maskRangeHits(list, at, len) {
+        let lo = 0;
+        let hi = list.length - 1;
+        const end = at + Math.max(len, 1);
+        while (lo <= hi) {
+            const mid = (lo + hi) >> 1;
+            if (list[mid][1] <= at) lo = mid + 1;
+            else if (list[mid][0] >= end) hi = mid - 1;
+            else return true;
+        }
+        return false;
+    }
+
+    /* (수정 14) 자리 목록(처음 차례, 겹치지 않게 합친 것) 가운데 하나가 [a, b)를 통째로 품는지 */
+    function maskRangeHolds(list, a, b) {
+        let lo = 0;
+        let hi = list.length - 1;
+        while (lo <= hi) {
+            const mid = (lo + hi) >> 1;
+            if (list[mid][1] <= a) lo = mid + 1;
+            else if (list[mid][0] > a) hi = mid - 1;
+            else return b <= list[mid][1];
+        }
+        return false;
+    }
+
+    /* 자리 목록을 처음 차례로 겹치거나 맞닿은 것끼리 합친다(빈 자리는 버린다) */
+    function maskMergeRanges(list) {
+        const sorted = list.filter(range => range[1] > range[0]).map(range => [range[0], range[1]]).sort((a, b) => a[0] - b[0]);
+        const out = [];
+        for (const range of sorted) {
+            const last = out[out.length - 1];
+            if (last && range[0] <= last[1]) last[1] = Math.max(last[1], range[1]);
+            else out.push(range);
+        }
+        return out;
+    }
+
+    /* 고침(글 차례, { g, gEnd, t })만큼 자리를 옮긴다. 고친 곳과 겹치는 자리는 버린다. */
+    function maskShiftRanges(list, edits) {
+        const out = [];
+        let e = 0;
+        let delta = 0;
+        for (const range of list || []) {
+            while (e < edits.length && edits[e].gEnd <= range[0]) {
+                delta += edits[e].t.length - (edits[e].gEnd - edits[e].g);
+                e++;
+            }
+            if (e < edits.length && edits[e].g < range[1]) continue;
+            out.push(range.length > 2 ? [range[0] + delta, range[1] + delta].concat(range.slice(2)) : [range[0] + delta, range[1] + delta]);
+        }
+        return out;
+    }
+
+    /* 고치기 전 자리 x가 고친 뒤 어디인지(고친 곳 속이면 그 고침 끝) */
+    function maskMapPos(edits, x) {
+        let delta = 0;
+        for (const edit of edits) {
+            if (edit.gEnd <= x) delta += edit.t.length - (edit.gEnd - edit.g);
+            else if (edit.g < x) return edit.g + delta + edit.t.length;
+            else break;
+        }
+        return x + delta;
+    }
+
+    /* 기록 base에 고침 한 번(edits · 바꾼 말 뒤 조사 자리 keeps · 원래 이름 끝 받침 f · 원래 이름이 한 글자 한글 이름인지 o, 수정 12)을 더한 새 목록 */
+    function maskMarksStep(base, edits, keeps, f, o) {
+        const to = maskShiftRanges(base.to, edits);
+        const fix = maskShiftRanges(base.fix, edits);
+        const keep = maskShiftRanges(base.keep, edits);
+        const old = maskShiftRanges(base.old, edits);
+        const oldKeep = maskShiftRanges(base.oldKeep, edits);
+        let delta = 0;
+        for (const edit of edits) {
+            const start = edit.g + delta;
+            const end = start + edit.t.length;
+            if (edit.m === 1) to.push([start, end, f, o ? 1 : 0]);
+            /* (수정 13) 원문이 가릴 말인 조사를 받침에 맞춰 고친 글(“하나”랑 → “민준”이랑의 랑 · 린랑 → 솔이랑)은 다시 읽지 않되 쓴 글로 치지 않는다(2.5.1처럼 센다) */
+            else if (end > start) (edit.n ? keep : fix).push([start, end]);
+            delta += edit.t.length - (edit.gEnd - edit.g);
+        }
+        for (const range of keeps || []) {
+            const a = maskMapPos(edits, range[0]);
+            const b = maskMapPos(edits, range[1]);
+            if (b > a) keep.push([a, b]);
+        }
+        to.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+        fix.sort((a, b) => a[0] - b[0]);
+        keep.sort((a, b) => a[0] - b[0]);
+        return { to, fix, keep, old, oldKeep };
+    }
+
+    /* 기록에서 다시 읽지 않을 자리(쓴 글 + 읽어 둔 원문): withOld면 앞 걸음들 것까지 */
+    function maskOwnOf(marks, withOld) {
+        const ready = maskMarksReady(marks);
+        if (withOld) return ready.all || (ready.all = maskMergeRanges(ready.to.concat(ready.fix, ready.keep, ready.old, ready.oldKeep)));
+        return ready.own || (ready.own = maskMergeRanges(ready.to.concat(ready.fix, ready.keep)));
+    }
+
+    /* (수정 12) 기록에서 이 기능이 쓴 글(바꾼 말 · 고친 조사, 앞 걸음들 것까지): 그대로 둔 곳 셈에서 뺀다. 읽어 둔 원문(keep)은 빼지 않는다. */
+    function maskWrittenOf(marks) {
+        const ready = maskMarksReady(marks);
+        return ready.written || (ready.written = maskMergeRanges(ready.to.concat(ready.fix, ready.old)));
+    }
+
+    /* (수정 12) 남길 기록 { w: 쓴 글, k: 읽어 둔 원문 }(글 자리, 겹치지 않게 합친 것) */
+    function maskRecordOf(marks) {
+        const ready = maskMarksReady(marks);
+        return { w: maskWrittenOf(marks), k: maskMergeRanges(ready.keep.concat(ready.oldKeep)) };
+    }
+
+    /* 셀 때 뺄 이 문단의 쓴 글: 방금 건 기록이 있으면 그것, 없으면 부른 쪽이 문단 요소에서 읽어 둔 기록(values.maskOwn = { w, k }, 수정 12).
+       자리 목록만 받으면(앞 판의 시험 틀) 모두 쓴 글로 본다. */
+    function maskOwnForRun(values) {
+        if (values.maskMarks) return maskWrittenOf(values.maskMarks);
+        const own = values.maskOwn;
+        if (!own) return null;
+        return Array.isArray(own) ? own : own.w || null;
+    }
+
+    /* 앞서 남긴 기록만 든 기록: 「원고에 적용」을 다시 누를 때 쓴 글(old)과 읽어 둔 원문(oldKeep)을 다시 읽지 않으려고(수정 11: 바꿀지 정할 때도 본다).
+       (수정 12) prior = { w, k }(문단 요소 기록). 자리 목록만 받으면 모두 쓴 글로 본다. */
+    function maskSeedMarks(prior) {
+        const copy = list => (list || []).map(range => [range[0], range[1]]);
+        const list = Array.isArray(prior);
+        return { to: [], fix: [], keep: [], old: copy(list ? prior : prior?.w), oldKeep: copy(list ? null : prior?.k), toEnd: new Map(), toAt: new Map(), own: null, all: null, written: null };
+    }
+
+    /* 숫자 하나를 읽은 소리의 받침 */
+    function maskDigitFinal(code) {
+        return MASK_DIGIT_FINALS.charAt(code >= 0xFF10 ? code - 0xFF10 : code - 0x30);
+    }
+
+    /* 말 끝 글자의 받침(숫자는 읽은 소리). '' = 모른다(라틴 글자·자모 …) */
+    function maskEndFinal(word) {
+        const code = word.charCodeAt(word.length - 1);
+        return maskDigitCode(code) ? maskDigitFinal(code) : maskFinalOf(code);
+    }
+
+    /* 고침 기록을 펼친다: 앞 기록의 자리를 이번 고침만큼 옮기고(고친 곳과 겹치면 버린다) 이번에 바꾼 말·고친 조사를 더한다.
+       (수정 10) 바꾼 말 뒤에 조사로 읽어 둔 자리(keep)와 앞 걸음들이 쓴 자리(old)도 함께 옮긴다. */
+    function maskMarksReady(marks) {
+        if (marks.to) return marks;
+        const chain = [];
+        for (let item = marks; item && !item.to; item = item.prev) chain.push(item);
+        let base = chain[chain.length - 1].prev || MASK_NO_MARKS;
+        for (let c = chain.length - 1; c >= 0; c--) {
+            const item = chain[c];
+            const next = maskMarksStep(base, item.edits, item.keeps, item.f, item.o);
+            item.to = next.to;
+            item.fix = next.fix;
+            item.keep = next.keep;
+            item.old = next.old;
+            item.oldKeep = next.oldKeep;
+            item.toEnd = new Map(next.to.map(range => [range[1], range[2]]));
+            item.toAt = new Map(next.to.map(range => [range[1], range]));
+            item.own = null;
+            item.all = null;
+            item.written = null;
+            item.prev = null;
+            item.edits = null;
+            item.keeps = null;
+            base = item;
+        }
+        return marks;
+    }
+
+    /* 앞 줄이 받침을 맞춰 고쳐 쓴 조사 속 자리인지(줄을 거는 동안만) */
+    function maskInFix(pos) {
+        const fix = maskMarksReady(maskMarksNow).fix;
+        let lo = 0;
+        let hi = fix.length - 1;
+        while (lo <= hi) {
+            const mid = (lo + hi) >> 1;
+            if (pos < fix[mid][0]) hi = mid - 1;
+            else if (pos >= fix[mid][1]) lo = mid + 1;
+            else return true;
+        }
+        return false;
+    }
+
+    /* text[… end)가 앞 줄이 바꿔 쓴 이름이면 원래 이름 끝 받침들([받침…]), 아니면 null.
+       줄을 거는 동안은 고침 기록으로, 셀 때(기록이 없다)는 바꿀 말로 끝나는 앞말을 그 줄의 가릴 말로 본다(같은 바꿀 말이 여럿이면 모두). */
+    function maskOrigFinals(text, end, rule) {
+        if (maskMarksNow) {
+            const toEnd = maskMarksReady(maskMarksNow).toEnd;
+            return toEnd.has(end) ? [toEnd.get(end)] : null;
+        }
+        return maskToFinals(text, end, rule);
+    }
+
+    /* 바꿀 말로 끝나는 앞말을 그 줄의 가릴 말로 보아 원래 이름 끝 받침들(셀 때 짐작) */
+    function maskToFinals(text, end, rule) {
+        if (!rule.toIndex || !rule.toFinals) return null;
+        let found = null;
+        for (let at = Math.max(0, end - rule.toMax); at < end; at++) {
+            const list = rule.toIndex.get(text.charAt(at));
+            if (list) for (const to of list) if (at + to.length === end && text.startsWith(to, at)) found = (found || []).concat(rule.toFinals.get(to) || []);
+        }
+        return found && found.length ? found : null;
+    }
+
+    /* (수정 13) 셀 때: text[… end)가 바꿀 말이고 그 말이 다른 줄의 가릴 말이면(맞바꾼 줄 · 이어지는 줄: 솔 → 별 · 별 → 태현, 하나 → 이 · 이 → Kai)
+       2.5.1은 그 말을 한 번 더 바꿨다(별 → 태현). 그 말 뒤 조사 꼴 이름(pos)을 2.5.1처럼 그다음 바꿀 말의 원래 받침들로도 가른다:
+       다 맞지 않거나 그다음 바꿀 말이 라틴 글자로 끝나면 센다(바꾸기는 그대로 — 2.5.1이 세던 자리를 조용히 두지 않는다). */
+    function maskChainCountAt(text, end, pos, rule) {
+        if (!rule.toIndex || !rule.fromTo) return false;
+        for (let at = Math.max(0, end - rule.toMax); at < end; at++) {
+            const list = rule.toIndex.get(text.charAt(at));
+            if (!list) continue;
+            for (const to of list) {
+                if (at + to.length !== end || !text.startsWith(to, at)) continue;
+                const next = rule.fromTo.get(to);
+                if (!next || next === to) continue;
+                const code = next.charCodeAt(next.length - 1);
+                if (maskCharKind(code) === 'l' && !maskDigitCode(code)) return true;
+                /* (수정 15) 2.5.1이 읽던 대로: 그다음 바꿀 말로 끝나는 모든 바꿀 말(가은 속 은 · 다온 속 온)의 원래 받침 — 받침을 모르는 이름(영문)이 있으면 센다 */
+                const virtual = text.slice(Math.max(0, at - rule.toMax), at) + next;
+                const finals = maskToFinals(virtual, virtual.length, rule) || [];
+                if (finals.includes('')) return true;
+                if (finals.length && !maskParticleFitsAll(text, pos, finals)) return true;
+            }
+        }
+        return false;
+    }
+
+    /* (수정 8) text[pos…]가 받침 final 뒤 닫힌 조사로 읽히는지. strict: 받침을 소리로 안다 — 받침 뒤 입말 오타 꼴(린랑 · 린를 · 린와 · 린야)은 받지 않는다. */
+    function maskParticleFits(text, pos, final, strict) {
+        const want = parse => parse.rank < 50 && !(strict && parse.first.typo);
+        return maskJosaParses(text, pos, final, true, true, want).some(want);
+    }
+
+    /* (수정 13) 다시 누른 「원고에 적용」: 앞서 적용한 걸음이 쓴 글(old) 끝 바로 뒤의 조사 꼴 이름이 셀 때처럼 짐작한 원래 받침에 맞으면 바꾸지 않는다
+       (첫 적용은 그 자리를 두고 셌다 — 기록에는 원래 받침이 없어 다시 누르면 지금 글자 받침으로 읽어 바꾸던 것: “윤”이이 → “이”이 → “이”하늘) */
+    function maskOldParticleAt(text, end, pos, rule) {
+        if (!maskMarksNow || !maskMarksReady(maskMarksNow).old.some(range => range[1] === end)) return false;
+        const guess = maskToFinals(text, end, rule);
+        if (!guess) return false;
+        return guess.includes('') ? maskParticleFits(text, pos, '', false) : maskParticleFitsAll(text, pos, guess);
+    }
+
+    /* (수정 15) text[pos, pos + len)의 이름을 가를 때 보는 둘레: 왼쪽 — 붙어 있는 글자(한글 · 라틴 글자 · 숫자 · 자모) 덩이와 그 앞 닫는 괄호·따옴표를 건넌 한 글자,
+       오른쪽 — 이어 붙은 글자 덩이, 닫는 괄호·따옴표를 건넌 글자 덩이, 이름 목록 부호(, · / &) + 띄어쓰기 뒤 글자 덩이. [처음, 끝] */
+    function maskTouchSpan(text, pos, len) {
+        const letter = i => {
+            const kind = maskCharKind(text.charCodeAt(i));
+            return kind === 'h' || kind === 'l' || kind === 'j';
+        };
+        let a = pos;
+        while (a > 0 && pos - a < 24 && letter(a - 1)) a--;
+        let j = a;
+        while (j > 0 && MASK_CLOSE_CODES.has(text.charCodeAt(j - 1))) j--;
+        if (j < a && j > 0) a = j - 1;
+        const end = pos + len;
+        let b = end;
+        while (b < text.length && b - end < 24 && letter(b)) b++;
+        let c = b;
+        while (c < text.length && MASK_CLOSE_CODES.has(text.charCodeAt(c))) c++;
+        if (c > b) {
+            b = c;
+            while (b < text.length && b - c < 24 && letter(b)) b++;
+        }
+        if (b < text.length && MASK_LIST_CODES.has(text.charCodeAt(b))) {
+            let q = b + 1;
+            while (q < text.length && (text.charCodeAt(q) === 0x20 || text.charCodeAt(q) === 0xA0 || text.charCodeAt(q) === 0x3000)) q++;
+            const start = q;
+            while (q < text.length && q - start < 24 && letter(q)) q++;
+            if (q > start) b = q;
+        }
+        return [a, b];
+    }
+
+    /* (수정 15) text[pos, pos + len)의 둘레(maskTouchSpan, 이름 자리는 빼고)가 자리 목록(ranges)과 겹치는지 */
+    function maskTouches(text, pos, len, ranges) {
+        if (!ranges || !ranges.length) return false;
+        const [a, b] = maskTouchSpan(text, pos, len);
+        return (pos > a && maskRangeHits(ranges, a, pos - a)) || (b > pos + len && maskRangeHits(ranges, pos + len, b - pos - len));
+    }
+
+    /* (수정 15) 다시 누른 「원고에 적용」: 이름의 둘레(maskTouchSpan)에 앞서 적용한 걸음들이 쓴 글(old)이 닿아 있는지. 닿아 있으면 그 이름은 첫 적용이 원래 글로 가른 것이라
+       다시 읽지 않는다(바꾼 말 · 고친 조사로 앞뒤 글이 달라져 두 번째에 바뀌던 것: '지호'나재민하늘 → 재민지호 · '도'도가 → '도'은이 · 민석이나민석 → 민석이나서하 ·
+       ‘시아’란, 은란은 → ‘시아’은). 그 기록은 남는다(maskRecordNeeded가 같은 둘레를 본다) */
+    function maskOldTouchAt(text, pos, len) {
+        const old = maskMarksReady(maskMarksNow).old;
+        return old.length > 0 && maskTouches(text, pos, len, old);
+    }
+
+    /* (수정 15) 셀 때 쓴 글 기록(maskCountTrust): 남는 기록이 있는 줄에서만(보기와 알림 셈이 같다) */
+    let maskCountTrust = null;
+
+    /* (수정 15) 셀 때: 조사 꼴 한 글자 이름(pos) 앞 같은 낱말(한글 덩이, 또는 그 덩이 바로 앞 닫는 괄호·따옴표 건너)에 이 기능이 바꿔 쓴 말(쓴 글 w 속 바꿀 말)이 있고,
+       그 말과 이름 사이 글(between)이 그 말의 닫힌 조사로 읽히는데 이름까지 이어 읽으면 조사가 끝나지 않으면('란'이나란 · 란이나란: 이나 + 란) 조사가 아니다 — 센다.
+       바꾼 말의 원래 받침이나 지금 받침을 모르거나(영문 Rin → 민석이란) 그 말이 다른 줄의 가릴 말이거나(이어지는 줄 시아 → 나윤 → 지호: 2.5.1은 다시 바꾸고 조사를 다시 맞췄다)
+       받침 모르는 이름을 바꾼 말에 붙은 조사 꼴 이름을 바꾼 말이고(Rin도란 → 보라은이란), 사이 글이 받침에 맞춰 넣은 '이' 한 글자(이 기능이 쓰거나 조사로 읽어 둔 글)이면 조사로 읽혀도 센다(수정 11처럼:
+       원문의 사이 글 Theo이가 → 승현이가의 가는 예전대로). 그 밖(민석이랑도 · 민석네도)은 예전 읽기대로. trust = { w, k } */
+    function maskWrittenTailCounts(text, pos, rule, trust) {
+        const w = trust.w;
+        if (!rule.toIndex || !rule.toFinals || !w || !w.length) return false;
+        let h0 = pos;
+        while (h0 > 0 && pos - h0 < 12 && maskCharKind(text.charCodeAt(h0 - 1)) === 'h') h0--;
+        let j = h0;
+        while (j > 0 && MASK_CLOSE_CODES.has(text.charCodeAt(j - 1))) j--;
+        for (let e = pos - 1; e >= j; e--) {
+            if (e < h0 && e > j) continue;
+            for (let at = Math.max(0, e - rule.toMax); at < e; at++) {
+                const list = rule.toIndex.get(text.charAt(at));
+                if (!list) continue;
+                for (const to of list) {
+                    if (at + to.length !== e || !text.startsWith(to, at) || !maskRangeHolds(w, at, e)) continue;
+                    const from = e < h0 ? h0 : e;
+                    if (from >= pos) continue;
+                    const cur = maskEndFinal(to);
+                    const between = text.slice(from, pos);
+                    if (!maskParticleFits(between, 0, cur, false)) continue;
+                    if (!maskParticleFits(text, from, cur, false)) return true;
+                    const finals = rule.toFinals.get(to) || [];
+                    const next = rule.fromTo ? rule.fromTo.get(to) : null;
+                    const unsure = between === '이' && (!cur || finals.includes('') || Boolean(next && next !== to) || maskGluedUnknown(text, at, to, rule, w));
+                    return unsure && maskRangeHolds(maskMergeRanges(w.concat(trust.k || [])), from, pos);
+                }
+            }
+        }
+        return false;
+    }
+
+    /* (수정 15) 셀 때: text[at, at + to.length)의 바꿀 말 to가 쓴 글(w)이고 조사 꼴 한 글자 이름을 바꾼 말이며, 바로 앞에 붙은 쓴 글이 원래 받침을 모르는 이름(영문)을 바꾼 말인지
+       (Rin도도 → 도온도: 2.5.1은 가운데 도를 두고 받침 모르는 이름 뒤라 셋 다 셌다) */
+    function maskGluedUnknown(text, at, to, rule, w) {
+        if (at < 1 || !maskRangeHolds(w, at, at + to.length) || !maskRangeHits(w, at - 1, 1)) return false;
+        let one = false;
+        for (const [from, next] of rule.fromTo) if (next === to && from.length === 1 && maskCharKind(from.charCodeAt(0)) === 'h' && getMaskJosaIndex().has(from)) one = true;
+        if (!one) return false;
+        for (let b = Math.max(0, at - rule.toMax); b < at; b++) {
+            const list = rule.toIndex.get(text.charAt(b));
+            if (list) for (const word of list) if (b + word.length === at && text.startsWith(word, b) && maskRangeHolds(w, b, at) && (rule.toFinals.get(word) || []).includes('')) return true;
+        }
+        return false;
+    }
+
+    /* (수정 15) 셀 때: text[… end)가 maskGluedUnknown인 바꿀 말인지 */
+    function maskGluedOneAt(text, end, rule, w) {
+        if (!rule.toIndex || !rule.fromTo || !w || !w.length) return false;
+        for (let at = Math.max(1, end - rule.toMax); at < end; at++) {
+            const list = rule.toIndex.get(text.charAt(at));
+            if (!list) continue;
+            for (const to of list) if (at + to.length === end && text.startsWith(to, at) && maskGluedUnknown(text, at, to, rule, w)) return true;
+        }
+        return false;
+    }
+
+    /* 받침 목록 모두에 조사가 맞는지(하나라도 안 맞으면 이름) */
+    function maskParticleFitsAll(text, pos, finals) {
+        return finals.every(final => maskParticleFits(text, pos, final, true));
+    }
+
+    /* (수정 9) text[at…]가 띄어쓰기 + 님/씨이고 그 뒤가 낱말 끝이거나 조사로 읽히는지(【알림】은 님이 · 님의 · 님 외 3명 ↔ 님프 · 씨앗) */
+    const MASK_HONOR_CODES = new Map([['님'.charCodeAt(0), 'C'], ['씨'.charCodeAt(0), 'V']]);
+    function maskHonorAfter(text, at) {
+        const space = at < text.length ? text.charCodeAt(at) : -1;
+        if (space !== 0x20 && space !== 0xA0 && space !== 0x3000) return false;
+        const final = MASK_HONOR_CODES.get(text.charCodeAt(at + 1));
+        if (!final) return false;
+        const after = at + 2;
+        const kind = after < text.length ? maskKindAt(text, after) : '';
+        if (kind === 'l') return false;
+        return kind !== 'h' || maskParticleFits(text, after, final, false);
+    }
+
+    /* (수정 7) 조사 꼴 한 글자 이름(은 · 이 · 가 · 도 · 란 · 랑 · 하…)이 바로 앞 말의 조사로 읽히는지.
+       돌려주는 값: 0 이름으로 본다 · 1 앞말의 조사(바꾸지도 세지도 않는다) · 2 조사로 두되 그대로 둔 곳으로 센다 ·
+       3 앞 줄이 바로 앞에 바꿔 쓴 이름 뒤의 이름(왼쪽 경계를 보지 않고 바꾼다).
+       앞이 성·애칭 앞말이 붙은 덩이가 아닌 한글 낱말(사랑은 · 들은)이고 조사가 그 받침에 맞고 낱말이 거기서 끝나면 1.
+       커플 표기 x 뒤(Theox은 · 현우x은 · 홀로 쓴 x)와 성·앞말 뒤(김은 · 우리은)는 이름일 수 있어 0(그대로 센다).
+       (수정 8) 받침을 소리로 가른다(조사는 받침에 맞는 꼴만: 은 을 이 과 이랑 이란 이나…는 받침 뒤 · 는 를 가 와 랑 란 나…는 받침 없는 말 뒤 · 로는 ㄹ 뒤도):
+       - 숫자 바로 뒤는 숫자를 읽은 소리의 받침(3은 = 삼은 → 2(수정 9: 센다) · No.1란 = 일란 → 0).
+       - 닫는 따옴표·괄호 뒤는 따옴표·괄호·문장부호를 건너 마지막 글자(한글 음절·숫자)의 받침: 맞으면 2, 안 맞으면 0(【알림】란 · [알림]란 → 이름).
+         그 글자가 라틴 글자·한자·가나·자모·그 밖 부호라 받침을 모르면 조사로 읽힐 때 2. 띄어쓰기·여는 따옴표·글 첫머리에서 멈추면 여는 따옴표라 0.
+         (수정 9) 바로 뒤에 띄어 쓴 님 · 씨가 오면 0(【알림】은 님이). 닫는 따옴표 바로 뒤 '하' + 고 · 며 · 는은 인용하는 말로 두되 센다: 2(“됐어.”하고 말했다).
+       - 라틴 글자 바로 뒤는 받침을 모르니 조사로 읽혀도 2(Sam은).
+       - 바로 앞(따옴표 뒤라면 마지막 글자까지)이 앞 줄이 바꿔 쓴 이름이면 원래 이름 끝 받침으로 본다: 안 맞으면 3(나윤란 → 지아예솔), 맞으면 1.
+         앞 줄이 받침을 맞춰 고쳐 쓴 조사 속(하준이란 → 지아란의 '란')은 1. 셀 때는 바꿀 말로 끝나는 앞말을 원래 이름으로 본다(안 맞으면 0 = 센다).
+       곧은따옴표(" ')는 여는 따옴표로도 쓰여 앞으로 거슬러 글자가 있을 때만 닫는 따옴표로 본다("은 안 돼 → 이름 · 말"은 → 조사). */
+    function maskParticleNameAt(text, pos, rule) {
+        if (pos < 1 || rule.from.length !== 1 || rule.head !== 'h' || !getMaskJosaIndex().has(rule.from)) return 0;
+        if (maskMarksNow && maskInFix(pos)) return 1;
+        const code = text.charCodeAt(pos - 1);
+        const kind = maskKindAt(text, pos - 1);
+        const digit = kind === 'l' && maskDigitCode(code);
+        if (kind === 'h' || digit) {
+            if (maskOldParticleAt(text, pos, pos, rule)) return 1;
+            const orig = maskOrigFinals(text, pos, rule);
+            if (orig) {
+                /* (수정 11) 받침을 모르는 이름(영문)을 바꾼 말 바로 뒤: 조사로 읽히면 두되 센다(Theo은 커플 → 승현은 커플, 2.5.1처럼).
+                   조사로 읽히지 않거나(Theo도가 · Ella하 커플) 쉼표로 다른 이름을 이어 적으면 이름(왼쪽 경계를 보지 않고 바꾼다) */
+                if (orig.includes('')) return maskParticleFits(text, pos, '', false) && !maskListNextAt(text, pos + 1, rule) ? 2 : maskMarksNow ? 3 : 0;
+                /* (수정 9) 셀 때(고침 기록이 없다)는 바꿀 말로 끝나는 앞말이 원문에 그대로 쓰였을 수 있다(하나 → 민준인데 원문이 민준란):
+                   지금 앞 글자의 받침에도 맞아야 조사로 둔다. 안 맞으면 0 = 센다. */
+                const here = digit ? maskDigitFinal(code) : maskFinalOf(code);
+                if (!maskMarksNow && maskChainCountAt(text, pos, pos, rule)) return 0;
+                /* (수정 15) 셀 때: 바로 앞 바꿔 쓴 말이 다른 바꿔 쓴 말에 붙어 있고 조사 꼴 한 글자 이름을 바꾼 것이면(Rin도도 → 도온도: 가운데 도를 이름으로 읽었다)
+                   그 뒤 조사 꼴 이름은 조사인지 이름인지 가를 수 없어 센다(2.5.1처럼) */
+                if (!maskMarksNow && maskCountTrust && maskGluedOneAt(text, pos, rule, maskCountTrust.w)) return 0;
+                return maskParticleFitsAll(text, pos, orig) && (maskMarksNow || maskParticleFits(text, pos, here, digit)) ? 1 : maskMarksNow ? 3 : 0;
+            }
+            /* (수정 15) 셀 때: 같은 낱말 앞쪽의 바꿔 쓴 말 + 조사 다음에 붙은 이름은 조사가 이어지지 않으면 센다('란'이나란 · 란이나란 · 민석이란) */
+            if (!maskMarksNow && maskCountTrust && maskWrittenTailCounts(text, pos, rule, maskCountTrust)) return 0;
+            /* (수정 9) 숫자 뒤는 읽은 소리에 맞아도 이름일 수 있어(No.3은 - 생존) 조사로 두되 센다.
+               (수정 13) 뒤에 조사가 더 붙어도(No.1이가 = 애칭 '이' + 가) 2.5.1처럼 조사로 두되 센다 */
+            if (digit) return maskParticleFits(text, pos, maskDigitFinal(code), true) && !maskListNextAt(text, pos + 1, rule) ? 2 : 0;
+            if (maskRunOk(text, pos, rule) && !maskRunOk(text, pos, rule, true)) return 0;
+            return maskParticleFits(text, pos, maskFinalOf(code), false) ? 1 : 0;
+        }
+        if (kind === 'l') {
+            if ((code === 0x78 || code === 0x58) && (pos < 2 || maskCharKind(text.charCodeAt(pos - 2)) !== 'l')) return 0;
+            if (maskShipXAt(text, pos - 1, rule, -1)) return 0;
+            return maskParticleFits(text, pos, '', false) && !maskListNextAt(text, pos + 1, rule) ? 2 : 0;
+        }
+        if (!MASK_CLOSE_CODES.has(code)) return 0;
+        /* (수정 9) 조사 뒤에는 띄어 쓴 님 · 씨가 오지 않는다: 【알림】은 님이 입장했습니다 · [System]은 님이 → 이름.
+           (수정 11) 쉼표로 다른 이름을 이어 적은 목록의 첫 이름도(【알림】은, 하, 도 님이 입장했습니다) */
+        if (maskHonorAfter(text, pos + 1) || maskListNextAt(text, pos + 1, rule)) return 0;
+        let i = pos - 1;
+        while (i >= 0 && MASK_BACK_SKIP_CODES.has(text.charCodeAt(i))) i--;
+        if (i < 0 || MASK_BACK_STOP_CODES.has(text.charCodeAt(i))) return 0;
+        /* (수정 9) 인용하는 말로 두되 센다(“알았어.”하는 웃었다의 '하'는 이름일 수 있다) */
+        if (rule.from === '하' && MASK_CLOSE_QUOTE_CODES.has(code) && MASK_QUOTE_VERB_NEXT.has(text.charCodeAt(pos + 1))) return 2;
+        const last = text.charCodeAt(i);
+        const back = maskKindAt(text, i);
+        if (maskOldParticleAt(text, i + 1, pos, rule)) return 2;
+        let finals = null;
+        if (back === 'h' || (back === 'l' && maskDigitCode(last))) finals = maskOrigFinals(text, i + 1, rule) || [back === 'h' ? maskFinalOf(last) : maskDigitFinal(last)];
+        /* (수정 13) 뒤에 조사·님/씨가 더 붙어도(“지은”이는 · [민준]이가 · 【알림】이님이 = 애칭 '이' + 조사) 2.5.1처럼 조사로 두되 센다(띄어 쓴 님 · 씨는 위 수정 9) */
+        if (!finals || finals.includes('')) return maskParticleFits(text, pos, '', false) ? 2 : 0;
+        return maskParticleFitsAll(text, pos, finals) ? 2 : 0;
+    }
+
+    /* (수정 11) text[at…]가 이름 목록을 잇는 부호(, 、 ， · ・ / &) + 띄어쓰기 + 적어 둔 가릴 말이나 바꿀 말이고, 그 말 뒤가 낱말 끝이거나
+       조사(서술격 끝은 빼고: 하지만 · 도착)로 읽히는지. 괄호·숫자·라틴 글자 뒤 조사 꼴 한 글자 이름이 목록의 첫 이름인지 가른다(【알림】은, 하, 도 님이). */
+    const MASK_LIST_CODES = new Set([0x2C, 0x3001, 0xFF0C, 0xB7, 0x30FB, 0x2F, 0x26]);
+    function maskListNextAt(text, at, rule) {
+        if (at >= text.length || !MASK_LIST_CODES.has(text.charCodeAt(at))) return false;
+        let q = at + 1;
+        while (q < text.length && (text.charCodeAt(q) === 0x20 || text.charCodeAt(q) === 0xA0 || text.charCodeAt(q) === 0x3000)) q++;
+        if (q >= text.length) return false;
+        const head = text.charAt(q);
+        const words = (rule.shipHead ? rule.shipHead.get(head) || [] : []).concat(rule.toIndex ? rule.toIndex.get(head) || [] : []);
+        const real = parse => parse.rank < 50 && parse.first.slot !== 'P';
+        for (const word of words) {
+            if (!word || !text.startsWith(word, q)) continue;
+            const stop = q + word.length;
+            const kind = stop < text.length ? maskKindAt(text, stop) : '';
+            if (kind !== 'h' && kind !== 'l') return true;
+            if (kind === 'h' && maskJosaParses(text, stop, maskEndFinal(word), word.length >= 2, true, real).some(real)) return true;
+        }
+        return false;
+    }
+
+    /* (수정 9) 한 글자 한글 이름 + 받침에 맞는 부름말(받침 없음 → 야 · 받침 → 아)을 붙여 두 번 넘게 되풀이한 덩이(하야하야, · 란아란아 · 은아은아!):
+       덩이가 낱말 첫머리에서 시작하고 끝(늘인 꼬리 아·야… 뒤)이 낱말 끝이면 덩이 속 이름을 모두 바꾸고 부름말을 바꾼 말 받침에 맞춘다.
+       받침에 안 맞는 부름말(하아하아 · 은야은야)은 덩이가 아니다. 덩이가 아니면 undefined. */
+    function maskCallChainAt(text, pos, rule) {
+        if (rule.open || rule.from.length !== 1 || rule.head !== 'h' || !rule.src) return undefined;
+        const name = rule.from.charCodeAt(0);
+        const call = rule.src === 'V' ? 0xC57C : 0xC544;
+        if (text.charCodeAt(pos + 1) !== call) return undefined;
+        let start = pos;
+        while (start >= 2 && text.charCodeAt(start - 1) === call && text.charCodeAt(start - 2) === name) start -= 2;
+        let stop = pos;
+        while (stop + 1 < text.length && text.charCodeAt(stop) === name && text.charCodeAt(stop + 1) === call) stop += 2;
+        if (stop - start < 4) return undefined;
+        if (start > 0 && maskLeftBlocks(text, start - 1, 'h')) return undefined;
+        let end = stop;
+        while (end < text.length && MASK_STRETCH_CODES.has(text.charCodeAt(end))) end++;
+        const kind = end < text.length ? maskKindAt(text, end) : '';
+        if (kind === 'h' || kind === 'l') return undefined;
+        if (!rule.dst) return MASK_KEEP;
+        const t = rule.dst === 'V' ? '야' : '아';
+        return t === text.charAt(pos + 1) ? MASK_KEEP : { edits: [{ at: pos + 1, len: 1, t }] };
+    }
+
+    /* (수정 5) 왼쪽 경계를 성·애칭 앞말 덕에 지났는지(앞 글자가 한글 음절이고, 적어 둔 이름·늘인 웃음만으로는 덩이가 되지 않는다) */
+    function maskNeedsSurname(text, pos, rule) {
+        return pos > 0 && maskCharKind(text.charCodeAt(pos - 1)) === 'h' && !maskRunOk(text, pos, rule, true);
+    }
+
+    /* text[pos…]의 가릴 말을 낱말로 볼지 정한다. null = 두기 · MASK_KEEP = 바꾸기 · { edits: [{ at, len, t }…] } = 바꾸고 바로 뒤 조사도 고치기(앞 것부터 맞는 하나) ·
+       MASK_NOT = 앞 이름의 조사(바꾸지도 세지도 않는다).
+       ignoreLeft: 앞 글자를 보지 않는다(그대로 둔 곳을 하나만 바꿀 때 조사만 맞추려고). */
+    function maskWordJudge(text, pos, rule, ignoreLeft) {
+        /* (수정 6) 그대로 둔 곳 보기의 줄임꼴 자리(maskContractSpotRule): 바꿀 말 뒤에 풀어 쓴 조사를 붙인다 */
+        if (rule.contractFix !== undefined) return rule.contractFix ? { edits: [{ at: pos + rule.from.length, len: 0, t: rule.contractFix }] } : MASK_KEEP;
+        /* (수정 10) 이번 걸음에 앞 줄이 쓴 글(바꾼 말 · 그 뒤에 조사로 읽어 둔 글 · 고친 조사)은 다시 읽지 않는다(맞바꾼 두 줄 · 하린이가 → 채아가의 '가').
+           (수정 11) 앞서 적용한 걸음들이 쓴 글(old)도 */
+        if (maskMarksNow && !ignoreLeft) {
+            const own = maskOwnOf(maskMarksNow, true);
+            if (own.length && maskRangeHits(own, pos, rule.from.length)) return MASK_NOT;
+            /* (수정 15) 다시 누른 「원고에 적용」: 앞서 쓴 글이 둘레에 닿은 이름은 첫 적용의 판정대로 둔다 */
+            if (maskOldTouchAt(text, pos, rule.from.length)) return null;
+        }
+        const end = pos + rule.from.length;
+        /* (수정 6) 작은 글자 꼴(nova)은 바로 뒤에 한글 음절이 붙을 때만 이름으로 본다(nova야 · mina는 ↔ bossa nova).
+           (수정 7) 그 한글이 사람 뒤에 오는 조사로 읽힐 때만(max로 · eve에 · rose향은 그대로, 그대로 둔 곳으로 센다) */
+        if (rule.lower && text.startsWith(rule.lower, pos) && !text.startsWith(rule.from, pos) && !maskLowerCallAt(text, end)) return null;
+        /* (수정 9) 한 글자 이름을 붙여 되풀이해 부른 덩이(하야하야 · 란아란아): 덩이 속 둘째 이름은 앞 글자(부름말)를 보지 않는다 */
+        const chain = maskCallChainAt(text, pos, rule);
+        if (chain) return chain;
+        /* (수정 7) 조사 꼴 한 글자 이름이 앞말의 조사로 읽히면(사랑은) 바꾸지도 세지도 않는다.
+           (수정 8) 받침을 모르거나 따옴표·괄호 뒤라 조사로 둔 자리(Sam은 · 「봄」은)는 그대로 둔 곳으로 센다 · 앞 줄이 바꾼 이름 바로 뒤의 이름은 왼쪽 경계를 보지 않는다.
+           (수정 9) 숫자 뒤(3은)도 센다. */
+        const particle = ignoreLeft ? 0 : maskParticleNameAt(text, pos, rule);
+        if (particle === 1) return MASK_NOT;
+        if (particle === 2) return null;
+        /* 왼쪽 경계: maskLeftOk. 띄어쓰기·문장부호·따옴표·괄호·이모지·홀자모 뒤는 낱말 첫머리. */
+        if (!ignoreLeft && particle !== 3 && pos > 0 && rule.head) {
+            const left = maskLeftOk(text, pos, rule);
+            if (!left || left === MASK_NOT) return left || null;
+        }
+        for (const word of rule.ex) if (text.startsWith(word, pos)) return null;
+        if (!ignoreLeft && rule.open && maskParallelJosaAt(text, pos, rule)) {
+            /* 바로 앞이 적어 둔 이름이면(바꾼 뒤 민준이든 누구든) 그 이름의 조사라 세지 않는다 */
+            return rule.listed.some(word => pos >= word.length && text.startsWith(word, pos - word.length)) ? MASK_NOT : null;
+        }
+        const next = end < text.length ? maskKindAt(text, end) : '';
+        const hangulTail = rule.tail === 'h' || rule.tail === 'j';
+        if (next !== 'h') {
+            /* 두 글자 이상 한글 이름은 뒤에 라틴 글자·숫자가 붙어도 바꾼다(서윤x지호).
+               (수정 4) 한 글자 한글 이름은 뒤 라틴 글자가 낱말 끝(솔x빈), 숫자만 붙은 것으로 본다(별5개) · 라틴 이름은 뒤 숫자(Leo2)와 끝 글자 늘임(Leooo)을 받는다. */
+            let joined;
+            if (rule.open) joined = false;
+            else if (rule.tail === 'h') joined = next === 'l' && maskDigitCode(text.charCodeAt(end));
+            else if (hangulTail) joined = next === 'l' || next === 'j';
+            else if (rule.tail === 'l') joined = next === 'l' && !maskLatinTailOpen(text, end, rule) && !maskShipXAt(text, end, rule, 1) && !maskShipNextAt(text, end, rule);
+            else joined = Boolean(next) && next === rule.tail;
+            if (joined) return null;
+            /* (수정 4) '진'으로 끝나는 이름 + 띄어 쓴 않/마(채우진 않았다 · 지우진 마 = -지는): 이름으로 쓸 수 없는 짝이라 그대로 둔 곳으로 센다.
+               (수정 5) 왼쪽에 성·애칭 앞말이 붙어야 이름으로 읽히는 때만(채 + 우진 · 지 + 우진). 홀로 쓴 이름(유진 않았어?)은 늘 바꾼다. */
+            if (rule.from.charCodeAt(rule.from.length - 1) === 0xC9C4 && !ignoreLeft && maskNegationAt(text, end) && maskNeedsSurname(text, pos, rule)) return null;
+            /* 닫는 따옴표·괄호 바로 뒤 조사: 따옴표 안 말에 맞춘다 */
+            if (rule.dst && end + 1 < text.length && MASK_CLOSE_CODES.has(text.charCodeAt(end)) && maskCharKind(text.charCodeAt(end + 1)) === 'h') {
+                return maskOneSyllableVerdict(text, end + 1, rule, pos) || maskHarmonyVerdict(text, end + 1, rule, maskJosaParses(text, end + 1, rule.src, rule.long));
+            }
+            return MASK_KEEP;
+        }
+        if (!hangulTail && !rule.dst) return MASK_KEEP;
+        if (rule.open) {
+            if (maskShipAt(text, end, rule)) {
+                for (const word of rule.openEx) if (text.startsWith(word, pos)) return null;
+                return MASK_KEEP;
+            }
+            const stretch = maskStretchVerdict(text, end, rule);
+            if (stretch) return stretch;
+            /* (수정 6) 부름말 아/야 바로 뒤가 적어 둔 이름이면(하람아하람아 · 서윤아지호야) 부름말에서 낱말이 끝난 것으로 보고 받침을 맞춘다.
+               (수정 7) 부름말로 바로 고친다(서하야서하야 → 지율아지율아: '야'를 서술격으로도 읽어 갈리던 것) */
+            const call = text.charCodeAt(end);
+            if ((call === 0xC544 || call === 0xC57C) && rule.listed.some(word => text.startsWith(word, end + 1))) {
+                if (!rule.dst) return MASK_KEEP;
+                const t = rule.dst === 'V' ? '야' : '아';
+                return t === text.charAt(end) ? MASK_KEEP : { edits: [{ at: end, len: 1, t }] };
+            }
+        } else if (maskShipAt(text, end, rule) || maskShipNextAt(text, end, rule)) {
+            /* (수정 7) 한 글자 한글 이름 · 영문 이름 바로 뒤가 적어 둔 이름이면 이어 쓴 이름이다(혁이솔 · Ivy이솔): 받침을 맞추지 않는다.
+               (수정 10) 조사 꼴이 아닌 한 글자 · 영문 가릴 말이 붙어도(결온 · 가결 · Rin결이) */
+            return MASK_KEEP;
+        }
+        /* (수정 6) 받침 없는 한 글자 이름 + 늘인 '이'(휘이이이!): 부름을 늘인 것 */
+        if (!rule.open && rule.src === 'V' && text.charCodeAt(end) === 0xC774 && text.charCodeAt(end + 1) === 0xC774) {
+            let stop = end + 2;
+            while (stop < text.length && text.charCodeAt(stop) === 0xC774) stop++;
+            const kind = stop < text.length ? maskCharKind(text.charCodeAt(stop)) : '';
+            if (kind !== 'h' && kind !== 'l') return MASK_KEEP;
+        }
+        const special = maskOneSyllableVerdict(text, end, rule, pos);
+        if (special) return special;
+        let parses = maskJosaParses(text, end, rule.src, rule.long);
+        /* (수정 7) 하더라 · 주더라 · 보라고는: 흔한 움직씨 줄기와 같은 한 글자 이름 바로 뒤의 입말 끝은 이름 뒤로 읽지 않는다 */
+        if (!rule.long && MASK_ONE_VERB_STEMS.has(rule.from)) parses = parses.filter(parse => !parse.first.stemTail);
+        /* (수정 10) 받침 없는 이름 뒤가 끝이 열린 서술격(라 · 란 · 자 · 던 · 건 · 거 · 든 · 나 · 랑 + 아무 글)으로만 읽히고 그 첫 글자가 적어 둔 한 글자 이름이면(별하란이 왔다)
+           조사로 고쳐 쓰지 않는다: 고쳐 쓰면 이 기능이 쓴 글이 되어 그 이름을 다시 읽지도 세지도 못한다. 그 자리는 그 이름의 줄이 가른다(별하란이 → 시온다온이). */
+        if (parses.length && rule.ones.length && rule.ones.includes(text.charAt(end)) && text.charAt(end) !== rule.from &&
+            parses.every(parse => parse.rank >= 50 && parse.first.need === 'W')) return MASK_KEEP;
+        if (parses.length) return maskHarmonyVerdict(text, end, rule, parses);
+        /* (수정 3) 두 글자 이상 한글 이름은 오른쪽이 열려 있다: 조사가 읽히지 않아도 바꾼다(흔한 낱말 MASK_OPEN_EXCEPTIONS만 두기) */
+        if (rule.open) {
+            for (const word of rule.openEx) if (text.startsWith(word, pos)) return null;
+            return MASK_KEEP;
+        }
+        return hangulTail ? null : MASK_KEEP;
+    }
+
+    /* (수정 3) 줄임꼴(지혼 = 지호는 · 지홀 = 지호를)을 바꿀 글. 왼쪽 경계는 이름과 같고, 뒤는 띄어쓰기·문장부호·홀자모·글 끝이어야 한다.
+       조사는 바꾼 말에 맞춰 풀어 쓴다: 받침 없는 말은 같은 줄임꼴(하난 · 하날), 받침 있는 말은 은/을(민준은 · 하늘을), 그 밖(ㅇㅇ · A)은 는/를.
+       뒤 낱말이 매인 이름씨(줄 · 리 · 수 · 거…)면 ㄴ/ㄹ은 '인/일'(지혼 줄 → 민준인 줄 · 지홀 거야 → 민준일 거야). 두기 = null.
+       (수정 6) 바로 뒤에 붙여 쓴 서술격 뒷부분(MASK_CONTRACT_NEXT: 채안데 → 민혁인데 · 채알걸 → 민혁일걸)도 받는다.
+       maskContractParts: 받을 수 있으면 { fix: 바꿀 말 뒤에 풀어 쓸 조사 }, 아니면 null. withPrefix: 성·애칭 앞말이 붙은 자리도 받는다(그대로 둔 곳 세기). */
+    function maskContractParts(text, at, rule, which, withPrefix) {
+        if (at > 0 && rule.head) {
+            const left = maskLeftOk(text, at, rule);
+            if (!left || left === MASK_NOT) return null;
+            /* (수정 5) 성·애칭 앞말과 줄임꼴을 한 자리에 함께 받지 않는다(주도한 ≠ 주 + 도하는 · 주도할 ≠ 주 + 도하를) */
+            if (!withPrefix && maskNeedsSurname(text, at, rule)) return null;
+        }
+        let after = at + rule.from.length;
+        /* (수정 4) ㄴ 줄임꼴 + 요(민선요? = 민서는요?): 요 뒤가 낱말 끝이면 받는다(요는 원문 그대로 남아 조사 뒤에 붙는다 → 태윤은요?).
+           (수정 7) ㄹ 줄임꼴 + 요(은홀요? = 은호를요? → 민준을요?)도 */
+        const yo = text.charCodeAt(after) === 0xC694;
+        if (yo) after++;
+        let glued = false;
+        let unread = false;
+        if (after < text.length) {
+            const code = text.charCodeAt(after);
+            const kind = maskCharKind(code);
+            if (kind === 'h' && !yo && MASK_CONTRACT_NEXT[which].has(code)) {
+                /* (수정 6) 붙여 쓴 서술격 뒷부분: 낱말 끝까지(한글 음절만) 받는다. 라틴 글자·숫자로 이어지면 낱말이 아니다. */
+                let stop = after + 1;
+                while (stop < text.length && maskCharKind(text.charCodeAt(stop)) === 'h') stop++;
+                if (stop < text.length && maskCharKind(text.charCodeAt(stop)) === 'l') return null;
+                /* (수정 7) 뒷부분 다음 글은 조사·서술격 끝으로 읽혀야 한다(채안데요 · 채알지도 · 채안거야 ↔ 지날수록 · 보안지침 · 지난가을 · 보안게이트).
+                   (수정 8) 분명한 서술격(MASK_CONTRACT_CLEAR)은 뒤를 보지 않고 받는다 · 그 밖에 읽지 못한 뒷글은 바꾸지 않고 그대로 둔 곳으로 센다(unread) */
+                if (!MASK_CONTRACT_CLEAR[which].some(head => text.startsWith(head, after)) && !maskContractRestOk(text, after, stop)) unread = true;
+                glued = true;
+            } else if (kind === 'h') {
+                /* (수정 9) 정해 둔 머리가 아닌 붙여 쓴 한글(리울때가 · 리운모양이야 · 아란탓이야 · 아란요리)도 이름 + 서술격일 수 있다: 바꾸지 않고 센다 */
+                return { fix: which ? '일' : '인', verb: MASK_VERB_STEM_NAMES.has(rule.from), unread: true };
+            } else if (kind === 'l' || kind === 'c' || kind === 'k') return null;
+        }
+        const strong = rule.dst === 'C' || rule.dst === 'L';
+        /* (수정 7) 흔한 움직씨 줄기와 같은 이름(지나 · 누리 · 다니…)의 붙여 쓴 줄임꼴(지날까 · 다닌지 · 누린거)은 바꾸지 않고 그대로 둔 곳으로 센다(verb) */
+        if (glued) return { fix: which ? '일' : '인', verb: MASK_VERB_STEM_NAMES.has(rule.from), unread };
+        if (yo) return { fix: which ? (strong ? '을' : '를') : (strong ? '은' : '는') };
+        const space = after < text.length ? text.charCodeAt(after) : -1;
+        let bound = false;
+        if (space === 0x20 || space === 0xA0 || space === 0x3000) {
+            const word = after + 1;
+            bound = MASK_BOUND_HEADS.some(head => text.startsWith(head, word)) || MASK_BOUND_WORDS.some(noun => text.startsWith(noun, word) &&
+                maskCharKind(word + 1 < text.length ? text.charCodeAt(word + 1) : 0x20) !== 'h');
+        }
+        if (bound) return { fix: which ? '일' : '인' };
+        return { fix: which ? (strong ? '을' : '를') : (strong ? '은' : '는') };
+    }
+
+    /* (수정 7) 붙여 쓴 줄임꼴의 서술격 뒷부분(text[tail]) 다음 글(text[tail + 1 … stop))이 비었거나, 요이거나, 텐 + 데(요·도)이거나, 조사·서술격 끝으로 낱말 끝까지 읽히는지 */
+    function maskContractRestOk(text, tail, stop) {
+        const rest = text.slice(tail + 1, stop);
+        if (!rest || rest === '요') return true;
+        if (text.charAt(tail) === '텐') return rest === '데' || rest === '데요' || rest === '데도';
+        return maskJosaParses(text, tail + 1, maskFinalOf(text.charCodeAt(tail)), true).length > 0;
+    }
+
+    function maskContractText(text, at, rule, which) {
+        const parts = maskContractParts(text, at, rule, which, false);
+        if (!parts || parts.verb || parts.unread) return null;
+        const to = rule.to;
+        if (rule.dst === 'V') return to.slice(0, -1) + String.fromCharCode(to.charCodeAt(to.length - 1) + (which ? 8 : 4));
+        return to + parts.fix;
+    }
+
+    /* (수정 6) 그대로 둔 곳 보기가 쓰는 줄임꼴 자리의 규칙: from = 줄임꼴, 바꾸기는 바꿀 말 + 풀어 쓴 조사(김채안 → 김민혁은 · 우리채안 → 우리하나는).
+       조사는 maskWordJudge가 바로 뒤에 넣는다(contractFix). 문단 끝이라 뒤에 넣을 자리가 없으면 바꿀 말만 쓴다(보기 단추 글이 '민혁은으로'가 되지 않게). */
+    function maskContractSpotRule(rule, form, fix, atEnd) {
+        if (!rule.to || atEnd) return { from: form, to: rule.to, dst: '', contractFix: '', of: rule };
+        return { from: form, to: rule.to, dst: rule.dst || 'X', contractFix: fix, of: rule };
+    }
+
+    /* 줄 하나를 규칙으로 만든다. 가릴 말 앞뒤 글자 종류·받침, 바꿀 말의 받침(완성 글자로 끝날 때만 조사를 맞춘다).
+       (수정 3) open: 두 글자 이상 한글 이름(오른쪽이 열려 있다) · contract: 받침 없는 open 이름의 줄임꼴 [{ form, which(0 ㄴ · 1 ㄹ) }] ·
+       runTokens: 이름 앞 덩이에 올 수 있는 말(애칭 앞말 + 적어 둔 이름) · glued: 한 글자 한글 이름 앞에 붙으면 두는 다른 줄의 말(maskWordRules가 채운다). */
+    /* (수정 5) 영문(ASCII 글자·숫자)으로만 된 말인지 */
+    function maskAsciiWord(word) {
+        let letter = false;
+        for (let k = 0; k < word.length; k++) {
+            const code = word.charCodeAt(k);
+            if ((code >= 0x41 && code <= 0x5A) || (code >= 0x61 && code <= 0x7A)) letter = true;
+            else if (!(code >= 0x30 && code <= 0x39)) return false;
+        }
+        return letter;
+    }
+
+    function compileMaskWordRule(from, to) {
+        const last = from.charCodeAt(from.length - 1);
+        const src = maskFinalOf(last);
+        const open = from.length >= 2 && maskAllHangul(from);
+        /* (수정 5) 세 글자 이상 영문 이름은 모두 큰 글자(THEO)·첫 글자만 큰 글자(Theo) 꼴도 낱말 단위로 바꾼다(그대로 둔 곳으로는 적은 꼴만 센다).
+           두 글자 이름(Ai · Al)은 줄임말(AI · AL)과 겹쳐 적은 꼴 그대로만. */
+        const ascii = from.length >= 3 && maskAsciiWord(from);
+        const alt = ascii ? [from.toUpperCase(), from.charAt(0).toUpperCase() + from.slice(1).toLowerCase()]
+            .filter((form, k, list) => form !== from && list.indexOf(form) === k) : [];
+        /* (수정 6) 작은 글자 꼴(nova야 · mina는): 바로 뒤에 한글 음절이 붙을 때만 바꾼다(maskWordJudge) */
+        const lower = ascii && from.toLowerCase() !== from && !alt.includes(from.toLowerCase()) ? from.toLowerCase() : '';
+        if (lower) alt.push(lower);
+        return {
+            alt,
+            lower,
+            /* (수정 7) 그대로 둔 곳 셈에서 큰/작은 글자를 가리지 않고 찾을 꼴(세 글자 이상 영문 이름) */
+            caseLow: ascii ? from.toLowerCase() : '',
+            latin: [],
+            from,
+            to,
+            head: maskCharKind(from.charCodeAt(0)),
+            tail: maskCharKind(last),
+            src,
+            dst: to ? maskFinalOf(to.charCodeAt(to.length - 1)) : '',
+            long: from.length >= 2,
+            ex: MASK_WORD_EXCEPTIONS.filter(word => word.length > from.length && word.startsWith(from)),
+            open,
+            lastVowel: src ? Math.floor((last - 0xAC00) / 28) % 21 : -1,
+            openEx: open ? MASK_OPEN_EXCEPTIONS.filter(word => word.length > from.length && word.startsWith(from)) : [],
+            contract: open && src === 'V' ? [4, 8].map((add, which) => ({ form: from.slice(0, -1) + String.fromCharCode(last + add), which }))
+                .filter(item => !MASK_CONTRACT_EXCEPTIONS.includes(item.form)) : null,
+            runTokens: MASK_NAME_PREFIXES.concat(open ? [from] : [], to && to.length >= 2 && maskAllHangul(to) ? [to] : []),
+            listed: (open ? [from] : []).concat(to && to.length >= 2 && maskAllHangul(to) ? [to] : []),
+            listedFrom: open ? [from] : [],
+            ones: [],
+            glued: null,
+            shipHead: null,
+            shipTail: null
+        };
+    }
+
+    /* (수정 3) 한 목록의 규칙끼리 잇는다: 두 글자 이상 한글 이름 앞 덩이에 올 수 있는 적어 둔 이름(가릴 말·바꿀 말, 두 글자 이상 한글),
+       한 글자 한글 이름 앞에 붙으면 두는 말(끝 글자가 라틴 글자·숫자·자모·한자·가나인 가릴 말·바꿀 말), 다른 줄의 가릴 말과 같은 줄임꼴은 빼기. */
+    function maskLinkRules(rules) {
+        const listed = [];
+        const latin = [];
+        const glued = new Map();
+        const froms = new Set();
+        rules.forEach(rule => {
+            froms.add(rule.from);
+            [rule.from, rule.to].forEach(word => {
+                if (!word) return;
+                if (word.length >= 2 && maskAllHangul(word) && !listed.includes(word)) listed.push(word);
+                if (maskAsciiWord(word) && !latin.includes(word)) latin.push(word);
+                const code = word.charCodeAt(word.length - 1);
+                const kind = maskCharKind(code);
+                if (!kind || kind === 'h') return;
+                if (!glued.has(code)) glued.set(code, []);
+                if (!glued.get(code).includes(word)) glued.get(code).push(word);
+            });
+        });
+        /* (수정 6) 부른 이름을 되풀이한 덩이(하람아하람아 · 서윤이서윤이): 적어 둔 이름 + 부름말 아/야 · 받침 뒤 애칭 이 */
+        const called = [];
+        listed.forEach(word => {
+            const final = maskFinalOf(word.charCodeAt(word.length - 1));
+            called.push(word + (final === 'V' ? '야' : '아'));
+            if (final !== 'V') called.push(word + '이');
+        });
+        /* (수정 7) 한 글자 한글 가릴 말(혁 · 은)도 두 글자 이상 이름 앞 덩이에 온다(혁이솔 커플 · 은서하): 적어 둔 이름이다(성처럼 이 앞에 더 붙지는 않는다) */
+        const ones = [];
+        froms.forEach(word => {
+            if (word.length === 1 && maskAllHangul(word)) ones.push(word);
+        });
+        const tokens = MASK_NAME_PREFIXES.concat(listed, called, ones);
+        const plainTokens = listed.concat(called, ones);
+        const listedFrom = listed.filter(word => froms.has(word));
+        /* (수정 7) 첫 글자 → 말(차례 그대로): 덩이 걷기 · 이어 쓴 이름 찾기를 글자마다 수백 개 대 보지 않게 */
+        const byHead = words => {
+            const map = new Map();
+            words.forEach(word => {
+                const key = word.charAt(0);
+                if (!map.has(key)) map.set(key, []);
+                map.get(key).push(word);
+            });
+            return map;
+        };
+        const tos = [];
+        /* (수정 8) 바꿀 말 → 그 말로 바꾸는 가릴 말들의 끝 받침(셀 때 바꾼 이름 뒤 조사 꼴 이름을 원래 이름 받침으로 가른다) */
+        const toFinals = new Map();
+        /* (수정 13) 가릴 말 → 바꿀 말(맨 앞 줄): 셀 때 맞바꾼·이어지는 줄을 2.5.1처럼 한 번 더 따라간다(maskChainCountAt) */
+        const fromTo = new Map();
+        const fromMax = Array.from(froms).reduce((max, word) => Math.max(max, word.length), 1);
+        rules.forEach(rule => {
+            if (rule.to && !fromTo.has(rule.from)) fromTo.set(rule.from, rule.to);
+            if (rule.to && !tos.includes(rule.to)) tos.push(rule.to);
+            if (rule.to) toFinals.set(rule.to, (toFinals.get(rule.to) || []).concat(maskEndFinal(rule.from)));
+        });
+        const toIndex = byHead(tos);
+        const toMax = tos.reduce((max, to) => Math.max(max, to.length), 1);
+        const runIndex = byHead(tokens);
+        const plainIndex = byHead(plainTokens);
+        const listedIndex = byHead(listed);
+        /* (수정 10) 커플 표기 셈에 쓰는 가릴 말(모든 줄, 글자 갈래 상관없이): 첫 글자 → 말 · 끝 글자 → 말 */
+        const shipNames = Array.from(froms);
+        const shipHead = byHead(shipNames);
+        const shipTail = new Map();
+        shipNames.forEach(word => {
+            const key = word.charAt(word.length - 1);
+            if (!shipTail.has(key)) shipTail.set(key, []);
+            shipTail.get(key).push(word);
+        });
+        rules.forEach(rule => {
+            rule.shipHead = shipHead;
+            rule.shipTail = shipTail;
+            rule.runIndex = runIndex;
+            rule.plainIndex = plainIndex;
+            rule.listedIndex = listedIndex;
+            rule.toIndex = toIndex;
+            rule.toMax = toMax;
+            rule.toFinals = toFinals;
+            rule.fromTo = fromTo;
+            rule.fromMax = fromMax;
+            rule.runTokens = tokens;
+            rule.plainTokens = plainTokens;
+            rule.listed = listed;
+            rule.listedFrom = listedFrom;
+            rule.ones = ones;
+            rule.latin = latin;
+            if (rule.from.length === 1 && rule.head === 'h') rule.glued = glued;
+            if (rule.contract) rule.contract = rule.contract.filter(item => !froms.has(item.form));
+        });
+        return rules;
+    }
+
+    /* 2.5.0과 같은 차례(빈 줄 빼고 긴 말부터)로 규칙을 한 번 만든다. */
+    function maskWordRules(pairs) {
+        return maskLinkRules(pairs
+            .map(pair => ({ from: String(pair?.from || '').trim(), to: String(pair?.to || '').trim() }))
+            .filter(pair => pair.from)
+            .sort((a, b) => b.from.length - a.from.length)
+            .map(pair => compileMaskWordRule(pair.from, pair.to)));
+    }
+
+    /* (수정 5) text[from…]에서 가릴 말(영문 이름은 큰 글자 꼴도)이 처음 나오는 자리. seen: 꼴마다 찾아 둔 자리(from이 늘기만 할 때 다시 훑지 않는다).
+       (수정 6) 적은 꼴(seen.p)도 찾아 둔다: 큰 글자 꼴만 수천 번 나오는 문단(LEOOO2 …)에서 적은 꼴을 자리마다 끝까지 다시 훑지 않게. */
+    function maskFindFrom(text, rule, from, seen) {
+        let best = seen ? seen.p : -2;
+        if (best === -2 || (best >= 0 && best < from)) {
+            best = text.indexOf(rule.from, from);
+            if (seen) seen.p = best;
+        }
+        rule.alt.forEach((form, k) => {
+            let at = seen ? seen.alt[k] : -2;
+            if (at === -2 || (at >= 0 && at < from)) {
+                at = text.indexOf(form, from);
+                if (seen) seen.alt[k] = at;
+            }
+            if (at >= 0 && (best < 0 || at < best)) best = at;
+        });
+        return best;
+    }
+
+    /* 이 문단에 규칙의 가릴 말이나 줄임꼴이 있는지 */
+    function maskRuleIn(text, rule) {
+        if (maskFindFrom(text, rule, 0) >= 0) return true;
+        return Boolean(rule.contract) && rule.contract.some(item => text.indexOf(item.form) >= 0);
+    }
+
+    /* 조각 시작 자리와 '자리 → 조각 번호' 찾기(앞에서부터 이어 찾는다) */
+    function maskPieceStarts(values) {
+        const starts = [];
+        let total = 0;
+        values.forEach(value => {
+            starts.push(total);
+            total += value.length;
+        });
+        return starts;
+    }
+
+    function maskPieceAt(values, starts, index, from) {
+        for (let k = Math.max(0, from); k < values.length; k++) {
+            if (index >= starts[k] && index < starts[k] + values[k].length) return k;
+        }
+        return -1;
+    }
+
+    /* (수정 10) 바꾼 이름 바로 뒤(닫는 따옴표·괄호 하나 건너도)의 한글 덩이가 그 이름의 닫힌 조사로 읽히면 그 자리 [처음, 끝](바꾸기 전 글 자리), 아니면 null.
+       이 기능이 조사로 읽어 둔 글이라 같은 걸음의 뒤 줄이 이름으로 읽지 않는다(하린이가 → 채아가 · 하린이를 · “하린”이가. 수정 12: 그대로 둔 곳 셈에서는 빼지 않는다).
+       뒤가 적어 둔 다른 이름이면(커플 표기) 조사가 아니다 · 끝이 열린 서술격(이었다 · 라는…)의 남은 글은 이름일 수 있어(시아나연) 넣지 않는다. */
+    function maskKeepSpan(text, pos, rule, fixed) {
+        /* (수정 11) 받침을 모르는 이름(영문 Theo · Rin)을 바꾼 뒤 조사를 고쳐 쓰지 않았으면 조사로 읽어 둔 것이 아니다:
+           뒤 조사 꼴 이름은 두되 센다(Theo은 커플 → 승현은 커플, 2.5.1처럼). 고쳐 쓴 때(Rin이가 → 수아가)는 그 읽기를 따른다. */
+        if (!fixed && !maskEndFinal(rule.from)) return null;
+        const end = pos + rule.from.length;
+        let at = end;
+        if (at + 1 < text.length && MASK_CLOSE_CODES.has(text.charCodeAt(at)) && maskCharKind(text.charCodeAt(at + 1)) === 'h') at++;
+        if (at >= text.length || maskCharKind(text.charCodeAt(at)) !== 'h' || !getMaskJosaIndex().has(text.charAt(at))) return null;
+        let stop = at + 1;
+        while (stop < text.length && maskCharKind(text.charCodeAt(stop)) === 'h') stop++;
+        if (stop < text.length && maskCharKind(text.charCodeAt(stop)) === 'l') return null;
+        if (at === end && (maskShipAt(text, end, rule) || maskShipNextAt(text, end, rule))) return null;
+        /* (수정 14) 닫는 괄호·따옴표 뒤 적어 둔 조사 꼴 한 글자 이름 + 띄어 쓴 님/씨(【다온】은 님이)는 수정 9대로 이름이라 조사로 읽어 두지 않는다 */
+        if (at > end && stop === at + 1 && rule.ones && rule.ones.includes(text.charAt(at)) && maskHonorAfter(text, stop)) return null;
+        /* (수정 12) 원래 이름 끝 받침(rule.src)으로만 읽는다: 받침 뒤 입말 오타 꼴(윤랑 · 나윤를 · 윤야 · 린와)은 조사로 읽어 두지 않는다 —
+           그 글이 조사 꼴 가릴 말이면 그 줄이 원래 받침으로 가른다(윤랑 → 하나예솔). 읽어 둔 원문은 그대로 둔 곳 셈에서 빼지 않는다. */
+        const closed = parse => parse.rank < 50 && !parse.first.typo;
+        return maskJosaParses(text, at, rule.src, rule.long, true, closed).some(closed) ? [at, stop] : null;
+    }
+
+    /* (수정 13) text[a, b)(바꾸기 전 글)에 걸친 가릴 말(모든 줄의 바꿀 이름)이 있는지: 받침에 맞춰 고칠 조사의 원문이 이름 꼴이면 그 고친 글은 셈에서 빼지 않는다 */
+    function maskListedIn(text, a, b, rule) {
+        if (!rule.shipHead || b <= a) return false;
+        for (let i = Math.max(0, a - (rule.fromMax || 24) + 1); i < b; i++) {
+            const list = rule.shipHead.get(text.charAt(i));
+            if (list) for (const word of list) if (i + word.length > a && text.startsWith(word, i)) return true;
+        }
+        return false;
+    }
+
+    /* (수정 10) 글자 조각 k에서 시작해 [at, at + len)이 걸친 조각들이 같은 형광펜·밑줄 안에 있는지(values.maskPens: 조각마다 펜 표시 열쇠, 없으면 늘 같다).
+       형광펜·밑줄 경계가 이름 속을 지나면 바꾸지 않는다(그대로 둔 곳으로 센다). */
+    function maskSpanOk(values, starts, k, at, len) {
+        const end = at + len;
+        if (end <= starts[k] + values[k].length) return true;
+        const pens = values.maskPens;
+        if (!pens) return true;
+        for (let j = k + 1; j < values.length && starts[j] < end; j++) if (values[j].length && pens[j] !== pens[k]) return false;
+        return true;
+    }
+
+    /* (수정 10) 고침(글 차례, { g, gEnd, t })을 글자 조각에 나눠 쓴다: 고친 글은 첫 조각에, 걸친 다음 조각들의 글자는 지운다(조각 수·표시는 그대로) */
+    function maskSpliceValues(values, starts, edits) {
+        const subs = [];
+        let k = 0;
+        for (const edit of edits) {
+            k = maskPieceAt(values, starts, edit.g, k);
+            if (k < 0) {
+                k = 0;
+                continue;
+            }
+            if (edit.gEnd === edit.g) {
+                subs.push([k, edit.g - starts[k], edit.g - starts[k], edit.t]);
+                continue;
+            }
+            let g = edit.g;
+            let t = edit.t;
+            let j = k;
+            while (g < edit.gEnd && j < values.length) {
+                if (!(g >= starts[j] && g < starts[j] + values[j].length)) {
+                    j++;
+                    continue;
+                }
+                const stop = Math.min(edit.gEnd, starts[j] + values[j].length);
+                subs.push([j, g - starts[j], stop - starts[j], t]);
+                t = '';
+                g = stop;
+            }
+        }
+        const out = values.slice();
+        for (let i = 0; i < subs.length;) {
+            const piece = subs[i][0];
+            const value = values[piece];
+            const parts = [];
+            let last = 0;
+            for (; i < subs.length && subs[i][0] === piece; i++) {
+                parts.push(value.slice(last, subs[i][1]), subs[i][3]);
+                last = subs[i][2];
+            }
+            parts.push(value.slice(last));
+            out[piece] = parts.join('');
+        }
+        return out;
+    }
+
+    /* 이어진 글자 조각들(values, 한 문단의 글자 노드)에 규칙 하나를 건다. 바뀌면 새 배열, 아니면 null.
+       앞뒤 글자·조사는 이웃 조각까지 본다(형광펜으로 나뉜 글자). (수정 10) 가릴 말도 조각에 걸쳐 있어도 된다(같은 펜 표시 안일 때, maskSpanOk).
+       (수정 8) 앞 줄들이 쓴 글(values.maskMarks)을 거는 동안 maskMarksNow에 두고, 새 배열에 이번 고침을 더해 넘긴다. */
+    function maskWordApplyValues(values, rule, joinedText) {
+        const marks = values.maskMarks || MASK_NO_MARKS;
+        maskMarksNow = marks;
+        let result;
+        try {
+            result = maskWordEditValues(values, rule, joinedText);
+        } finally {
+            maskMarksNow = null;
+        }
+        if (!result) return null;
+        result.out.maskMarks = { prev: marks, edits: result.edits, keeps: result.keeps, f: maskEndFinal(rule.from), o: rule.head === 'h' && rule.from.length === 1, to: null, fix: null, toEnd: null };
+        /* (수정 10) 조각마다 펜 표시 열쇠(형광펜·밑줄)는 조각 수가 그대로라 다음 줄에도 쓴다 */
+        if (values.maskPens) result.out.maskPens = values.maskPens;
+        return result.out;
+    }
+
+    /* (수정 10) 판정이 낸 조사 고침 가운데 쓸 것: 한 조각 안에 드는 것을 먼저(굵게·형광펜 표시를 옮기지 않게), 없으면 같은 펜 표시 안에서 걸친 것.
+       앞 줄이 이번 걸음에 쓴 글(own)은 고치지 않는다. */
+    function maskPickFix(values, starts, list, piece, own) {
+        for (const cross of [false, true]) {
+            for (const fix of list) {
+                const k = maskPieceAt(values, starts, fix.at, piece);
+                if (k < 0) continue;
+                if (own && fix.len && maskRangeHits(own, fix.at, fix.len)) continue;
+                const inside = fix.at + fix.len <= starts[k] + values[k].length;
+                if (cross ? inside || !maskSpanOk(values, starts, k, fix.at, fix.len) : !inside) continue;
+                return fix;
+            }
+        }
+        return null;
+    }
+
+    function maskWordEditValues(values, rule, joinedText) {
+        const text = joinedText ?? values.join('');
+        const seen = { p: -2, alt: rule.alt.map(() => -2) };
+        let pos = maskFindFrom(text, rule, 0, seen);
+        const contract = rule.contract && rule.contract.length ? rule.contract : null;
+        if (pos < 0 && !contract) return null;
+        const starts = maskPieceStarts(values);
+        /* (수정 10) 앞 줄들이 이번 걸음에 쓴 자리(수정 11: 앞서 적용한 걸음들이 쓴 자리도) */
+        const own = maskMarksNow ? maskOwnOf(maskMarksNow, true) : null;
+        const ownList = own && own.length ? own : null;
+        const edits = [];
+        const keeps = [];
+        const len = rule.from.length;
+        let piece = 0;
+        while (pos >= 0) {
+            piece = maskPieceAt(values, starts, pos, piece);
+            let next = pos + 1;
+            /* (수정 10) 글자 노드 둘 이상에 걸친 이름도 판정한다(같은 펜 표시 안일 때) */
+            if (piece >= 0 && maskSpanOk(values, starts, piece, pos, len)) {
+                const verdict = maskWordJudge(text, pos, rule);
+                if (verdict && verdict !== MASK_NOT) {
+                    edits.push({ g: pos, gEnd: pos + len, t: rule.to, m: 1 });
+                    next = pos + len;
+                    const fix = verdict.edits ? maskPickFix(values, starts, verdict.edits, piece, ownList) : null;
+                    if (fix) {
+                        edits.push({ g: fix.at, gEnd: fix.at + fix.len, t: fix.t, m: 2, n: maskListedIn(text, fix.at, fix.at + fix.len, rule) ? 1 : 0 });
+                        next = fix.at + fix.len;
+                    }
+                    const keep = maskKeepSpan(text, pos, rule, Boolean(fix));
+                    if (keep) keeps.push(keep);
+                }
+            }
+            if (piece < 0) piece = 0;
+            pos = maskFindFrom(text, rule, next, seen);
+        }
+        /* (수정 3) 줄임꼴(지혼 · 시안): 다른 고침과 겹치지 않을 때만(고친 자리는 글자 표시로 본다 — 긴 글에서도 한 번 훑기).
+           (수정 10) 노드에 걸쳐도(같은 펜 표시 안) · 앞 줄이 이번 걸음에 쓴 글은 빼고 */
+        if (contract) {
+            const before = edits.length;
+            let taken = null;
+            contract.forEach(item => {
+                let at = text.indexOf(item.form);
+                let k = 0;
+                while (at >= 0) {
+                    k = maskPieceAt(values, starts, at, k);
+                    if (k >= 0 && maskSpanOk(values, starts, k, at, len) && !(ownList && maskRangeHits(ownList, at, len))) {
+                        if (!taken) {
+                            taken = new Uint8Array(text.length + 1);
+                            edits.forEach(edit => taken.fill(1, edit.g, Math.max(edit.gEnd, edit.g + 1)));
+                        }
+                        let free = true;
+                        for (let i = at; i < at + len; i++) if (taken[i]) free = false;
+                        const t = free ? maskContractText(text, at, rule, item.which) : null;
+                        if (t !== null) {
+                            edits.push({ g: at, gEnd: at + len, t, m: 2 });
+                            taken.fill(1, at, at + len);
+                        }
+                    }
+                    if (k < 0) k = 0;
+                    at = text.indexOf(item.form, at + 1);
+                }
+            });
+            if (edits.length > before) edits.sort((a, b) => a.g - b.g || a.gEnd - b.gEnd);
+        }
+        if (!edits.length) return null;
+        /* 고침은 글 차례(조각 차례)로 모여 있다: 조각마다 한 번에 이어 붙인다(고칠 곳이 많은 긴 조각도 한 번 훑기) */
+        return { out: maskSpliceValues(values, starts, edits), edits, keeps };
+    }
+
+    /* (수정 7) text[pos, pos + len)이 어느 줄의 바꿀 말(이미 바꾼 글) 속 글자와 겹치는지(바꾼 말이 가릴 말을 품은 때: 린 → 린아 · 서로 맞바꾼 두 줄)
+       (수정 13) own(이 기능이 쓴 글)이 있으면: 그 바꿀 말 자리가 쓴 글에 걸쳐 반만 들어 있고(별이 + 원문 랑 = '이랑') 이 자리가 쓴 글에 닿아 있으면 바꾼 글이 아니다 — 센다(2.5.1처럼)
+       (수정 14) trust(이 문단의 쓴 글 기록 { w, k })가 이 자리에 닿아 있으면(maskRecordNeeded와 같은 둘레: 그 기록은 남는다) 기록이 가른다
+       (수정 15: 남는 기록이면 닿지 않은 자리도 — 줄 전체):
+       쓴 글(w)과 겹친 자리는 부른 쪽이 이미 뺐으니, 바꿀 말과 같은 글자여도 원문으로 보고 빼지 않는다. 다만 읽어 둔 자리(k: 조사로 둔 원문 · 받침에 맞춰 고친 조사)
+       하나 안에 든 바꿀 말의 한 부분이면 예전처럼 뺀다(가린이랑의 고쳐 넣은 이 · 그 랑: 바꿀 말 이랑 속 — 기록은 고친 조사의 어느 글자를 넣었는지 적지 않는다) */
+    function maskInReplacement(text, pos, len, rules, inside, own, trust) {
+        /* (수정 15) 남는 기록이 있는 줄은 줄 전체를 기록대로(maskTrustForRun이 남는 기록만 넘긴다) */
+        const trusted = Boolean(trust);
+        const near = !trusted && own && own.length ? maskRangeHits(own, pos - 1, len + 3) : false;
+        const straddle = (at, size) => {
+            if (!near || !maskRangeHits(own, at, size)) return false;
+            return !own.some(range => range[0] <= at && at + size <= range[1]);
+        };
+        /* inside: 바꿀 말이 이 자리와 꼭 같은 글자면(다른 줄의 바꿀 말 = 이 가릴 말) 빼지 않는다 — 두기로 본 자리(하나님 속 하나)는 그래도 센다 */
+        const hit = trusted
+            ? (to, at) => at <= pos && pos + len <= at + to.length && to.length > len && text.startsWith(to, at) && maskRangeHolds(trust.k, at, at + to.length)
+            : (to, at) => !(inside && at === pos && to.length === len) && text.startsWith(to, at) && !straddle(at, to.length);
+        /* 바꿀 말을 첫 글자로 묶어 둔 것(maskLinkRules)이 있으면 그 글자의 말만 대 본다 */
+        const head = rules[0];
+        if (head && head.toIndex) {
+            for (let at = Math.max(0, pos - head.toMax + 1); at < pos + len; at++) {
+                const list = head.toIndex.get(text.charAt(at));
+                if (list) for (const to of list) if (at + to.length > pos && hit(to, at)) return true;
+            }
+            return false;
+        }
+        for (const rule of rules) {
+            const to = rule.to;
+            if (!to) continue;
+            for (let at = Math.max(0, pos - to.length + 1); at < pos + len; at++) if (hit(to, at)) return true;
+        }
+        return false;
+    }
+
+    /* 그대로 둔 곳: 낱말 규칙(앞 글자·뒤 조사)이 두기로 본 자리. [{ k, start, at }] (글 차례, k · start = 이름 첫 글자의 조각 · 자리)
+       (수정 7) 바꾼 뒤 글에서는 바꿀 자리로 읽히는데 남은 이름도 센다: 뒤 규칙이 앞뒤 글자를 바꿔 처음 판정과 달라진 자리(혁이솔 → 서준이솔 · Theox이든 → Theox서진).
+       다만 어느 줄의 바꿀 말 속 글자(rules의 to, 없으면 이 줄)와 겹치면 두기로 본 자리도 뺀다(바꾼 도윤 속 윤 · 서준 속 서). 앞 이름의 조사(MASK_NOT)는 세지 않는다.
+       (수정 10) 글자 노드 둘 이상에 걸친 이름도 센다 · own(이 기능이 쓴 글, 수정 12: 읽어 둔 원문은 빼고)과 겹치면 세지 않는다. */
+    function maskWordSkipsInValues(values, rule, joinedText, rules, own, trust) {
+        const text = joinedText ?? values.join('');
+        const out = [];
+        let pos = text.indexOf(rule.from);
+        if (pos < 0) return out;
+        const starts = maskPieceStarts(values);
+        const len = rule.from.length;
+        let piece = 0;
+        while (pos >= 0) {
+            piece = maskPieceAt(values, starts, pos, piece);
+            if (piece >= 0 && !(own && maskRangeHits(own, pos, len))) {
+                const verdict = maskWordJudge(text, pos, rule);
+                if (verdict !== MASK_NOT && !maskInReplacement(text, pos, len, rules || [rule], !verdict, own, trust)) out.push({ k: piece, start: pos - starts[piece], at: pos });
+            }
+            if (piece < 0) piece = 0;
+            pos = text.indexOf(rule.from, pos + 1);
+        }
+        return out;
+    }
+
+    /* (수정 7) 세 글자 이상 영문 이름의 다른 큰/작은 글자 꼴(zoe · LiA · max)이 낱말 하나로 남은 자리(앞뒤가 라틴 글자가 아니다 · 뒤 숫자 · 끝 글자 늘임 · 커플 표기 x(THEOx이든)는 받는다).
+       바꿀 말 속 글자는 뺀다. 자리의 rule은 그 자리 글자를 가릴 말로 하는 복사본(보기의 바꾸기가 그 글자를 바꾼다). [{ k, start, at, rule }] */
+    function maskCaseSkipsInValues(values, rule, text, low, starts, rules, trust) {
+        const out = [];
+        const len = rule.from.length;
+        const last = rule.caseLow.charCodeAt(len - 1);
+        const spots = new Map();
+        let at = low.indexOf(rule.caseLow);
+        let k = 0;
+        while (at >= 0) {
+            const end = at + len;
+            const form = text.slice(at, end);
+            const leftOk = at === 0 || maskCharKind(text.charCodeAt(at - 1)) !== 'l';
+            const right = end < text.length ? low.charCodeAt(end) : -1;
+            const rightOk = right < 0 || maskCharKind(right) !== 'l' || maskDigitCode(right) || right === last || right === 0x78;
+            k = maskPieceAt(values, starts, at, k);
+            if (form !== rule.from && leftOk && rightOk && k >= 0 && !maskInReplacement(text, at, len, rules, false, null, trust)) {
+                if (!spots.has(form)) spots.set(form, Object.assign({}, rule, { from: form, alt: [], lower: '', of: rule }));
+                out.push({ k, start: at - starts[k], at, rule: spots.get(form) });
+            }
+            if (k < 0) k = 0;
+            at = low.indexOf(rule.caseLow, at + 1);
+        }
+        return out;
+    }
+
+    /* (수정 9) 세 글자 이상 영문 이름의 글자를 늘인 꼴(Fiiinn · FIINN): 글자 갈래 차례가 이름과 같고 갈래마다 이름보다 같거나 더 길게 이어진 영문 낱말
+       (이름보다 길다 · 큰/작은 글자는 가리지 않는다 · 앞뒤가 다른 라틴 글자가 아니다). 끝 글자 늘임(Finnnn)은 낱말 규칙이 먼저 받는다.
+       바꿀 말 속 글자는 뺀다. 자리의 rule은 그 낱말을 가릴 말로 하는 복사본. [{ k, start, at, rule }] */
+    function maskLetterRuns(word) {
+        const runs = [];
+        for (let i = 0; i < word.length; i++) {
+            const last = runs[runs.length - 1];
+            if (last && last.c === word.charAt(i)) last.n++;
+            else runs.push({ c: word.charAt(i), n: 1 });
+        }
+        return runs;
+    }
+    function maskStretchSkipsInValues(values, rule, text, low, starts, rules) {
+        const out = [];
+        const name = rule.stretchRuns || (rule.stretchRuns = maskLetterRuns(rule.caseLow));
+        if (name.length < 2 || low.indexOf(name[0].c + name[1].c) < 0) return out;
+        const letter = code => (code >= 0x61 && code <= 0x7A) || (code >= 0x41 && code <= 0x5A);
+        const foreign = index => index >= 0 && index < low.length && maskCharKind(low.charCodeAt(index)) === 'l' && !maskDigitCode(low.charCodeAt(index));
+        const spots = new Map();
+        let k = 0;
+        for (let i = low.indexOf(name[0].c); i >= 0 && i < low.length; i = low.indexOf(name[0].c, i + 1)) {
+            if (i > 0 && letter(low.charCodeAt(i - 1))) continue;
+            let j = i + 1;
+            while (j < low.length && letter(low.charCodeAt(j))) j++;
+            const len = j - i;
+            if (len <= rule.caseLow.length || foreign(i - 1) || foreign(j)) continue;
+            const runs = maskLetterRuns(low.slice(i, j));
+            if (runs.length !== name.length || runs.some((run, r) => run.c !== name[r].c || run.n < name[r].n)) continue;
+            k = maskPieceAt(values, starts, i, k);
+            if (k >= 0 && !maskInReplacement(text, i, len, rules)) {
+                const form = text.slice(i, j);
+                if (!spots.has(form)) spots.set(form, Object.assign({}, rule, { from: form, alt: [], lower: '', caseLow: '', of: rule }));
+                out.push({ k, start: i - starts[k], at: i, rule: spots.get(form) });
+            }
+            if (k < 0) k = 0;
+        }
+        return out;
+    }
+
+    /* (수정 6) 성·애칭 앞말이 붙어 바꾸지 않은 줄임꼴(김채안 · 우리채안 · 주도한)을 그대로 둔 곳으로 모은다: 앞말만 빼면 줄임꼴로 받을 자리.
+       rule은 maskContractSpotRule(from = 줄임꼴). [{ k, start, at, rule }] */
+    function maskContractSkipsInValues(values, rule, text, starts) {
+        const out = [];
+        rule.contract.forEach(item => {
+            let at = text.indexOf(item.form);
+            let k = 0;
+            while (at >= 0) {
+                k = maskPieceAt(values, starts, at, k);
+                const end = at + item.form.length;
+                if (k >= 0) {
+                    /* (수정 7) 움직씨 줄기와 같은 이름의 붙여 쓴 줄임꼴(verb)도 센다. (수정 8) 뒷글을 읽지 못한 붙여 쓴 줄임꼴(unread: 보안지침)도 */
+                    const surname = maskNeedsSurname(text, at, rule);
+                    const parts = maskContractParts(text, at, rule, item.which, true);
+                    if (parts && (surname || parts.verb || parts.unread)) out.push({ k, start: at - starts[k], at, rule: maskContractSpotRule(rule, item.form, parts.fix, end >= text.length) });
+                }
+                if (k < 0) k = 0;
+                at = text.indexOf(item.form, at + 1);
+            }
+        });
+        return out;
+    }
+
+    /* 한 문단(이어진 조각)의 그대로 둔 곳을 모든 규칙으로 모은다. 겹치면 먼저 건 규칙(긴 말)만. [{ at, end, k, start, rule }] (글 차례)
+       (수정 10) 이 기능이 쓴 글(바꾼 말 · 고친 조사, 앞 걸음 것도)과 겹치는 자리는 세지 않는다: 방금 건 기록(values.maskMarks), 없으면 문단 요소에 남긴 기록(values.maskOwn).
+       (수정 12) 조사로 읽어 둔 원문(keep)은 빼지 않는다: 원래 이름이 남은 글자라 판정이 센다(“민준”은 · 하나께서) 또는 앞말의 조사로 둔다(하나도). */
+    function maskSkipsInRun(values, text, rules) {
+        const ownRaw = maskOwnForRun(values);
+        const own = ownRaw && ownRaw.length ? ownRaw : null;
+        /* (수정 14) 이 문단의 쓴 글 기록 { w, k }(빈 쓴 자리라도): 그 자리에 닿은 가릴 말은 바꿀 말 속 글자로 빼지 않는다(maskInReplacement).
+           (수정 15) 남는 기록(maskRecordNeeded)만 · 줄 전체 · 조사 꼴 이름 읽기에도(maskCountTrust) */
+        const trust = maskTrustForRun(values, text, rules);
+        const prevTrust = maskCountTrust;
+        maskCountTrust = trust;
+        try {
+            return maskSkipsWithTrust(values, text, rules, own, trust);
+        } finally {
+            maskCountTrust = prevTrust;
+        }
+    }
+
+    function maskSkipsWithTrust(values, text, rules, own, trust) {
+        const found = [];
+        let taken = null;
+        let starts = null;
+        const take = (hit, rule) => {
+            const end = hit.at + rule.from.length;
+            if (own && maskRangeHits(own, hit.at, end - hit.at)) return;
+            if (!taken) taken = new Uint8Array(text.length + 1);
+            for (let i = hit.at; i < end; i++) if (taken[i]) return;
+            taken.fill(1, hit.at, end);
+            found.push({ at: hit.at, end, k: hit.k, start: hit.start, rule });
+        };
+        let low = null;
+        rules.forEach(rule => {
+            if (text.indexOf(rule.from) >= 0) maskWordSkipsInValues(values, rule, text, rules, own, trust).forEach(hit => take(hit, rule));
+            if (rule.caseLow) {
+                /* 라틴 큰 글자만 작은 글자로(글자 수가 그대로다) */
+                if (low === null) low = text.replace(/[A-Z]+/g, part => part.toLowerCase());
+                if (low.indexOf(rule.caseLow) >= 0) {
+                    if (!starts) starts = maskPieceStarts(values);
+                    maskCaseSkipsInValues(values, rule, text, low, starts, rules, trust).forEach(hit => take(hit, hit.rule));
+                }
+                /* (수정 9) 가운데 글자를 늘인 꼴(Fiiinn) */
+                const stretch = maskStretchSkipsInValues(values, rule, text, low, starts || (starts = maskPieceStarts(values)), rules);
+                stretch.forEach(hit => take(hit, hit.rule));
+            }
+            if (!rule.contract || !rule.contract.some(item => text.indexOf(item.form) >= 0)) return;
+            if (!starts) starts = maskPieceStarts(values);
+            maskContractSkipsInValues(values, rule, text, starts).forEach(hit => take(hit, hit.rule));
+        });
+        found.sort((a, b) => a.at - b.at);
+        /* (수정 12) 조사로 읽어 둔 원문 속에서 센 가릴 말 바로 뒤에 붙은 가릴 말도 센다(나윤이야야 → 지아야야의 둘째 야):
+           그 말은 앞 말을 조사로 읽어야만 조사가 되는데, 앞 말은 이름일 수 있다고 셌다. */
+        const kept = maskKeptForRun(values);
+        if (kept && kept.length && found.length) {
+            if (!starts) starts = maskPieceStarts(values);
+            for (let i = 0; i < found.length; i++) {
+                const at = found[i].end;
+                if (!maskRangeHits(kept, found[i].at, found[i].end - found[i].at) || at >= text.length || !maskRangeHits(kept, at, 1) || taken[at]) continue;
+                const rule = rules.find(item => item.from && text.startsWith(item.from, at));
+                if (!rule) continue;
+                const end = at + rule.from.length;
+                if (own && maskRangeHits(own, at, end - at)) continue;
+                let free = true;
+                for (let j = at; j < end; j++) if (taken[j]) free = false;
+                const k = maskPieceAt(values, starts, at, 0);
+                if (!free || k < 0) continue;
+                taken.fill(1, at, end);
+                found.splice(i + 1, 0, { at, end, k, start: at - starts[k], rule });
+            }
+        }
+        return found;
+    }
+
+    /* (수정 12) 이 문단의 조사로 읽어 둔 원문 자리: 방금 건 기록이 있으면 그것, 없으면 문단 요소에서 읽어 둔 기록(values.maskOwn.k) */
+    function maskKeptForRun(values) {
+        if (values.maskMarks) return maskRecordOf(values.maskMarks).k;
+        const own = values.maskOwn;
+        return own && !Array.isArray(own) ? own.k || null : null;
+    }
+
+    /* (수정 14) 이 문단의 쓴 글 기록 { w, k }: 방금 건 기록이 있으면 그것, 없으면 문단 요소에서 읽어 둔 기록(values.maskOwn, 자리 목록만이면 모두 쓴 글).
+       쓴 자리 · 읽어 둔 자리가 다 비었으면 null(남지 않는 기록 — 보기와 알림 셈이 같다).
+       (수정 15) 남는 기록(maskRecordNeeded: 가릴 말이 기록 자리에 닿아 있다)일 때만 돌려준다: 남지 않는 기록으로 알림만 달리 세지 않는다(보기에는 그 기록이 없다) */
+    function maskTrustForRun(values, text, rules) {
+        let rec = null;
+        if (values.maskMarks) rec = maskRecordOf(values.maskMarks);
+        else if (Array.isArray(values.maskOwn)) rec = { w: values.maskOwn, k: [] };
+        else if (values.maskOwn) rec = { w: values.maskOwn.w || [], k: values.maskOwn.k || [] };
+        if (!rec || (!rec.w.length && !rec.k.length)) return null;
+        return maskRecordNeeded(text, rec, rules) ? rec : null;
+    }
+
+    /* 낱말을 가르는 요소: 문단·줄바꿈·그림·SVG 글 칸·카드 글 줄(.novcap-svg-text). 그 밖(span·em·strong·형광펜)은 이어진 글자로 본다. */
+    const MASK_BLOCK_TAGS = new Set('ADDRESS ARTICLE ASIDE AUDIO BLOCKQUOTE BR BUTTON CANVAS CAPTION DD DETAILS DIV DL DT EMBED FIELDSET FIGCAPTION FIGURE FOOTER FORM H1 H2 H3 H4 H5 H6 HEADER HR IFRAME IMG INPUT LEGEND LI MAIN NAV OBJECT OL P PRE SECTION SELECT SUMMARY TABLE TBODY TD TEXTAREA TFOOT TH THEAD TR UL VIDEO svg text foreignObject'.split(' '));
+    const MASK_INLINE_DISPLAYS = new Set(['', 'inline', 'contents', 'inline-block', 'inline-flex', 'inline-grid']);
+
+    function isMaskBlock(element) {
+        return MASK_BLOCK_TAGS.has(element.tagName) || Boolean(element.classList?.contains('novcap-svg-text')) || !MASK_INLINE_DISPLAYS.has(element.style?.display || '');
+    }
+
+    /* 2.5.0과 같은 글자 노드(style·script·역할 이름표 밖)를 문단마다 이어진 묶음으로 모은다. */
+    function collectMaskRuns(root) {
+        const runs = [];
+        let run = null;
+        let runBlock = null;
+        let broken = true;
+        const blockCache = new Map();
+        const blockOf = element => {
+            if (blockCache.has(element)) return blockCache.get(element);
+            let block = root;
+            for (let el = element; el && el !== root; el = el.parentElement) {
+                if (isMaskBlock(el)) {
+                    block = el;
+                    break;
+                }
+            }
+            blockCache.set(element, block);
+            return block;
+        };
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
+            acceptNode(node) {
+                if (node.nodeType === 1) {
+                    if (node.matches('style, script, .novcap-role-label')) {
+                        broken = true;
+                        return NodeFilter.FILTER_REJECT;
+                    }
+                    if (isMaskBlock(node)) broken = true;
+                    return NodeFilter.FILTER_SKIP;
+                }
+                if (!node.parentElement) return NodeFilter.FILTER_REJECT;
+                if (node.parentElement.closest('style, script, .novcap-role-label')) return NodeFilter.FILTER_REJECT;
+                return NodeFilter.FILTER_ACCEPT;
+            }
+        });
+        let node;
+        while ((node = walker.nextNode())) {
+            const block = blockOf(node.parentElement);
+            if (broken || !run || block !== runBlock) {
+                run = [];
+                /* (수정 12) 글 덩이의 문단 묶음 요소(쓴 글 기록을 둔다) */
+                run.block = block;
+                runs.push(run);
+                runBlock = block;
+                broken = false;
+            }
+            run.push(node);
+        }
+        return runs;
+    }
+
+    /* (수정 10) 글자 노드의 펜 표시 열쇠: 문단 안에서 이 노드를 감싼 형광펜·밑줄 요소들(바깥쪽 블록까지). 없으면 ''. */
+    const maskPenIds = new WeakMap();
+    let maskPenNext = 0;
+    function maskPenKey(node) {
+        let key = '';
+        for (let el = node.parentElement; el && !isMaskBlock(el); el = el.parentElement) {
+            if (!el.hasAttribute('data-novcap-highlight') && !el.hasAttribute('data-novcap-underline')) continue;
+            if (!maskPenIds.has(el)) maskPenIds.set(el, ++maskPenNext);
+            key += maskPenIds.get(el) + ',';
+        }
+        return key;
+    }
+
+    /* (수정 11) 고친 뒤 글이 빈 글자 노드를 감싼 형광펜·밑줄이 통째로 비었으면 지운다(이름 둘째 글자에만 칠한 형광펜을 보기에서 바꾼 뒤 · 애칭 '이'만 칠한 형광펜).
+       남겨 두면 그림에는 안 보이지만 그 낱말을 다시 칠할 때 「이미 형광펜이 있는 부분과 겹쳐요」가 뜬다. 가장 바깥의 빈 펜 표시를 지운다(문단 밖으로는 가지 않는다). */
+    function maskDropEmptyPens(nodes) {
+        nodes.forEach(node => {
+            if (node.nodeValue || !node.parentElement) return;
+            let pen = null;
+            for (let el = node.parentElement; el && !isMaskBlock(el); el = el.parentElement) {
+                if (!el.hasAttribute('data-novcap-highlight') && !el.hasAttribute('data-novcap-underline')) continue;
+                if (el.textContent || el.querySelector('img, svg, canvas, video, iframe, object, embed, input, br')) break;
+                pen = el;
+            }
+            if (pen) pen.remove();
+        });
+    }
+
+    /* 낱말 단위 치환: 문단마다 규칙을 차례로 걸고, 바뀐 글자 노드만 쓴다.
+       stats가 있으면 같은 걸음에 그대로 둔 곳 수(stats.skipped)도 센다(「원고에 적용」 알림용, 문단을 두 번 훑지 않는다).
+       (수정 10) 바꾼 문단은 이 기능이 쓴 자리를 남긴다(보기·되돌리기 뒤 셈).
+       글자 노드가 둘 이상이면 노드마다 펜 표시 열쇠를 붙여 형광펜·밑줄 경계가 지나는 이름은 바꾸지 않는다.
+       (수정 11) 앞서 남긴 자리는 셈에서도, 바꿀지 정할 때도 뺀다(다시 눌러도 그대로).
+       (수정 12) 기록은 문단 묶음 요소마다(maskReadRecords · maskStoreRecords): 다른 문단을 더하거나 지워도 그대로 쓴다.
+       (수정 13) 요소 안 줄(<br>)을 더하거나 지워도 남은 줄의 기록을 쓰고, 글이 바뀐 줄은 바뀌지 않은 앞뒤 글 속 자리를 옮겨 쓴다. 기록이 지금 글과 꼭 맞지 않던 요소는 지금 글로 다시 남긴다. */
+    function applyMaskWordRules(root, rules, stats) {
+        if (!rules.length) return;
+        const runs = collectMaskRuns(root);
+        const texts = runs.map(nodes => nodes.map(node => node.nodeValue).join(''));
+        const priors = maskReadRecords(runs, texts);
+        const recs = priors.slice();
+        const blocks = new Set(priors.stale || []);
+        runs.forEach((nodes, r) => {
+            let values = nodes.map(node => node.nodeValue);
+            let text = texts[r];
+            const prior = priors[r];
+            if (prior) values.maskMarks = maskSeedMarks(prior);
+            if (nodes.length > 1) values.maskPens = nodes.map(maskPenKey);
+            let changed = false;
+            rules.forEach(rule => {
+                if (!maskRuleIn(text, rule)) return;
+                const next = maskWordApplyValues(values, rule, text);
+                if (!next) return;
+                values = next;
+                text = values.join('');
+                changed = true;
+            });
+            if (stats) stats.skipped += maskSkipsInRun(values, text, rules).length;
+            if (!changed) return;
+            texts[r] = text;
+            recs[r] = maskRecordOf(values.maskMarks);
+            if (nodes.block) blocks.add(nodes.block);
+            let emptied = false;
+            nodes.forEach((node, i) => {
+                if (node.nodeValue === values[i]) return;
+                if (!values[i]) emptied = true;
+                node.nodeValue = values[i];
+            });
+            if (emptied) maskDropEmptyPens(nodes);
+        });
+        /* 바뀐 글 덩이가 있는 문단 묶음 요소만 기록을 새로 쓴다(바꾼 뒤 글이 빈 덩이가 생기면 차례가 달라지니 바꾼 뒤 모양으로) */
+        if (blocks.size) maskStoreRecords(runs, texts, recs, blocks, rules);
+    }
+
+    /* (수정 10) 보기의 바꾸기 뒤: 이 문단의 기록(prior = { w, k }, 바꾸기 전 글 자리)을 고침(edits: { g, gEnd, t, m })만큼 옮기고 바꾼 말·고친 조사·둔 조사(keeps)를 더한다.
+       (수정 12) 쓴 글 { w }와 읽어 둔 원문 { k }을 나눠 돌려준다. */
+    function maskOwnAfterEdits(prior, edits, keeps) {
+        const step = maskMarksStep(maskSeedMarks(prior || []), edits, keeps, '', false);
+        return { w: maskMergeRanges(step.to.concat(step.fix, step.old)), k: maskMergeRanges(step.keep.concat(step.oldKeep)) };
+    }
+
+    /* (수정 12) 글 열쇠: 글 덩이 글의 FNV-1a · 31 곱 두 해시와 길이(같은 문단 요소 · 같은 차례의 글이 그대로인지 본다) */
+    function maskTextKey(text) {
+        /* (수정 13) 도는 동안은 32비트 정수로 두고(큰 수로 바뀌지 않게) 끝에만 부호 없는 수로 */
+        let a = 0x811C9DC5 | 0;
+        let b = 0;
+        for (let i = 0; i < text.length; i++) {
+            const code = text.charCodeAt(i);
+            a = Math.imul(a ^ code, 0x01000193);
+            b = (Math.imul(b, 31) + code) | 0;
+        }
+        return (a >>> 0).toString(36) + '.' + (b >>> 0).toString(36) + '.' + text.length.toString(36);
+    }
+
+    /* (수정 13) 글의 앞쪽 해시(text[0, p)) 또는 뒤쪽 해시(text[p, 끝), 끝에서 거꾸로)를 positions 자리마다(FNV-1a, 36진). 글 밖 자리는 넣지 않는다. */
+    function maskHashAt(text, positions, back) {
+        const want = new Set(positions);
+        const out = new Map();
+        let h = 0x811C9DC5 | 0;
+        if (!back) {
+            if (want.has(0)) out.set(0, (h >>> 0).toString(36));
+            for (let i = 0; i < text.length; i++) {
+                h = Math.imul(h ^ text.charCodeAt(i), 0x01000193);
+                if (want.has(i + 1)) out.set(i + 1, (h >>> 0).toString(36));
+            }
+        } else {
+            if (want.has(text.length)) out.set(text.length, (h >>> 0).toString(36));
+            for (let i = text.length - 1; i >= 0; i--) {
+                h = Math.imul(h ^ text.charCodeAt(i), 0x01000193);
+                if (want.has(i)) out.set(i, (h >>> 0).toString(36));
+            }
+        }
+        return out;
+    }
+
+    const maskRangesText = list => list.map(range => range[0] + '.' + range[1]).join(',');
+    const maskRangesRead = part => (part ? part.split(',').map(item => item.split('.').map(Number)) : []);
+    const maskRangesOk = list => list.every(range => range.length === 2 && Number.isInteger(range[0]) && Number.isInteger(range[1]) && range[0] >= 0 && range[1] > range[0]);
+
+    /* (수정 13) 기록 한 줄(글 덩이 하나): 글 열쇠만(기록 없음) 또는 '글 열쇠|쓴 자리|읽어 둔 자리|자리마다 앞쪽 해시(끝까지).뒤쪽 해시(처음부터)'.
+       해시는 글이 바뀐 덩이에서 자리를 다시 찾는 데 쓴다: 자리 끝까지 앞 글이 그대로면 그 자리, 자리 처음부터 뒤 글이 그대로면 길이 차만큼 옮긴 자리. */
+    function maskEntryText(text, rec) {
+        const key = maskTextKey(text);
+        if (!rec) return key;
+        const list = rec.w.concat(rec.k);
+        const head = maskHashAt(text, list.map(range => range[1]), false);
+        const tail = maskHashAt(text, list.map(range => range[0]), true);
+        return key + '|' + maskRangesText(rec.w) + '|' + maskRangesText(rec.k) + '|' + list.map(range => head.get(range[1]) + '.' + tail.get(range[0])).join(',');
+    }
+
+    function maskEntryRead(part) {
+        const parts = part.split('|');
+        const key = parts[0];
+        const bits = key.split('.');
+        if (bits.length !== 3 || !bits[2]) return null;
+        const len = parseInt(bits[2], 36);
+        if (!(len > 0)) return null;
+        if (parts.length === 1) return { key, len, poly: 0, rec: null, sig: '', h: null };
+        if (parts.length !== 4) return null;
+        const w = maskRangesRead(parts[1]);
+        const k = maskRangesRead(parts[2]);
+        if (!maskRangesOk(w) || !maskRangesOk(k)) return null;
+        const h = parts[3] ? parts[3].split(',').map(item => item.split('.')) : [];
+        const fine = h.length === w.length + k.length && h.every(pair => pair.length === 2);
+        return { key, len, poly: parseInt(bits[1], 36) >>> 0, rec: { w, k }, sig: parts[1] + '|' + parts[2], h: fine ? h : null };
+    }
+
+    /* (수정 13) 문단 묶음 요소의 기록 줄 목록(글 있는 덩이 차례). 'v2;' 꼴이 아니거나 읽을 수 없으면 null(그 요소는 기록 없이 읽는다) */
+    const MASK_OWN_VERSION = 'v2';
+    function maskEntriesOf(el) {
+        const raw = el.getAttribute(MASK_OWN_ATTR);
+        if (!raw) return null;
+        const list = raw.split(';');
+        if (list[0] !== MASK_OWN_VERSION || list.length < 2) return null;
+        const out = [];
+        for (let i = 1; i < list.length; i++) {
+            const entry = maskEntryRead(list[i]);
+            if (!entry) return null;
+            out.push(entry);
+        }
+        return out;
+    }
+
+    /* (수정 13) text 속에서 기록 줄의 옛 글(글 열쇠가 같은 덩이)이 한 번만 나오는 자리, 없거나 여럿이면 -1(31 곱 해시를 밀며 찾고 글 열쇠로 확인) */
+    function maskFindEntry(text, entry) {
+        const len = entry.len;
+        if (!entry.rec || len > text.length) return -1;
+        let pow = 1;
+        for (let i = 0; i < len; i++) pow = Math.imul(pow, 31);
+        let h = 0;
+        for (let i = 0; i < len; i++) h = (Math.imul(h, 31) + text.charCodeAt(i)) | 0;
+        const poly = entry.poly | 0;
+        let found = -1;
+        for (let at = 0; ; at++) {
+            if (h === poly && maskTextKey(text.slice(at, at + len)) === entry.key) {
+                if (found >= 0) return -1;
+                found = at;
+            }
+            if (at + len >= text.length) break;
+            h = (Math.imul(h, 31) + text.charCodeAt(at + len) - Math.imul(text.charCodeAt(at), pow)) | 0;
+        }
+        return found;
+    }
+
+    /* (수정 13) 글이 바뀐 덩이에 옛 기록 줄의 자리를 옮겨 쓴다. how.whole: 옛 글이 통째로 한 번 들어 있으면 그만큼 옮긴다(줄 합침) ·
+       how.head: 자리 끝까지 앞 글이 같으면 그 자리 · how.tail: 자리 처음부터 끝까지 뒤 글이 같으면 길이 차만큼 옮긴 자리. 남는 자리가 없으면 null. */
+    function maskRelocate(entry, text, how) {
+        if (!entry || !entry.rec) return null;
+        const { w, k } = entry.rec;
+        if (how.whole) {
+            const at = maskFindEntry(text, entry);
+            if (at >= 0) {
+                const move = list => list.map(range => [range[0] + at, range[1] + at]);
+                return { w: move(w), k: move(k) };
+            }
+        }
+        if (!entry.h || (!how.head && !how.tail)) return null;
+        const list = w.concat(k);
+        const d = text.length - entry.len;
+        const head = how.head ? maskHashAt(text, list.map(range => range[1]), false) : null;
+        const tail = how.tail ? maskHashAt(text, list.map(range => range[0] + d), true) : null;
+        const outW = [];
+        const outK = [];
+        list.forEach((range, i) => {
+            let to = null;
+            if (head && head.get(range[1]) === entry.h[i][0]) to = range;
+            else if (tail && tail.get(range[0] + d) === entry.h[i][1]) to = [range[0] + d, range[1] + d];
+            if (to) (i < w.length ? outW : outK).push(to);
+        });
+        return outW.length || outK.length ? { w: outW, k: outK } : null;
+    }
+
+    /* (수정 13) 기록 줄 열쇠 목록(old)과 지금 덩이 열쇠 목록(now)의 같은 줄 짝 [옛 차례, 지금 차례](차례를 지키는 가장 긴 짝: 앞뒤 같은 줄을 먼저 떼고 가운데만 견준다) */
+    function maskLinePairs(old, now) {
+        const pairs = [];
+        let a = 0;
+        while (a < old.length && a < now.length && old[a] === now[a]) {
+            pairs.push([a, a]);
+            a++;
+        }
+        let b = 0;
+        while (b < old.length - a && b < now.length - a && old[old.length - 1 - b] === now[now.length - 1 - b]) b++;
+        const n = old.length - a - b;
+        const m = now.length - a - b;
+        if (n > 0 && m > 0 && n * m <= 250000) {
+            const dp = [];
+            for (let i = 0; i <= n; i++) dp.push(new Uint16Array(m + 1));
+            for (let i = n - 1; i >= 0; i--) {
+                for (let j = m - 1; j >= 0; j--) dp[i][j] = old[a + i] === now[a + j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+            }
+            let i = 0;
+            let j = 0;
+            while (i < n && j < m) {
+                if (old[a + i] === now[a + j]) {
+                    pairs.push([a + i, a + j]);
+                    i++;
+                    j++;
+                } else if (dp[i + 1][j] >= dp[i][j + 1]) i++;
+                else j++;
+            }
+        }
+        for (let t = b - 1; t >= 0; t--) pairs.push([old.length - 1 - t, now.length - 1 - t]);
+        return pairs;
+    }
+
+    /* (수정 13) 한 문단 묶음 요소의 기록 줄(stored)을 지금 글 덩이들(keys · texts, 글 있는 덩이 차례)에 맞춘다. 덩이마다 { w, k } 또는 null.
+       글이 같은 줄은 차례를 지켜 짝짓는다(<br>로 나뉜 줄을 더하거나 지워도 남은 줄의 기록은 그대로). 같은 글인데 기록이 다른 옛 줄이 여럿이고 그 글의 줄 수가 달라졌으면
+       어느 줄인지 몰라 기록 없이 읽는다(자기Theo → 자기민준 줄을 지운 뒤 원래 자기민준 줄: 센다). 짝이 없는 줄(고친 줄 · 나눈 줄 · 합친 줄)은 그 사이 옛 줄의 자리를
+       옮겨 쓴다(maskRelocate): 옛 줄과 지금 줄 수가 같으면 차례대로, 옛 줄이 하나면 그 줄에서, 지금 줄이 하나면 첫 옛 줄의 앞 · 끝 옛 줄의 뒤 · 통째로 든 옛 줄에서. */
+    function maskAlignRecords(stored, keys, texts) {
+        if (stored.length === keys.length && stored.every((entry, i) => entry.key === keys[i])) return stored.map(entry => entry.rec);
+        const sigs = new Map();
+        const oldCount = new Map();
+        const nowCount = new Map();
+        stored.forEach(entry => {
+            oldCount.set(entry.key, (oldCount.get(entry.key) || 0) + 1);
+            if (!sigs.has(entry.key)) sigs.set(entry.key, new Set());
+            sigs.get(entry.key).add(entry.sig);
+        });
+        keys.forEach(key => nowCount.set(key, (nowCount.get(key) || 0) + 1));
+        const unsure = key => sigs.has(key) && sigs.get(key).size > 1 && oldCount.get(key) !== nowCount.get(key);
+        const out = keys.map(() => null);
+        const pairs = maskLinePairs(stored.map(entry => entry.key), keys);
+        pairs.forEach(([i, j]) => {
+            out[j] = unsure(keys[j]) ? null : stored[i].rec;
+        });
+        let pi = 0;
+        let pj = 0;
+        pairs.concat([[stored.length, keys.length]]).forEach(([i, j]) => {
+            const olds = stored.slice(pi, i).filter(entry => !unsure(entry.key));
+            const span = i - pi;
+            const count = j - pj;
+            for (let y = pj; y < j; y++) {
+                const x = y - pj;
+                let rec = null;
+                if (span === count) rec = unsure(stored[pi + x].key) ? null : maskRelocate(stored[pi + x], texts[y], { whole: true, head: true, tail: true });
+                else if (olds.length === 1 && span === 1) rec = maskRelocate(olds[0], texts[y], { whole: true, head: true, tail: true });
+                else if (olds.length) {
+                    const parts = olds.map((entry, z) => maskRelocate(entry, texts[y], {
+                        whole: true,
+                        head: count === 1 && z === 0 && entry === stored[pi],
+                        tail: count === 1 && z === olds.length - 1 && entry === stored[i - 1]
+                    })).filter(Boolean);
+                    if (parts.length) rec = { w: maskMergeRanges([].concat(...parts.map(part => part.w))), k: maskMergeRanges([].concat(...parts.map(part => part.k))) };
+                }
+                out[y] = rec;
+            }
+            pi = i + 1;
+            pj = j + 1;
+        });
+        return out;
+    }
+
+    /* (수정 13) 글자 노드 → 그 노드에 이 기능이 쓴 자리 { v: 남길 때 노드 글, w, k }(노드 안 자리). 문단 요소 기록이 지금 글과 꼭 맞지 않을 때만 함께 본다:
+       다른 문단의 글자 노드를 옮겨 붙여도(문단 합침 · 줄 옮김) 그 노드 글이 그대로면 그 자리를 쓴다. 노드로 찾으니 같은 글의 다른 줄 기록을 빌리지 않는다.
+       되돌리기·다시실행은 노드를 새로 만들어 요소 기록만 쓴다. */
+    const maskNodeOwn = new WeakMap();
+
+    function maskNodeRecord(nodes) {
+        let rec = null;
+        let start = 0;
+        for (const node of nodes) {
+            const value = node.nodeValue || '';
+            const item = maskNodeOwn.get(node);
+            if (item && item.v === value) {
+                if (!rec) rec = { w: [], k: [] };
+                item.w.forEach(range => rec.w.push([range[0] + start, range[1] + start]));
+                item.k.forEach(range => rec.k.push([range[0] + start, range[1] + start]));
+            }
+            start += value.length;
+        }
+        return rec && (rec.w.length || rec.k.length) ? rec : null;
+    }
+
+    /* (수정 13) 글 덩이의 기록(rec, 덩이 안 자리 · null이면 지운다)을 노드마다 나눠 남긴다 */
+    function maskNodeRemember(nodes, rec) {
+        let start = 0;
+        for (const node of nodes) {
+            const value = node.nodeValue || '';
+            const end = start + value.length;
+            const clip = list => list.filter(range => range[1] > start && range[0] < end).map(range => [Math.max(range[0], start) - start, Math.min(range[1], end) - start]);
+            const w = rec && value ? clip(rec.w) : [];
+            const k = rec && value ? clip(rec.k) : [];
+            if (w.length || k.length) maskNodeOwn.set(node, { v: value, w, k });
+            else maskNodeOwn.delete(node);
+            start = end;
+        }
+    }
+
+    function maskJoinRecords(a, b) {
+        if (!a) return b;
+        if (!b) return a;
+        return { w: maskMergeRanges(a.w.concat(b.w)), k: maskMergeRanges(a.k.concat(b.k)) };
+    }
+
+    /* (수정 12) 글 덩이마다 그 문단 묶음 요소(run.block)의 기록을 읽어 { w, k } 또는 null.
+       (수정 13) 기록은 'v2;' + 글 있는 덩이마다 한 줄(maskEntryText). 요소 기록이 지금 글과 꼭 맞으면 그것만 쓰고, 아니면 줄 맞추기·옮겨 쓰기(maskAlignRecords)에
+       글자 노드 기록(maskNodeRecord)을 더한다. 돌려준 배열의 stale = 기록이 지금 글과 꼭 맞지 않던 요소들(「원고에 적용」이 지금 글로 다시 남긴다). */
+    function maskReadRecords(runs, texts) {
+        const out = runs.map(() => null);
+        const groups = new Map();
+        runs.forEach((nodes, r) => {
+            const el = nodes.block;
+            if (!texts[r] || !el || typeof el.getAttribute !== 'function') return;
+            if (!groups.has(el)) groups.set(el, []);
+            groups.get(el).push(r);
+        });
+        const stale = new Set();
+        groups.forEach((list, el) => {
+            const stored = el.hasAttribute(MASK_OWN_ATTR) ? maskEntriesOf(el) : null;
+            let recs = null;
+            if (stored) {
+                const keys = list.map(r => maskTextKey(texts[r]));
+                if (stored.length === keys.length && stored.every((entry, i) => entry.key === keys[i])) {
+                    list.forEach((r, i) => {
+                        out[r] = stored[i].rec;
+                    });
+                    return;
+                }
+                recs = maskAlignRecords(stored, keys, list.map(r => texts[r]));
+            }
+            if (el.hasAttribute(MASK_OWN_ATTR)) stale.add(el);
+            list.forEach((r, i) => {
+                const own = maskNodeRecord(runs[r]);
+                if (own) stale.add(el);
+                out[r] = maskJoinRecords(recs ? recs[i] : null, own);
+            });
+        });
+        out.stale = stale;
+        return out;
+    }
+
+    /* (수정 12) 기록이 셈·다시 적용에 쓰이는지: 가릴 말(영문 큰/작은 글자 꼴 · 줄임꼴 포함)이 쓴 글 · 읽어 둔 원문과 겹치거나 바로 붙어 있을 때만(앞 1글자 · 뒤 2글자,
+       닫는 따옴표 뒤 조사 고침까지). 그 밖(알렉스 → 익명7처럼 다른 가릴 말이 닿지 않는 글)은 기록이 있든 없든 셈과 다시 적용이 같아 남기지 않는다(원고 HTML이 2.5.0과 같다). */
+    /* (수정 13) 규칙 목록의 가릴 말 꼴(가릴 말 · 다른 꼴 · 줄임꼴, 영문 작은 글자 꼴은 따로)을 첫 글자로 묶은 것과 가장 긴 길이(규칙 목록마다 한 번) */
+    const maskFormIndexes = new WeakMap();
+    function maskFormIndex(rules) {
+        if (maskFormIndexes.has(rules)) return maskFormIndexes.get(rules);
+        const head = new Map();
+        const low = new Map();
+        let max = 1;
+        const add = (map, form) => {
+            if (!form) return;
+            const key = form.charAt(0);
+            if (!map.has(key)) map.set(key, []);
+            if (!map.get(key).includes(form)) map.get(key).push(form);
+            max = Math.max(max, form.length);
+        };
+        rules.forEach(rule => {
+            [rule.from].concat(rule.alt || [], (rule.contract || []).map(item => item.form)).forEach(form => add(head, form));
+            if (rule.caseLow) add(low, rule.caseLow);
+        });
+        const index = { head, low, max };
+        maskFormIndexes.set(rules, index);
+        return index;
+    }
+
+    function maskRecordNeeded(text, rec, rules) {
+        if (!rec || (!rec.w.length && !rec.k.length)) return false;
+        /* (수정 15) 쓴 글이 이름의 둘레(maskTouchSpan)에 닿아도 남긴다: 다시 누른 「원고에 적용」이 그 이름을 다시 읽지 않게(maskOldTouchAt) */
+        const near = (at, len) => maskRangeHits(rec.w, at - 1, len + 3) || maskRangeHits(rec.k, at - 1, len + 3) || maskTouches(text, at, len, rec.w);
+        /* (수정 13) 기록 자리 둘레(앞으로 가장 긴 꼴 + 1글자 · 뒤로 자리 끝까지)에서 시작하는 꼴만 본다(규칙마다 글 전체를 훑지 않게, 결과는 같다) */
+        const index = maskFormIndex(rules || []);
+        let low = null;
+        for (const range of rec.w.concat(rec.k)) {
+            /* (수정 15) 둘레가 닿는 이름은 쓴 글 뒤로도 멀리(글자 덩이 · 괄호 · 목록 부호 건너) 있을 수 있다 */
+            const stop = Math.min(range[1] + 80, text.length - 1);
+            for (let at = Math.max(0, range[0] - index.max - 80); at <= stop; at++) {
+                const list = index.head.get(text.charAt(at));
+                if (list) for (const form of list) if (text.startsWith(form, at) && near(at, form.length)) return true;
+                if (!index.low.size) continue;
+                if (low === null) low = text.replace(/[A-Z]+/g, part => part.toLowerCase());
+                const lows = index.low.get(low.charAt(at));
+                if (lows) for (const form of lows) if (low.startsWith(form, at) && near(at, form.length)) return true;
+            }
+        }
+        return false;
+    }
+
+    /* (수정 12) blocks의 문단 묶음 요소마다 기록을 지금 글로 새로 쓴다(recs[r] = { w, k } 또는 null). 남길 것이 없으면 속성을 지운다.
+       속성이라 되돌리기·다시실행(원고 HTML)에도 따라가고, 문단을 더하거나 지워도 다른 문단의 기록은 그대로다. rules: 셈·다시 적용에 쓰이는 기록만 남긴다(maskRecordNeeded).
+       (수정 13) 'v2;' + 글 있는 덩이마다 한 줄: 남길 기록이 없는 덩이도 글 열쇠는 적는다(줄 맞추기 · 같은 글 다른 기록 가리기). */
+    function maskStoreRecords(runs, texts, recs, blocks, rules) {
+        const lines = new Map();
+        runs.forEach((nodes, r) => {
+            const el = nodes.block;
+            if (!el || !blocks.has(el) || !texts[r]) return;
+            if (!lines.has(el)) lines.set(el, { list: [], any: false });
+            const item = lines.get(el);
+            const rec = recs[r];
+            const need = maskRecordNeeded(texts[r], rec, rules);
+            maskNodeRemember(nodes, need ? rec : null);
+            if (need) {
+                item.list.push(maskEntryText(texts[r], rec));
+                item.any = true;
+            } else item.list.push(maskTextKey(texts[r]));
+        });
+        blocks.forEach(el => {
+            if (!el || typeof el.setAttribute !== 'function') return;
+            const item = lines.get(el);
+            if (item && item.any) {
+                const value = MASK_OWN_VERSION + ';' + item.list.join(';');
+                if (el.getAttribute(MASK_OWN_ATTR) !== value) el.setAttribute(MASK_OWN_ATTR, value);
+            } else if (el.hasAttribute(MASK_OWN_ATTR)) el.removeAttribute(MASK_OWN_ATTR);
+        });
+    }
+
+    /* wordMode(2.5.1 낱말 단위)면 낱말 규칙으로, 아니면 2.5.0 그대로 글자 그대로 바꾼다. stats(낱말 단위만): 그대로 둔 곳 수를 함께 센다. */
+    function applyMaskPairs(root, pairs, wordMode = false, stats = null) {
+        if (wordMode) {
+            applyMaskWordRules(root, maskWordRules(normalizeMaskPairs(pairs)), stats);
+            return;
+        }
         const rules = normalizeMaskPairs(pairs)
             .map(pair => ({ from: pair.from.trim(), to: pair.to.trim() }))
             .filter(pair => pair.from)
@@ -16748,9 +20030,404 @@
         });
     }
 
+    /* ── 2.5.1 그대로 둔 곳 보기(낱말 단위 치환) ──
+       「원고에 적용」(낱말 단위) 뒤 가릴 말이 남은 자리(다른 낱말 속 · 앞 글자가 붙음 · 모르는 끝)를 세어 알림 「그대로 둔 곳 N개 · 보기」로 알린다.
+       보기: 자리마다 미리보기 전용 표시(CSS Highlight — 원고 DOM을 건드리지 않아 저장 그림·되돌리기 기록에 들어가지 않는다)와
+       작은 막대(N/M · ‹ › · 바꾸기 · 끄기). 바꾸기는 그 자리 하나만 바꾸고 기록을 남긴다(되돌리기로 되살린다). Esc·끄기·③으로 가면 닫힌다. */
+    let maskReviewRules = null;
+    let maskReview = null;
+    let toastAction = null;
+    const MASK_HL_ALL = 'novcap-mask-skip';
+    const MASK_HL_NOW = 'novcap-mask-skip-now';
+    const TOAST_ACTION_MS = 6000;
+
+    /* 원고의 그대로 둔 곳을 글 차례로 모은다(보기를 열 때·원고가 바뀐 뒤). [{ range, rule }]
+       (수정 10) 글자 노드 둘 이상에 걸친 자리는 범위도 걸친다(CSS Highlight·상자는 노드를 넘어 그린다). 이 기능이 쓴 글은 남긴 기록을 보고 뺀다.
+       (수정 11) 같은 글의 다른 문단 기록을 빌리지 않는다. (수정 12) 기록은 문단 묶음 요소에서 읽는다(글이 바뀐 문단은 기록 없이). */
+    function collectMaskSkips(root, rules) {
+        const spots = [];
+        if (!root || !rules?.length) return spots;
+        const runs = collectMaskRuns(root);
+        const texts = runs.map(nodes => nodes.map(node => node.nodeValue).join(''));
+        const records = maskReadRecords(runs, texts);
+        runs.forEach((nodes, r) => {
+            const values = nodes.map(node => node.nodeValue);
+            const text = texts[r];
+            values.maskOwn = records[r];
+            let starts = null;
+            maskSkipsInRun(values, text, rules).forEach(item => {
+                const range = document.createRange();
+                range.setStart(nodes[item.k], item.start);
+                const end = item.start + item.rule.from.length;
+                if (end <= values[item.k].length) range.setEnd(nodes[item.k], end);
+                else {
+                    if (!starts) starts = maskPieceStarts(values);
+                    const last = maskPieceAt(values, starts, item.at + item.rule.from.length - 1, item.k);
+                    range.setEnd(nodes[last], item.at + item.rule.from.length - starts[last]);
+                }
+                spots.push({ range, rule: item.rule });
+            });
+        });
+        return spots;
+    }
+
+    /* (수정 10) 문단 글 자리 [g, g + len)을 글자 노드들에 쓴다: 바꿀 글 t는 첫 노드에, 걸친 다음 노드들의 글자는 지운다(노드·표시는 그대로). len 0이면 g 자리에 넣는다. */
+    function maskWriteRun(nodes, values, starts, g, len, t) {
+        const first = maskPieceAt(values, starts, g, 0);
+        if (first < 0) return;
+        if (!len) {
+            nodes[first].insertData(g - starts[first], t);
+            return;
+        }
+        let left = len;
+        for (let j = first; j < nodes.length && left > 0; j++) {
+            const offset = j === first ? g - starts[j] : 0;
+            const take = Math.min(left, values[j].length - offset);
+            if (take <= 0) continue;
+            nodes[j].replaceData(offset, take, j === first ? t : '');
+            left -= take;
+        }
+    }
+
+    /* ── 알림 끝 단추(보기). 보통 알림을 띄우면 단추를 숨긴다(글자는 비워 알림 글이 그대로이고, 이름은 aria-label이 지킨다).
+       단추가 있는 알림은 6초, 가리키거나 초점이 있으면 멈춘다. ── */
+    function clearToastAction(toast) {
+        toastAction = null;
+        if (!toast) return;
+        if (toast.hasAttribute('data-act')) toast.removeAttribute('data-act');
+        const act = toast.querySelector('.novcap-toast-act');
+        if (act) {
+            setHiddenIfChanged(act, true);
+            setTextIfChanged(act, '');
+        }
+    }
+
+    function holdToast(toast, ms) {
+        toast.getAnimations?.().forEach(animation => animation.cancel());
+        playOnce(toast, TOAST_FRAMES, { duration: ms - 100, fill: 'forwards' });
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => {
+            toastTimer = null;
+            setHiddenIfChanged(toast, true);
+        }, ms);
+    }
+
+    function showToastAction(text, label, onAction) {
+        showToast(text);
+        const toast = editorOverlay?.querySelector('#novcap-toast-host .novcap-toast');
+        const act = toast?.querySelector('.novcap-toast-act');
+        if (!toast || !act) return;
+        toastAction = onAction;
+        toast.setAttribute('data-act', 'true');
+        setTextIfChanged(act, label);
+        setAttrIfChanged(act, 'aria-label', label);
+        setHiddenIfChanged(act, false);
+        holdToast(toast, TOAST_ACTION_MS);
+    }
+
+    /* ── 표시 ── */
+    function maskReviewRegistry() {
+        try {
+            return typeof Highlight === 'function' && typeof CSS !== 'undefined' && CSS.highlights && typeof CSS.highlights.set === 'function' ? CSS.highlights : null;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    function clearMaskReviewPaint() {
+        const registry = maskReviewRegistry();
+        try {
+            if (registry?.has(MASK_HL_ALL)) registry.delete(MASK_HL_ALL);
+            if (registry?.has(MASK_HL_NOW)) registry.delete(MASK_HL_NOW);
+        } catch (error) {
+            /* 표시를 못 지워도 원고는 그대로다 */
+        }
+        editorOverlay?.querySelector('#novcap-preview-stage > .novcap-review-box')?.remove();
+    }
+
+    function paintMaskReviewNow() {
+        const review = maskReview;
+        if (!review?.painted) return;
+        try {
+            const now = new Highlight(review.spots[review.index].range);
+            now.priority = 1;
+            maskReviewRegistry().set(MASK_HL_NOW, now);
+        } catch (error) {
+            review.painted = false;
+        }
+    }
+
+    /* 모든 자리는 옅게, 지금 자리는 진하게. Highlight를 못 쓰면 지금 자리만 무대 안 상자(.novcap-review-box)로 보인다. */
+    function paintMaskReview() {
+        const review = maskReview;
+        if (!review) return;
+        const registry = maskReviewRegistry();
+        review.painted = false;
+        if (registry) {
+            try {
+                const all = new Highlight();
+                review.spots.forEach(spot => all.add(spot.range));
+                registry.set(MASK_HL_ALL, all);
+                review.painted = true;
+            } catch (error) {
+                review.painted = false;
+            }
+        }
+        paintMaskReviewNow();
+        placeMaskReviewBox();
+    }
+
+    /* 상자는 무대(스크롤 칸) 안 내용 자리에 둔다: 스크롤하면 함께 움직이고, 배율이 바뀌면 다시 잰다(applyPreviewZoom). */
+    function placeMaskReviewBox() {
+        const stage = editorOverlay?.querySelector('#novcap-preview-stage');
+        if (!stage) return;
+        let box = stage.querySelector(':scope > .novcap-review-box');
+        const spot = maskReview && !maskReview.painted ? maskReview.spots[maskReview.index] : null;
+        const rect = spot ? spot.range.getBoundingClientRect() : null;
+        if (!rect || (!rect.width && !rect.height)) {
+            box?.remove();
+            return;
+        }
+        if (!box) {
+            box = document.createElement('div');
+            box.className = 'novcap-review-box';
+            box.setAttribute('aria-hidden', 'true');
+            stage.appendChild(box);
+        }
+        const area = stage.getBoundingClientRect();
+        const left = rect.left - area.left - stage.clientLeft + stage.scrollLeft - 2;
+        const top = rect.top - area.top - stage.clientTop + stage.scrollTop - 2;
+        box.style.cssText = 'left:' + Math.round(left) + 'px;top:' + Math.round(top) + 'px;width:' + Math.round(rect.width + 4) + 'px;height:' + Math.round(rect.height + 4) + 'px';
+    }
+
+    function maskParticleRo(word) {
+        const final = maskFinalOf(word.charCodeAt(word.length - 1));
+        return final === 'C' ? '으로' : final ? '로' : '(으)로';
+    }
+
+    function syncMaskReviewBar() {
+        const review = maskReview;
+        if (!review || !editorOverlay) return;
+        const spot = review.spots[review.index];
+        setTextIfChanged(editorOverlay.querySelector('#novcap-review-word'), spot.rule.from);
+        setTextIfChanged(editorOverlay.querySelector('#novcap-review-count'), (review.index + 1) + '/' + review.spots.length);
+        const to = spot.rule.to;
+        const label = to ? '이 곳만 ' + to + maskParticleRo(to) + ' 바꾸기' : '이 곳만 지우기';
+        const replace = editorOverlay.querySelector('#novcap-review-replace');
+        setTextIfChanged(replace?.querySelector('.novcap-tip'), label);
+        setAttrIfChanged(replace, 'aria-label', label);
+        const single = String(review.spots.length < 2);
+        setAttrIfChanged(editorOverlay.querySelector('#novcap-review-prev'), 'aria-disabled', single);
+        setAttrIfChanged(editorOverlay.querySelector('#novcap-review-next'), 'aria-disabled', single);
+    }
+
+    /* 자리가 보이는 무대(패널·막대가 덮지 않는 곳) 밖이면 그 자리가 위쪽 40%에 오게 스크롤한다. 움직임 줄이기면 바로 옮긴다. */
+    function revealMaskSpot(range) {
+        const stage = editorOverlay?.querySelector('#novcap-preview-stage');
+        const view = getStageVisibleRect();
+        const rect = range.getBoundingClientRect();
+        if (!stage || !view || (!rect.width && !rect.height)) return;
+        const bar = editorOverlay.querySelector('.novcap-review-bar');
+        const barTop = bar?.getClientRects().length ? bar.getBoundingClientRect().top : view.bottom;
+        const top = view.top + 16;
+        const bottom = Math.max(top + 40, Math.min(view.bottom, barTop) - 16);
+        const left = view.left + 16;
+        const right = Math.max(left + 40, view.right - 16);
+        let dy = 0;
+        let dx = 0;
+        if (rect.top < top || rect.bottom > bottom) dy = rect.top - (top + (bottom - top) * 0.4);
+        if (rect.left < left || rect.right > right) dx = rect.left + rect.width / 2 - (left + right) / 2;
+        if (!Math.round(dx) && !Math.round(dy)) return;
+        try {
+            stage.scrollBy({ left: Math.round(dx), top: Math.round(dy), behavior: reduceMotion() ? 'auto' : 'smooth' });
+        } catch (error) {
+            stage.scrollLeft += Math.round(dx);
+            stage.scrollTop += Math.round(dy);
+        }
+    }
+
+    function maskSpotFresh(spot) {
+        const node = spot?.range.startContainer;
+        return Boolean(node && editorPage?.contains(node) && spot.range.toString() === spot.rule.from);
+    }
+
+    /* 원고가 바뀐 뒤(되돌리기·다시실행·처음 상태로·고친 글) 자리를 다시 센다. 하나도 없으면 닫는다. */
+    function refreshMaskReview(reveal = true) {
+        const review = maskReview;
+        if (!review) return;
+        const spots = editorPage ? collectMaskSkips(editorPage, review.rules) : [];
+        if (!spots.length) {
+            closeMaskReview();
+            return;
+        }
+        review.spots = spots;
+        review.index = Math.min(review.index, spots.length - 1);
+        paintMaskReview();
+        syncMaskReviewBar();
+        if (reveal) revealMaskSpot(spots[review.index].range);
+        placeMaskReviewBox();
+    }
+
+    function goMaskSpot(index) {
+        const review = maskReview;
+        if (!review) return;
+        const count = review.spots.length;
+        review.index = ((index % count) + count) % count;
+        if (!maskSpotFresh(review.spots[review.index])) {
+            refreshMaskReview();
+            return;
+        }
+        paintMaskReviewNow();
+        syncMaskReviewBar();
+        revealMaskSpot(review.spots[review.index].range);
+        placeMaskReviewBox();
+    }
+
+    function openMaskReview() {
+        if (!editorOverlay || !editorPage || !maskReviewRules?.length || isSettingsOnlyMode() || editorOverlay.dataset.novcapStep !== '2') return;
+        hideToast();
+        const spots = collectMaskSkips(editorPage, maskReviewRules);
+        if (!spots.length) {
+            showToast('그대로 둔 곳이 없어요');
+            return;
+        }
+        maskReview = { rules: maskReviewRules, spots, index: 0, painted: false };
+        /* 휴대폰: 시트를 내려 원고가 보이게 한다 */
+        if (isPhoneLayout() && isPanelExpanded()) setSettingsPanelOpen(false, false);
+        setAttrIfChanged(editorOverlay, 'data-novcap-review', 'true');
+        const host = editorOverlay.querySelector('#novcap-review-host');
+        setHiddenIfChanged(host, false);
+        playOnce(host?.querySelector('.novcap-review-bar'), [{ opacity: 0, transform: 'translateY(12px) scale(.96)' }], { duration: 240 });
+        paintMaskReview();
+        goMaskSpot(0);
+        editorOverlay.querySelector('#novcap-review-next')?.focus({ preventScroll: true });
+    }
+
+    function closeMaskReview(restoreFocus = false) {
+        if (!maskReview) return;
+        maskReview = null;
+        clearMaskReviewPaint();
+        const host = editorOverlay?.querySelector('#novcap-review-host');
+        const hadFocus = Boolean(host?.contains(document.activeElement));
+        setHiddenIfChanged(host, true);
+        if (editorOverlay?.hasAttribute('data-novcap-review')) editorOverlay.removeAttribute('data-novcap-review');
+        if (!(hadFocus || restoreFocus) || editorOverlay?.style.display !== 'block') return;
+        const stage = editorOverlay.querySelector('#novcap-preview-stage');
+        try {
+            stage?.focus({ preventScroll: true, focusVisible: false });
+        } catch (error) {
+            stage?.focus({ preventScroll: true });
+        }
+    }
+
+    /* 바꾸기: 이 자리 하나만 바꿀 말로 바꾸고, 뒤 조사가 읽히면 받침에 맞춘다(앞 글자는 보지 않는다 — 이 자리는 사람이 이름이라고 골랐다).
+       (수정 10) 글자 노드에 걸친 자리도 바꾼다(바꿀 말은 첫 노드, 형광펜·밑줄 경계가 지나도 — 사람이 고른 자리다). 바꾼 말과 그 뒤 조사는 이 기능이 쓴 글로 남겨
+       다시 세지 않는다(수정 12: 뒤 조사는 다시 읽지 않되 셈에서는 빼지 않는다). (수정 11) 이름 글자만 칠했다가 비게 된 형광펜·밑줄은 지운다.
+       (수정 12) 기록은 문단 묶음 요소의 속성에 남긴다. */
+    function replaceMaskSpot() {
+        const review = maskReview;
+        if (!review || !editorPage) return;
+        const spot = review.spots[review.index];
+        if (!maskSpotFresh(spot)) {
+            refreshMaskReview();
+            return;
+        }
+        const node = spot.range.startContainer;
+        const rule = spot.rule;
+        const runs = collectMaskRuns(editorPage);
+        const r = runs.findIndex(nodes => nodes.includes(node));
+        const run = runs[r];
+        if (!run) {
+            refreshMaskReview();
+            return;
+        }
+        /* (수정 12) 기록은 문단 묶음 요소에 있다: 같은 요소의 다른 글 덩이 기록도 읽어 두었다가 차례를 맞춰 다시 쓴다 */
+        const texts = runs.map(nodes => nodes.map(item => item.nodeValue).join(''));
+        const records = maskReadRecords(runs, texts);
+        const values = run.map(item => item.nodeValue);
+        const text = texts[r];
+        const starts = maskPieceStarts(values);
+        const at = starts[run.indexOf(node)] + spot.range.startOffset;
+        const edits = [{ g: at, gEnd: at + rule.from.length, t: rule.to, m: 1 }];
+        if (rule.dst) {
+            const verdict = maskWordJudge(text, at, rule, true);
+            const list = verdict?.edits || [];
+            /* 한 노드 안에 드는 고침을 먼저(굵게·형광펜 표시를 옮기지 않게), 없으면 걸친 것 */
+            const inside = edit => {
+                const j = maskPieceAt(values, starts, edit.at, 0);
+                return j >= 0 && edit.at + edit.len <= starts[j] + values[j].length;
+            };
+            const fix = list.find(inside) || list.find(edit => maskPieceAt(values, starts, edit.at, 0) >= 0 && edit.at + edit.len <= text.length);
+            /* (수정 13) 원문이 가릴 말인 조사를 고친 글은 셈에서 빼지 않는다(maskListedIn) */
+            if (fix && fix.at >= at + rule.from.length) edits.push({ g: fix.at, gEnd: fix.at + fix.len, t: fix.t, m: 2, n: maskListedIn(text, fix.at, fix.at + fix.len, rule) ? 1 : 0 });
+        }
+        const keep = rule.contractFix === undefined && rule.src !== undefined ? maskKeepSpan(text, at, rule, edits.length > 1) : null;
+        const own = maskOwnAfterEdits(records[r], edits, keep ? [keep] : []);
+        /* 글자 수가 바뀌어 문단 높이가 달라지면 쪽지도 가까운 문단을 따라간다(「원고에 적용」과 같다). */
+        const commentPlan = computeCommentAnchorPlan(editorPage);
+        /* 뒤 고침부터 쓴다(앞 자리 번호가 그대로다) */
+        for (let i = edits.length - 1; i >= 0; i--) maskWriteRun(run, values, starts, edits[i].g, edits[i].gEnd - edits[i].g, edits[i].t);
+        texts[r] = run.map(item => item.nodeValue).join('');
+        records[r] = own;
+        /* (수정 11) 이름 글자를 지운 노드를 감싼 형광펜·밑줄이 비면 지운다(하|린 → 채아 뒤 빈 형광펜) */
+        maskDropEmptyPens(run);
+        if (run.block) maskStoreRecords(runs, texts, records, new Set([run.block]), review.rules || maskReviewRules);
+        if (commentPlan) {
+            const list = commentAnchorCandidates(editorPage);
+            applyCommentAnchorPlan(editorPage, commentPlan, key => list[key]);
+        }
+        syncCommentControls();
+        commitHistory();
+        review.spots.splice(review.index, 1);
+        if (!review.spots.length) {
+            closeMaskReview(true);
+            showToast('그대로 둔 곳을 모두 바꿨어요');
+            return;
+        }
+        if (review.index >= review.spots.length) review.index = 0;
+        paintMaskReview();
+        goMaskSpot(review.index);
+        showToast('이 곳을 바꿨어요');
+    }
+
+    function bindMaskReviewUi() {
+        const toast = editorOverlay.querySelector('#novcap-toast-host .novcap-toast');
+        const act = toast?.querySelector('.novcap-toast-act');
+        if (act) {
+            act.addEventListener('click', () => {
+                const run = toastAction;
+                hideToast();
+                run?.();
+            });
+        }
+        if (toast) {
+            const pause = () => {
+                if (toast.hidden || !toast.hasAttribute('data-act')) return;
+                clearTimeout(toastTimer);
+                toastTimer = null;
+                toast.getAnimations?.().forEach(animation => animation.cancel());
+            };
+            const resume = () => {
+                if (toast.hidden || !toast.hasAttribute('data-act') || toast.contains(document.activeElement) || toast.matches(':hover')) return;
+                holdToast(toast, 2600);
+            };
+            toast.addEventListener('pointerenter', pause);
+            toast.addEventListener('focusin', pause);
+            toast.addEventListener('pointerleave', () => setTimeout(resume, 0));
+            toast.addEventListener('focusout', () => setTimeout(resume, 0));
+        }
+        editorOverlay.querySelector('#novcap-review-prev').addEventListener('click', () => {
+            if (maskReview) goMaskSpot(maskReview.index - 1);
+        });
+        editorOverlay.querySelector('#novcap-review-next').addEventListener('click', () => {
+            if (maskReview) goMaskSpot(maskReview.index + 1);
+        });
+        editorOverlay.querySelector('#novcap-review-replace').addEventListener('click', replaceMaskSpot);
+        editorOverlay.querySelector('#novcap-review-close').addEventListener('click', () => closeMaskReview(true));
+    }
     /* 이번 편집에서 「치환 적용」으로 건 목록을 차례대로 다시 건다(늦게 글자가 된 카드용). */
     function applyAppliedMasks(root) {
-        appliedMaskLists.forEach(pairs => applyMaskPairs(root, pairs));
+        appliedMaskLists.forEach(item => applyMaskPairs(root, item.pairs, item.word));
     }
 
     /* 편집창이 열린 뒤에 끝난 미리보기 그림: SVG 카드가 글자로 바뀌었으면 이미 건 치환을 걸고,
@@ -16770,7 +20447,10 @@
         const picked = getPickedBubbles();
         if (!picked.length) throw new Error('선택한 대화가 없습니다.');
 
+        /* 2.5.1: 기호 글꼴 고정은 처음 한 번 잰다(테마 모양을 읽는 동안 같이). 원고 글꼴 줄을 적기 전에 끝나야 한다. */
+        const symbolPinReady = ensureSymbolPin();
         customRoomThemeSnapshot = await captureCustomRoomThemeSnapshot(picked[0]);
+        await symbolPinReady;
 
         const page = document.createElement('article');
         page.className = 'novcap-preview-page';
@@ -16783,7 +20463,7 @@
             page.style.setProperty('--nov-theme-label-bg', customRoomThemeSnapshot.labelBg);
             page.style.setProperty('--nov-theme-text', customRoomThemeSnapshot.textColor);
             page.style.setProperty('--nov-theme-label-text', readableThemeTextColor(customRoomThemeSnapshot));
-            page.style.setProperty('--nov-theme-font', customRoomThemeSnapshot.fontFamily);
+            page.style.setProperty('--nov-theme-font', withSymbolFont(customRoomThemeSnapshot.fontFamily));
             page.style.setProperty('--nov-theme-font-size', customRoomThemeSnapshot.fontSize);
             page.style.setProperty('--nov-theme-line-height', customRoomThemeSnapshot.lineHeight);
             page.style.setProperty('--nov-theme-letter-spacing', customRoomThemeSnapshot.letterSpacing);
@@ -16943,6 +20623,7 @@
             if (layer.style.width !== width) layer.style.width = width;
             if (layer.style.height !== height) layer.style.height = height;
             layoutStageSizer();
+            if (maskReview) placeMaskReviewBox();
             /* 두 손가락 확대: 손가락 가운데의 원고 자리가 손가락 밑에 남도록 무대를 스크롤한다(K1). */
             if (options.anchor) {
                 const rect = editorPage.getBoundingClientRect();
@@ -17010,6 +20691,7 @@
         editorOverlay.querySelector('#novcap-underline-opacity').value = config.underlineOpacity;
         setTextIfChanged(editorOverlay.querySelector('#novcap-underline-opacity-label'), `${Math.round(config.underlineOpacity * 100)}%`);
         editorOverlay.querySelector('#novcap-highlight-word').checked = config.highlightWordSnap !== false;
+        editorOverlay.querySelector('#novcap-mask-word').checked = config.maskWordMode !== false;
         const themeLocked = Boolean(customRoomThemeSnapshot?.active);
         /* 글이 같으면 쓰지 않는다(다시 열 때마다 글자 노드를 갈아 끼우지 않게). */
         setTextIfChanged(editorOverlay.querySelector('#novcap-emphasis-help'), themeLocked
@@ -17099,7 +20781,7 @@
         editorPage.style.setProperty('--nov-line-box', `${config.fontSize * config.lineHeight}px`);
         editorPage.style.setProperty('--nov-paragraph-gap', `${Math.round(12 * config.lineHeight)}px`);
         editorPage.style.setProperty('--nov-font-size', `${config.fontSize}px`);
-        editorPage.style.setProperty('--nov-font-family', getFontFamily());
+        editorPage.style.setProperty('--nov-font-family', withSymbolFont(getFontFamily()));
         editorPage.style.setProperty('--nov-em-opacity', String(config.emphasisOpacity));
 
         if (themeActive) {
@@ -17192,6 +20874,8 @@
             useCustomRoomTheme: config.useCustomRoomTheme,
             /* 단어 단위 칠하기도 펜 기본값이라 되돌리지 않는다. */
             highlightWordSnap: config.highlightWordSnap,
+            /* 낱말 단위 치환도 치환 목록처럼 되돌리기와 상관없이 지금 값을 유지한다. */
+            maskWordMode: config.maskWordMode,
             /* 쪽지 기본값은 설정 창 값이라 되돌리지 않는다. */
             commentDefaults: config.commentDefaults
         };
@@ -17209,6 +20893,8 @@
         syncEditorControlsFromConfig();
         applyDraftSettings({ save: true });
         updateEditorToolUi();
+        /* 2.5.1: 되돌리기·다시실행 뒤 그대로 둔 곳을 다시 센다(바꾼 자리가 돌아오면 그 자리로). */
+        if (maskReview) refreshMaskReview();
     }
 
     function commitHistory() {
@@ -17361,6 +21047,12 @@
             else if (pagePhotoOpen === 'unavailable') notePagePhotoMemoryOnly();
             /* 초점을 편집 화면 안(편집 옵션 패널)으로 옮긴다. 닫으면 📖로 돌려준다(A11Y-1·4). */
             getPanel()?.focus({ preventScroll: true });
+            /* 2.5.1: 기호 글꼴은 편집을 연 뒤 쉬는 틈에 넣는다: @font-face를 붙이고, 테마 미리보기의 기호가 든 글자·대사에 넣는다(저장할 복제본과 같은 함수).
+               열 때 넣으면 큰 원고에서 기호가 든 글자마다 글꼴을 다시 만드느라 여는 시간이 늘고, 저장할 때만 넣으면 저장이 그만큼 늦다. */
+            whenSymbolIdle(() => {
+                attachSymbolFontStyle();
+                if (customRoomThemeSnapshot?.active && editorPage?.isConnected) pinThemeSymbolFonts(editorPage);
+            });
         } catch (error) {
             console.error(error);
             editorOverlay.style.display = 'none';
@@ -17375,6 +21067,7 @@
     function resetEditorSessionState() {
         editorSessionId++;
         appliedMaskLists = [];
+        maskReviewRules = null;
         lateCardMarkup.clear();
         skippedImageSources = new Set();
         historyImageKeys.clear();
@@ -17429,6 +21122,7 @@
         }
         if (flushMaskRows()) saveConfig();
         closePopovers();
+        closeMaskReview();
         hideToast();
         leaveTypingMode();
         pendingNoteReveal = false;
@@ -18273,6 +21967,13 @@
             saveConfig();
             updateToolChip();
         });
+
+        /* 낱말 단위로 바꾸기(익명 치환 기본값, 되돌리기 대상 아님). 원고는 「원고에 적용」을 누를 때 이 값으로 바뀐다(이미 바꾼 글자는 그대로). */
+        editorOverlay.querySelector('#novcap-mask-word').addEventListener('change', event => {
+            config.maskWordMode = event.target.checked;
+            saveConfig();
+        });
+        bindMaskReviewUi();
     }
 
     function bindToolButtons() {
@@ -18315,16 +22016,24 @@
         });
 
         editorOverlay.querySelector('#novcap-apply-mask').onclick = () => {
+            /* 2.5.1: 이번 적용에서 그대로 둔 곳 수(낱말 단위일 때만) */
+            let maskSkipped = 0;
             resetHighlightStart();
             flushMaskRows();
             /* 설정만 연 창에는 원고가 없다(버튼도 숨김). */
             if (editorPage) {
                 /* 늦게 글자가 되는 SVG 카드·저장 직전에 바뀌는 카드에도 같은 치환을 걸도록 적용한 목록을 남긴다. */
                 const appliedPairs = normalizeMaskPairs(config.maskPairs).filter(pair => pair.from.trim());
-                if (appliedPairs.length) appliedMaskLists.push(appliedPairs);
+                const wordMode = config.maskWordMode !== false;
+                if (appliedPairs.length) appliedMaskLists.push({ pairs: appliedPairs, word: wordMode });
                 /* 코멘트 글자도 함께 치환된다. 글자 수가 바뀌어 문단 높이가 달라지면 코멘트도 가까운 문단을 따라간다. */
                 const commentPlan = computeCommentAnchorPlan(editorPage);
-                applyMaskPairs(editorPage, config.maskPairs);
+                closeMaskReview();
+                const maskStats = { skipped: 0 };
+                applyMaskPairs(editorPage, config.maskPairs, wordMode, maskStats);
+                /* 낱말 단위로 건 규칙을 남겨 그대로 둔 곳을 센다(끄면 2.5.0처럼 세지 않는다). 수는 적용하는 걸음에 함께 센다. */
+                maskReviewRules = wordMode && appliedPairs.length ? maskWordRules(appliedPairs) : null;
+                maskSkipped = maskReviewRules ? maskStats.skipped : 0;
                 if (commentPlan) {
                     const list = commentAnchorCandidates(editorPage);
                     applyCommentAnchorPlan(editorPage, commentPlan, key => list[key]);
@@ -18333,7 +22042,11 @@
             }
             saveConfig();
             commitHistory();
-            if (editorPage) showToast('치환을 원고에 적용했어요');
+            if (editorPage) {
+                /* 낱말 단위로 적용했고 그대로 둔 곳이 있으면 알림에 보기 단추를 단다. */
+                if (maskSkipped) showToastAction('그대로 둔 곳 ' + maskSkipped + '개', '보기', openMaskReview);
+                else showToast('치환을 원고에 적용했어요');
+            }
         };
 
         editorOverlay.querySelectorAll('.novcap-highlight-btn').forEach(button => {
@@ -18721,7 +22434,7 @@
         comment.dataset.fontPreset = font;
         comment.dataset.color = field('color').value;
         comment.dataset.border = String(field('border').checked);
-        comment.style.fontFamily = resolveFontStack(font, 'system');
+        comment.style.fontFamily = withSymbolFont(resolveFontStack(font, 'system'));
         comment.style.fontSize = `${clampNumber(field('size').value, 10, 48, 16)}px`;
         comment.style.color = field('color').value;
         comment.style.fontWeight = field('bold').checked ? '700' : '400';
@@ -18764,7 +22477,7 @@
         const defaults = normalizeCommentDefaults(config.commentDefaults);
         const color = defaults.color || defaultCommentColor();
         const fontPreset = isKnownFontKey(defaults.fontPreset) ? defaults.fontPreset : 'system';
-        comment.style.cssText = `font-family:${resolveFontStack(fontPreset, 'system')};font-size:${defaults.size}px;font-weight:${defaults.bold ? 700 : 400};font-style:${defaults.italic ? 'italic' : 'normal'};color:${color};border:${defaults.border ? '1px solid currentColor' : 'none'};text-align:${defaults.align};`;
+        comment.style.cssText = `font-family:${withSymbolFont(resolveFontStack(fontPreset, 'system'))};font-size:${defaults.size}px;font-weight:${defaults.bold ? 700 : 400};font-style:${defaults.italic ? 'italic' : 'normal'};color:${color};border:${defaults.border ? '1px solid currentColor' : 'none'};text-align:${defaults.align};`;
         if (defaults.underline) comment.style.textDecorationLine = 'underline';
         comment.dataset.fontPreset = fontPreset;
         comment.dataset.color = color;
@@ -19971,6 +23684,8 @@
                 /* 캡처 복제본이 DOM에 붙은 즉시 계산 스타일을 고정한다. await 중
                    테마 확장의 전역 quote 복구 타이머가 span을 풀 여지를 주지 않는다. */
                 stabilizeCustomRoomQuotes(capturePage);
+                /* 2.5.1: 미리보기와 같은 함수(편집을 연 뒤 미리보기에 넣은 것은 건너뛰고, 그 뒤에 새로 든 기호·빠진 것만 넣는다). 대사를 굳힌 뒤, 글꼴을 굳히기 전에. */
+                pinThemeSymbolFonts(capturePage);
                 freezeComputedThemeTypography(capturePage);
             }
             /* 미리보기에서 못 받은 이미지는 여기서 한 번 더 받는다. 취소하면 저장을 멈춘다. */
@@ -19994,6 +23709,14 @@
                 if (fontWait.failedWeb.length && !confirm('글꼴을 다 받지 못했어요. 받지 못한 글자는 기본 글꼴로 저장할까요?')) return false;
                 showLoading('최종 이미지를 굽는 중...');
             }
+
+            /* 2.5.1: 원고에 박은 기호(❝ 등)가 있으면 기호 글꼴을 이 문서에서 받아 둔다. 캔버스는 이 문서의 글꼴로 그린다. 없으면 아무것도 안 한다. */
+            await ensureSymbolPin();
+            if (session !== editorSessionId) return false;
+            /* 편집을 연 뒤 붙이지 못했으면 지금 붙인다 */
+            attachSymbolFontStyle();
+            const symbolFontUsed = await loadSymbolFont(document, capturePage);
+            if (session !== editorSessionId) return false;
 
             /* 코멘트: 글꼴을 받은 뒤 빠진 문단·바뀐 폭에 맞춰 옮긴다. 그림 크기를 재기 전이어야 한다(onclone은 늦다). */
             /* 2.5.0 무늬·사진 배경: 단색이면 null(2.4.0과 같은 순서). 흐림 굽기가 남아 있으면 여기서 끝낸다. */
@@ -20057,9 +23780,13 @@
                         getEffectivePageWidth()
                     ),
                     windowHeight: Math.max(window.innerHeight, capturePage.scrollHeight),
-                    onclone: fontNeeds.length ? async clonedDocument => {
-                        const cloneFonts = await awaitFonts(clonedDocument, fontNeeds, 6000);
-                        cloneFonts.failed.forEach(label => console.warn('[novcap] clone font', label));
+                    onclone: fontNeeds.length || symbolFontUsed ? async clonedDocument => {
+                        if (fontNeeds.length) {
+                            const cloneFonts = await awaitFonts(clonedDocument, fontNeeds, 6000);
+                            cloneFonts.failed.forEach(label => console.warn('[novcap] clone font', label));
+                        }
+                        /* 2.5.1: 복제 문서도 기호 글꼴을 받은 뒤 줄 자리를 잰다. */
+                        if (symbolFontUsed) await loadSymbolFont(clonedDocument, clonedDocument.getElementById('novcap-capture-page'));
                         prepareCaptureClone(clonedDocument);
                     } : prepareCaptureClone,
                     ignoreElements: element => {
@@ -20112,7 +23839,7 @@
         } catch (error) {
             console.error('[novcap] final image render failed', error);
             const trace = String(error?.stack || '').split('\n').slice(1, 4).join('\n');
-            alert(`최종 이미지 생성 중 오류가 발생했습니다. [v2.5.0]\n${error?.message || '브라우저가 캔버스를 만들지 못했습니다.'}\n${trace}`);
+            alert(`최종 이미지 생성 중 오류가 발생했습니다. [v2.5.1]\n${error?.message || '브라우저가 캔버스를 만들지 못했습니다.'}\n${trace}`);
         } finally {
             captureHost?.remove();
             pageBackdrop?.bitmap?.close?.();
