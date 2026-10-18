@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         크랙 소설형 익명 캡처기 v2 + Custom Room 테마
 // @namespace    https://crack.wrtn.ai/
-// @version      2.5.2
+// @version      2.5.3
 // @description  단계형 화면(① 범위 → ② 편집 → ③ 내보내기)과 크랙 테마를 따르는 유리 패널로 소설형 익명 캡처 · 조판·익명 치환·문단 제외 · 형광펜·밑줄·쪽지 · 원고 색·기울임 지문 · Custom Room 테마 그대로 캡처 · 사이드바 「익명 캡처 설정」(자동 저장) · 메시지 ··· 메뉴 '여기부터 캡처' · PNG/WebP 저장·복사·공유 · 내 글꼴(설치된 글꼴·웹폰트)·자간·가름선 모양 · 무늬·사진 배경 · 낱말 단위 익명 치환(조사 맞춤)
-// @author       그저 로그 캡처가 좋은 뤼붕이 & GPT
+// @author       그저 로그 캡처가 좋은 뤼붕이 & GPT & Claude
 // @match        https://crack.wrtn.ai/*
 // @require      https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js
 // @grant        GM_addStyle
@@ -16776,7 +16776,8 @@
     }
 
     function parseComputedColor(value) {
-        const match = String(value || '').match(/rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:\s*[,/]\s*([\d.]+))?\s*\)/i);
+        /* 2.5.3: color(srgb …)·oklch() 같은 최신 표기도 rgb()로 바꿔 읽는다 */
+        const match = String((hasModernColor(value) ? replaceModernColors(value) : value) || '').match(/rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:\s*[,/]\s*([\d.]+))?\s*\)/i);
         if (!match) return null;
         const alpha = match[4] === undefined ? 1 : Number(match[4]);
         if (!Number.isFinite(alpha) || alpha <= 0.02) return null;
@@ -16904,6 +16905,8 @@
             try {
                 const rect = backgroundRoot.getBoundingClientRect();
                 const canvas = await window.html2canvas(backgroundRoot, {
+                    /* 2.5.3: 최신 색 표기를 rgb()로(복제 문서에서만) */
+                    onclone: clonedDocument => { normalizeHtml2CanvasColors(clonedDocument, clonedDocument.getElementById('sgb-bg-root')); },
                     scale: 1,
                     useCORS: true,
                     allowTaint: false,
@@ -23755,6 +23758,8 @@
                     root.style.setProperty('background-color', 'transparent', 'important');
                 }
                 sanitizeHtml2CanvasBackgroundSyntax(root);
+                /* 2.5.3: 최신 색 표기(color(srgb …)·oklch() 등)를 html2canvas가 읽는 rgb()로 바꾼다(문서 바탕색 포함) */
+                normalizeHtml2CanvasColors(clonedDocument, root);
             };
             /* 2.5.0: 쓰지 않는 글꼴 시트·못 받은 글꼴은 복제하지 않는다(저장본이 아직 그 별명을 적고 있으면 둔다). 새 글꼴이 있으면 복제 문서도 그 글꼴을 먼저 받은 뒤 줄 자리를 잰다. */
             const releaseFontSheets = markUnusedFontSheets(fontNeeds.map(need => need.key), capturePage, fontFailedKeys);
@@ -23839,7 +23844,7 @@
         } catch (error) {
             console.error('[novcap] final image render failed', error);
             const trace = String(error?.stack || '').split('\n').slice(1, 4).join('\n');
-            alert(`최종 이미지 생성 중 오류가 발생했습니다. [v2.5.1]\n${error?.message || '브라우저가 캔버스를 만들지 못했습니다.'}\n${trace}`);
+            alert(`최종 이미지 생성 중 오류가 발생했습니다. [v${novcapScriptVersion()}]\n${error?.message || '브라우저가 캔버스를 만들지 못했습니다.'}\n${trace}`);
         } finally {
             captureHost?.remove();
             pageBackdrop?.bitmap?.close?.();
@@ -24095,6 +24100,125 @@
             else delete context.createPattern;
             if (skipped) console.warn(`[novcap] 크기 0인 장식 패턴 ${skipped}개를 투명하게 처리했습니다.`);
         }
+    }
+
+    /* 2.5.3: html2canvas 1.4.1은 rgb()·hsl() 색만 읽는다. 테마나 다른 확장이 color-mix()·상대 색·oklch()를 쓰면
+       계산값이 color(srgb …)·oklch(…)로 나와 「unsupported color function」 오류로 저장이 멈춘다.
+       저장용 복제본에서 그런 값만 같은 색의 rgb()/rgba()로 바꾼다. rgb()·hsl() 값은 건드리지 않는다.
+       (스크립트를 읽는 중에 불려도 되게 바깥 const 없이 함수 안에서만 만든다.) */
+    function novcapScriptVersion() {
+        try {
+            return (typeof GM_info !== 'undefined' && GM_info?.script?.version) || '2.5.3';
+        } catch (error) {
+            return '2.5.3';
+        }
+    }
+
+    function hasModernColor(value) {
+        return Boolean(value) && /(?:^|[^a-z0-9-])(?:color|oklch|oklab|lab|lch|hwb)\(/i.test(String(value));
+    }
+
+    function formatRgbColor(r, g, b, a) {
+        const channel = v => Math.max(0, Math.min(255, Math.round(v)));
+        const alpha = Math.max(0, Math.min(1, Number.isFinite(a) ? a : 1));
+        return alpha >= 0.9995
+            ? `rgb(${channel(r)}, ${channel(g)}, ${channel(b)})`
+            : `rgba(${channel(r)}, ${channel(g)}, ${channel(b)}, ${Number(alpha.toFixed(4))})`;
+    }
+
+    /* color(srgb r g b / a)는 숫자를 그대로 읽는다(정확). 그 밖(oklch·lab·display-p3 등)은 1px 캔버스에 칠해 sRGB 값을 읽는다. */
+    function modernColorToRgb(text) {
+        const key = String(text).trim();
+        const cache = modernColorToRgb.cache || (modernColorToRgb.cache = new Map());
+        if (cache.has(key)) return cache.get(key);
+        let out = null;
+        const srgb = key.match(/^color\(\s*srgb\s+([^()]*)\)$/i);
+        if (srgb) {
+            const [main, alphaPart] = srgb[1].split('/');
+            const parts = main.trim().split(/\s+/);
+            const read = (raw, scale) => {
+                const s = String(raw || '').trim();
+                if (!s || s === 'none') return 0;
+                const n = Number.parseFloat(s);
+                return s.endsWith('%') ? n / 100 * scale : n * scale;
+            };
+            if (parts.length === 3 && parts.every(part => part === 'none' || Number.isFinite(Number.parseFloat(part)))) {
+                out = formatRgbColor(read(parts[0], 255), read(parts[1], 255), read(parts[2], 255), alphaPart === undefined ? 1 : read(alphaPart, 1));
+            }
+        }
+        if (!out) out = sampleColorOnCanvas(key);
+        if (cache.size > 500) cache.clear();
+        cache.set(key, out);
+        return out;
+    }
+
+    function sampleColorOnCanvas(color) {
+        try {
+            if (!sampleColorOnCanvas.context) {
+                const canvas = document.createElement('canvas');
+                canvas.width = canvas.height = 1;
+                sampleColorOnCanvas.context = canvas.getContext('2d', { willReadFrequently: true });
+            }
+            const ctx = sampleColorOnCanvas.context;
+            /* 캔버스도 못 읽는 색이면(값이 그대로 남으면) 투명으로 둔다 */
+            ctx.fillStyle = '#010203';
+            ctx.fillStyle = color;
+            if (String(ctx.fillStyle).toLowerCase() === '#010203') return 'rgba(0, 0, 0, 0)';
+            const paint = backdrop => {
+                ctx.globalCompositeOperation = 'copy';
+                ctx.fillStyle = backdrop;
+                ctx.fillRect(0, 0, 1, 1);
+                ctx.globalCompositeOperation = 'source-over';
+                ctx.fillStyle = color;
+                ctx.fillRect(0, 0, 1, 1);
+                return ctx.getImageData(0, 0, 1, 1).data;
+            };
+            /* 흰 바탕·검은 바탕에 한 번씩 칠해 투명도까지 되살린다 */
+            const white = paint('#ffffff');
+            const black = paint('#000000');
+            const alpha = 1 - ((white[0] - black[0]) + (white[1] - black[1]) + (white[2] - black[2])) / (3 * 255);
+            if (alpha <= 0.002) return 'rgba(0, 0, 0, 0)';
+            return formatRgbColor(black[0] / alpha, black[1] / alpha, black[2] / alpha, alpha);
+        } catch (error) {
+            return 'rgba(0, 0, 0, 0)';
+        }
+    }
+
+    /* 값 안의 최신 색 함수만 바꾼다(url(…) 안은 그대로 둔다) */
+    function replaceModernColors(value) {
+        const text = String(value || '');
+        if (!hasModernColor(text)) return text;
+        return text.replace(/(url\((?:"[^"]*"|'[^']*'|[^)])*\))|(^|[^a-z0-9-])((?:color|oklch|oklab|lab|lch|hwb)\([^()]*\))/gi,
+            (match, url, lead, fn) => url !== undefined ? match : lead + modernColorToRgb(fn));
+    }
+
+    /* html2canvas가 읽는 색 속성: 문서·본문 바탕색 + 저장 원고 안 모든 요소. 바꿀 값이 없으면 아무것도 쓰지 않는다(그림이 그대로). */
+    function normalizeHtml2CanvasColors(doc, root) {
+        const view = doc?.defaultView;
+        if (!view) return 0;
+        const writes = [];
+        [doc.documentElement, doc.body].forEach(element => {
+            if (!element?.style) return;
+            const value = view.getComputedStyle(element).backgroundColor;
+            if (hasModernColor(value)) writes.push([element, 'background-color', value]);
+        });
+        if (root) {
+            const props = ['color', 'background-color', 'background-image', 'border-top-color', 'border-right-color', 'border-bottom-color',
+                'border-left-color', 'text-decoration-color', '-webkit-text-stroke-color', 'box-shadow', 'text-shadow'];
+            [root, ...root.querySelectorAll('*')].forEach(element => {
+                /* SVG 안쪽 요소는 html2canvas가 그림 한 장으로 그린다(색은 브라우저가 읽는다) */
+                if (!element.style || element.ownerSVGElement) return;
+                const style = view.getComputedStyle(element);
+                props.forEach(prop => {
+                    const value = style.getPropertyValue(prop);
+                    if (hasModernColor(value)) writes.push([element, prop, value]);
+                });
+            });
+        }
+        /* 모두 읽은 뒤 한 번에 쓴다(읽기와 쓰기를 섞으면 스타일 계산이 매번 다시 돈다) */
+        writes.forEach(([element, prop, value]) => element.style.setProperty(prop, replaceModernColors(value), 'important'));
+        if (writes.length) console.info(`[novcap] 최신 색 표기 ${writes.length}곳을 rgb()로 바꿔 저장합니다.`);
+        return writes.length;
     }
 
     function sanitizeHtml2CanvasBackgroundSyntax(root) {
