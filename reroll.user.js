@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Crack Reroll Suite (리롤 · 클린 리롤 · 믹서) 🧩✨
 // @namespace    http://tampermonkey.net/
-// @version      2.4.11
+// @version      2.4.12
 // @description  꾹 눌러 리롤, 클린 리롤, 카드형 리롤 믹서와 AI 자연 혼합 도구를 제공합니다. RP Manager(0.x·2.x·Core) 호환.
 // @author       Assistant
 // @match        https://crack.wrtn.ai/*
@@ -84,6 +84,21 @@
         maxOutputTokens: 16384,
         additionalInstruction: ''
     });
+
+    // 고를 수 있는 모델입니다. 추론 단계(낮음·중간·높음)를 그대로 받는 Gemini 3·4 계열만 둡니다.
+    const GEMINI_MODEL_OPTIONS = Object.freeze([
+        { value: 'gemini-4-argon', label: '4 Argon' },
+        { value: 'gemini-3.8-flash', label: '3.8 Flash' },
+        { value: 'gemini-3.7-flash', label: '3.7 Flash' },
+        { value: 'gemini-3.6-flash', label: '3.6 Flash' },
+        { value: 'gemini-3.5-flash', label: '3.5 Flash' },
+        { value: 'gemini-3.1-pro-preview', label: '3.1 Pro' },
+        { value: 'gemini-3.1-flash-lite', label: '3.1 Flash-Lite' }
+    ]);
+    const DEEPSEEK_MODEL_OPTIONS = Object.freeze([
+        { value: 'deepseek-v4-flash', label: 'V4 Flash' },
+        { value: 'deepseek-v4-pro', label: 'V4 Pro' }
+    ]);
 
     const MIXER_ICON_HTML = `
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
@@ -350,6 +365,11 @@
         if (!/^\d+\.\d+\.\d+(?:[-+][\w.-]+)?$/.test(merged.firebaseSdkVersion)) {
             merged.firebaseSdkVersion = DEFAULT_FIREBASE_SDK_VERSION;
         }
+
+        const known = (options, value, fallback) => options.some(option => option.value === value) ? value : fallback;
+        merged.googleModel = known(GEMINI_MODEL_OPTIONS, merged.googleModel, DEFAULT_AI_SETTINGS.googleModel);
+        merged.firebaseModel = known(GEMINI_MODEL_OPTIONS, merged.firebaseModel, DEFAULT_AI_SETTINGS.firebaseModel);
+        merged.deepseekModel = known(DEEPSEEK_MODEL_OPTIONS, merged.deepseekModel, DEFAULT_AI_SETTINGS.deepseekModel);
 
         return merged;
     }
@@ -1613,6 +1633,16 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
         showMixerModal(bundle);
     }
 
+    function modelOptionsHtml(options) {
+        return options.map(option => `<option value="${option.value}">${option.label}</option>`).join('');
+    }
+
+    function providerModelLabel(settings, provider) {
+        const options = provider === 'deepseek' ? DEEPSEEK_MODEL_OPTIONS : GEMINI_MODEL_OPTIONS;
+        const value = provider === 'deepseek' ? settings.deepseekModel : provider === 'firebase' ? settings.firebaseModel : settings.googleModel;
+        return options.find(option => option.value === value)?.label || value;
+    }
+
     function providerLabel(provider) {
         if (provider === 'firebase') return 'Firebase';
         if (provider === 'deepseek') return 'DeepSeek';
@@ -1680,6 +1710,10 @@ Firebase 콘솔 → 보안 → App Check → 앱 탭에서, 위 구성과 같은
                             <span>API 키</span>
                             <input type="password" data-setting="googleApiKey" value="${escapeHtml(settings.googleApiKey)}" autocomplete="off" placeholder="AIza...">
                         </label>
+                        <label class="${SCRIPT_NS}-settings-field">
+                            <span>모델</span>
+                            <select data-setting="googleModel">${modelOptionsHtml(GEMINI_MODEL_OPTIONS)}</select>
+                        </label>
                         <div class="${SCRIPT_NS}-settings-help">Google API 키를 사용하는 연결입니다. 추론 단계는 믹서 화면에서 바로 고를 수 있어요.</div>
                     </section>
 
@@ -1699,6 +1733,10 @@ Firebase 콘솔 → 보안 → App Check → 앱 탭에서, 위 구성과 같은
                             </div>
                             <input type="password" data-setting="firebaseDebugToken" value="${escapeHtml(settings.firebaseDebugToken)}" autocomplete="off" aria-label="앱체크 디버그 토큰" placeholder="8-4-4-4-12자리 토큰">
                         </div>
+                        <label class="${SCRIPT_NS}-settings-field">
+                            <span>모델</span>
+                            <select data-setting="firebaseModel">${modelOptionsHtml(GEMINI_MODEL_OPTIONS)}</select>
+                        </label>
                         <div class="${SCRIPT_NS}-settings-help">기존 Firebase 프로젝트의 GCP 결제 경로로 자동 연결됩니다. 별도의 Gemini API 키는 필요하지 않아요.</div>
                     </section>
 
@@ -1713,10 +1751,7 @@ Firebase 콘솔 → 보안 → App Check → 앱 탭에서, 위 구성과 같은
                         </label>
                         <label class="${SCRIPT_NS}-settings-field">
                             <span>모델</span>
-                            <select data-setting="deepseekModel">
-                                <option value="deepseek-v4-flash">V4 Flash</option>
-                                <option value="deepseek-v4-pro">V4 Pro</option>
-                            </select>
+                            <select data-setting="deepseekModel">${modelOptionsHtml(DEEPSEEK_MODEL_OPTIONS)}</select>
                         </label>
                     </section>
 
@@ -1769,7 +1804,7 @@ Firebase 콘솔 → 보안 → App Check → 앱 탭에서, 위 구성과 같은
             const el = modal.querySelector(`[data-setting="${key}"]`);
             if (el) el.value = String(value ?? '');
         };
-        for (const key of ['deepseekModel', 'firebaseSdkVersion']) {
+        for (const key of ['googleModel', 'firebaseModel', 'deepseekModel', 'firebaseSdkVersion']) {
             setValue(key, settings[key]);
         }
 
@@ -1786,12 +1821,7 @@ Firebase 콘솔 → 보안 → App Check → 앱 탭에서, 위 구성과 같은
         };
 
         const collect = () => {
-            const next = {
-                ...settings,
-                firebaseBackend: 'agent-platform',
-                googleModel: 'gemini-3.7-flash',
-                firebaseModel: 'gemini-3.7-flash'
-            };
+            const next = { ...settings, firebaseBackend: 'agent-platform' };
             modal.querySelectorAll('[data-setting]').forEach(el => {
                 const key = el.dataset.setting;
                 next[key] = el.type === 'checkbox' ? el.checked : el.value;
@@ -2039,11 +2069,8 @@ Firebase 콘솔 → 보안 → App Check → 앱 탭에서, 위 구성과 같은
 
         function renderAiQuickControls() {
             const provider = aiSettings.provider;
-            aiProvider.innerHTML = [
-                { value: 'google', label: 'Google AI Studio' },
-                { value: 'firebase', label: 'Firebase' },
-                { value: 'deepseek', label: 'DeepSeek' }
-            ].map(item => `<option value="${item.value}">${item.label}</option>`).join('');
+            aiProvider.innerHTML = ['google', 'firebase', 'deepseek']
+                .map(value => `<option value="${value}">${providerLabel(value)} · ${escapeHtml(providerModelLabel(aiSettings, value))}</option>`).join('');
             aiProvider.value = provider;
 
             const thinkingOptions = providerThinkingOptions(provider);
