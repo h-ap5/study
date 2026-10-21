@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Crack Reroll Suite (리롤 · 클린 리롤 · 믹서) 🧩✨
 // @namespace    http://tampermonkey.net/
-// @version      2.4.10
+// @version      2.4.11
 // @description  꾹 눌러 리롤, 클린 리롤, 카드형 리롤 믹서와 AI 자연 혼합 도구를 제공합니다. RP Manager(0.x·2.x·Core) 호환.
 // @author       Assistant
 // @match        https://crack.wrtn.ai/*
@@ -10,6 +10,7 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_setClipboard
+// @grant        GM_registerMenuCommand
 // @connect      generativelanguage.googleapis.com
 // @connect      api.deepseek.com
 // @connect      firebasevertexai.googleapis.com
@@ -709,6 +710,29 @@
         return promise;
     }
 
+    // firebase-app-check.js는 앱체크 토큰을 넣었을 때만 불러옵니다.
+    const firebaseAppCheckApps = new Set();
+    const firebaseAppCheckModuleCache = new Map();
+    function loadFirebaseAppCheckModule(version) {
+        if (firebaseAppCheckModuleCache.has(version)) return firebaseAppCheckModuleCache.get(version);
+        const promise = import(`https://www.gstatic.com/firebasejs/${encodeURIComponent(version)}/firebase-app-check.js`).then(module => {
+            if (!module?.initializeAppCheck || !module?.CustomProvider) throw new Error('firebase-app-check.js에서 앱체크 함수를 찾지 못했어요.');
+            return module;
+        }).catch(error => {
+            firebaseAppCheckModuleCache.delete(version);
+            throw new Error(`Firebase 앱체크 SDK 로드 실패: ${error?.message || error}`);
+        });
+        firebaseAppCheckModuleCache.set(version, promise);
+        return promise;
+    }
+
+    function readFirebaseTokenExpiry(config, debugToken) {
+        const cache = safeJsonParse(gmGet(FIREBASE_TOKEN_CACHE_KEY, ''), null);
+        const matches = cache && cache.projectId === config.projectId && cache.appId === config.appId && cache.debugToken === debugToken;
+        // 5분 일찍 만료로 쳐서 SDK가 다시 받으러 오게 합니다(교환은 우리 캐시가 맡습니다).
+        return matches ? Number(cache.expiresAt || 0) - 5 * 60 * 1000 : Date.now() + 50 * 60 * 1000;
+    }
+
     function readFirebaseTokenCache(config, debugToken) {
         const cache = safeJsonParse(gmGet(FIREBASE_TOKEN_CACHE_KEY, ''), null);
         if (!cache) return null;
@@ -725,7 +749,8 @@
         const url = `https://content-firebaseappcheck.googleapis.com/v1/projects/${encodeURIComponent(config.projectId)}/apps/${encodeURIComponent(config.appId)}:exchangeDebugToken?key=${encodeURIComponent(config.apiKey)}`;
         const response = await gmHttpJson({
             url,
-            headers: { 'content-type': 'application/json' },
+            // 웹사이트 제한을 건 API 키도 통과하게 크랙 주소를 Referer로 보냅니다.
+            headers: { 'content-type': 'application/json', Referer: `${location.origin}/` },
             body: { debug_token: debugToken },
             setAbort
         });
@@ -770,12 +795,31 @@
             ? 'global'
             : (settings.firebaseLocation || 'global');
         const sdkVersion = settings.firebaseSdkVersion || DEFAULT_FIREBASE_SDK_VERSION;
+        const debugToken = settings.firebaseDebugToken;
+        // 등록 안 된 토큰이면 AI를 부르기 전에 여기서 바로 알려 줍니다(받은 토큰은 탭끼리 함께 씁니다).
+        if (debugToken) await getFirebaseAppCheckToken(config, debugToken, setAbort);
         const firebase = await loadFirebaseAiModules(sdkVersion);
         const appIdentity = [config.projectId, config.appId, config.apiKey].filter(Boolean).join('::');
-        const appName = `${SCRIPT_NS}-firebase-${hashTiny(appIdentity)}`;
+        // 앱체크를 쓰면 토큰마다 앱 이름을 따로 둡니다. 앱체크 없이 먼저 만든 AI 서비스나
+        // 예전 토큰을 쥔 앱체크가 같은 앱에 남아 헤더가 빠지는 일을 막습니다.
+        const appName = `${SCRIPT_NS}-firebase-${hashTiny(appIdentity)}${debugToken ? `-ac-${hashTiny(debugToken)}` : ''}`;
         const app = firebase.getApps().some(existing => existing.name === appName)
             ? firebase.getApp(appName)
             : firebase.initializeApp(config, appName);
+        // getAI보다 먼저 붙여야 요청에 앱체크 토큰이 실립니다. 실패하면 앱체크 없이 부르지 않습니다.
+        if (debugToken && !firebaseAppCheckApps.has(appName)) {
+            const appCheck = await loadFirebaseAppCheckModule(sdkVersion);
+            appCheck.initializeAppCheck(app, {
+                provider: new appCheck.CustomProvider({
+                    getToken: async () => ({
+                        token: await getFirebaseAppCheckToken(config, debugToken),
+                        expireTimeMillis: readFirebaseTokenExpiry(config, debugToken)
+                    })
+                }),
+                isTokenAutoRefreshEnabled: false
+            });
+            firebaseAppCheckApps.add(appName);
+        }
 
         let cancelled = false;
         let rejectAbort = null;
@@ -905,7 +949,11 @@
         if (status === 400) return `요청 설정이 맞지 않아요. 모델명·추론 단계를 확인해 주세요.\n${raw}`;
         if (status === 401) return `API 키가 올바르지 않거나 만료됐어요.\n${raw}`;
         if (status === 403) {
-            if (/app.?check/i.test(raw)) return `Firebase App Check가 필요하거나 토큰이 유효하지 않아요. 디버그 토큰 등록 상태를 확인해 주세요.\n${raw}`;
+            // 앱체크는 서버 문구로만 가립니다. 프로젝트 이름에 app-check가 들어가도 오판하지 않게 합니다.
+            // 'API 탭에서 적용' 안내는 프로젝트가 꺼진 경우에만 합니다(다른 스크립트가 미리 막히지 않게).
+            if (/has been deactivated/i.test(raw)) return `이 Firebase 프로젝트의 AI Logic이 꺼져 있어요. Firebase 콘솔 → 보안 → App Check → API 탭에서 Firebase AI Logic을 '적용'으로 바꿔야 다시 켜져요.\n${raw}`;
+            if (/attestation failed/i.test(raw)) return `앱체크 디버그 토큰이 등록돼 있지 않거나 다른 웹앱의 토큰이에요. Firebase 구성과 같은 웹앱에 등록한 토큰인지 확인해 주세요.\n${raw}`;
+            if (/Firebase App Check|App Check token/i.test(raw)) return `앱체크 토큰이 없거나 맞지 않아요. AI 연결 설정 → Firebase 탭의 '앱체크 디버그 토큰' 칸을 확인해 주세요.\n${raw}`;
             return `API 사용 권한이 없어요. 프로젝트·결제·허용 API 설정을 확인해 주세요.\n${raw}`;
         }
         if (status === 408) return raw;
@@ -1587,6 +1635,17 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
         ];
     }
 
+    // 앱체크 칸 옆 i 버튼의 안내입니다. 'API 탭 적용'은 프로젝트가 꺼졌을 때만 오류 안내로 따로 띄웁니다.
+    const APP_CHECK_HELP = `2026년 11월 2일부터 Firebase AI Logic은 앱체크 토큰이 없는 요청을 막아요. Firebase로 AI 합치기를 쓰면 이 칸을 채워 주세요.
+
+토큰 만들기
+Firebase 콘솔 → 보안 → App Check → 앱 탭에서, 위 구성과 같은 웹앱의 ⋮ → 디버그 토큰 관리로 토큰을 만들어 복사해요.
+
+넣기
+여기에 붙여 넣고 저장해요. 연결 테스트를 누르면 앱체크 토큰까지 확인하고, 성공하면 '앱체크 토큰 사용'이 같이 떠요.
+
+토큰은 Tampermonkey 저장소에만 보관돼요. AI를 부를 때는 1시간짜리 앱체크 토큰만 받아서 써요.`;
+
     function closeSettingsModal() {
         document.getElementById(SETTINGS_MODAL_ID)?.remove();
     }
@@ -1633,6 +1692,13 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
                             <span>Firebase Web 구성 전체</span>
                             <textarea data-setting="firebaseConfigText" rows="6" placeholder='{"apiKey":"...","projectId":"...","appId":"..."}'>${escapeHtml(settings.firebaseConfigText)}</textarea>
                         </label>
+                        <div class="${SCRIPT_NS}-settings-field">
+                            <div class="${SCRIPT_NS}-settings-label-row">
+                                <span class="${SCRIPT_NS}-settings-label-text">앱체크 디버그 토큰</span>
+                                <button type="button" class="${SCRIPT_NS}-info-btn" data-appcheck-info aria-label="앱체크 토큰 안내">i</button>
+                            </div>
+                            <input type="password" data-setting="firebaseDebugToken" value="${escapeHtml(settings.firebaseDebugToken)}" autocomplete="off" aria-label="앱체크 디버그 토큰" placeholder="8-4-4-4-12자리 토큰">
+                        </div>
                         <div class="${SCRIPT_NS}-settings-help">기존 Firebase 프로젝트의 GCP 결제 경로로 자동 연결됩니다. 별도의 Gemini API 키는 필요하지 않아요.</div>
                     </section>
 
@@ -1742,6 +1808,10 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
         });
         setSettingsTab(settings.provider);
 
+        modal.querySelector('[data-appcheck-info]').addEventListener('click', () => {
+            uiNotice(APP_CHECK_HELP, '앱체크 디버그 토큰');
+        });
+
         modal.querySelector('[data-settings-save]').addEventListener('click', () => {
             settings = saveAiSettings(collect());
             if (typeof onSave === 'function') onSave(settings);
@@ -1771,7 +1841,8 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
                         abort => { activeAiAbort = abort; }
                     );
                     status.classList.add('success');
-                    status.textContent = `연결 성공 · ${providerLabel(testSettings.provider)}`;
+                    const usedAppCheck = testSettings.provider === 'firebase' && !!testSettings.firebaseDebugToken;
+                    status.textContent = `연결 성공 · ${providerLabel(testSettings.provider)}${usedAppCheck ? ' · 앱체크 토큰 사용' : ''}`;
                 } catch (error) {
                     status.classList.add('error');
                     status.textContent = friendlyAiError(error);
@@ -3378,6 +3449,48 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
                 outline: none;
                 font: inherit;
                 font-weight: 500;
+            }
+
+            .${SCRIPT_NS}-settings-label-row {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+            }
+
+            .${SCRIPT_NS}-settings-label-text {
+                text-box: trim-both cap alphabetic;
+            }
+
+            .${SCRIPT_NS}-info-btn {
+                display: inline-grid;
+                place-items: center;
+                width: 18px;
+                height: 18px;
+                padding: 0;
+                border: 1px solid var(--rrm-border);
+                border-radius: 999px;
+                background: var(--rrm-soft);
+                color: var(--rrm-muted);
+                font: inherit;
+                font-size: 11px;
+                font-weight: 900;
+                line-height: 1;
+                cursor: pointer;
+                transition: color .15s ease, background-color .15s ease, transform .15s ease;
+            }
+
+            .${SCRIPT_NS}-info-btn:hover,
+            .${SCRIPT_NS}-info-btn:focus-visible {
+                color: var(--rrm-strong);
+                transform: scale(1.1);
+            }
+
+            .${SCRIPT_NS}-info-btn:active {
+                transform: scale(.94);
+            }
+
+            @media (prefers-reduced-motion: reduce) {
+                .${SCRIPT_NS}-info-btn { transition: none; }
             }
 
             .${SCRIPT_NS}-settings-field textarea {
@@ -5783,9 +5896,16 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
         `);
     }
 
-    function init() {
+    let stylesInjected = false;
+    function ensureSuiteStyles() {
+        if (stylesInjected) return;
+        stylesInjected = true;
         injectStyles();
         injectRerollSuiteStyles();
+    }
+
+    function init() {
+        ensureSuiteStyles();
 
         const ready = () => {
             if (!document.body) return;
@@ -5823,6 +5943,21 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
     // (예전 @match: /stories/*/episodes/*, /characters/*/chats/*, /u/*/c/*)
     const CHAT_ROUTE_RE = /^\/(?:stories\/.+\/episodes\/|characters\/.+\/chats\/|u\/.+\/c\/)/;
     const isChatRoute = () => CHAT_ROUTE_RE.test(location.pathname);
+
+    // 믹서는 답변이 둘 이상이어야 떠서, 그 전에는 AI 연결(앱체크 토큰 등)을 미리 설정할 길이 없었습니다.
+    // Tampermonkey 아이콘 메뉴에서 언제든 같은 설정 창을 엽니다. 믹서가 열려 있으면 믹서의 연결 설정으로 엽니다.
+    if (typeof GM_registerMenuCommand === 'function') {
+        GM_registerMenuCommand('⚙️ AI 연결 설정', () => {
+            if (document.getElementById(SETTINGS_MODAL_ID)) return;
+            const mixerLink = document.querySelector(`#${MODAL_ID} [data-open-ai-settings]`);
+            if (mixerLink) {
+                mixerLink.click();
+                return;
+            }
+            ensureSuiteStyles();
+            showAiSettingsModal(loadAiSettings());
+        });
+    }
 
     if (isChatRoute()) {
         init();
