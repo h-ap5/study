@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🧩 Crack Chat Hub (크랙 채팅 허브)
 // @namespace    https://crack.wrtn.ai/
-// @version      1.1.9
+// @version      1.1.12
 // @description  크랙 채팅 합본: 임시저장, 글자수, 채팅창 펼치기, 대시보드(해/달·소설/채팅 즉시 전환), 라디오존데, 채팅·출력 모델 공통 숨김.
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-idle
@@ -15,7 +15,6 @@
 // @grant        GM_xmlhttpRequest
 // @connect      rs.igx.kr
 // @connect      igx-radiosonde-api-striker.b-cdn.net
-// @connect      claude-radiosonde.chyoyam.chatgpt.site
 // @connect      crack-api.wrtn.ai
 // @grant        unsafeWindow
 // @require      https://cdn.jsdelivr.net/gh/milkyway0308/crystallized-chasm@crack-shared-core@v1.2.1/crack/libraries/crack-shared-core.js
@@ -1072,6 +1071,14 @@ const hubNotice = (() => {
   /*****************************************************************
    * 입력창 하단 액션 줄 탐색
    *****************************************************************/
+  // 입력창 하단 줄의 왼쪽 도구 묶음. 10/08 크랙 업데이트로 space-x-2가 gap-2로 바뀌었다.
+  // gap-2는 흔한 클래스라 줄의 바로 아래 자식이면서 id가 없는(다른 확프 상자가 아닌) 것만 본다.
+  function isLeftToolbarGroup(child) {
+    if (!(child instanceof HTMLElement)) return false;
+    if (child.classList.contains('space-x-2') || !!child.querySelector?.('.space-x-2')) return true;
+    return !child.id && child.classList.contains('flex') && child.classList.contains('items-center') && child.classList.contains('gap-2');
+  }
+
   function isActionRowCandidate(row) {
     if (!(row instanceof HTMLElement)) return false;
     if (!row.classList.contains('flex')) return false;
@@ -1086,10 +1093,7 @@ const hubNotice = (() => {
 
     if (visibleButtons.length === 0) return false;
 
-    const hasLeftButtonGroup = Array.from(row.children || []).some((child) => {
-      if (!(child instanceof HTMLElement)) return false;
-      return child.classList.contains('space-x-2') || !!child.querySelector?.('.space-x-2');
-    });
+    const hasLeftButtonGroup = Array.from(row.children || []).some(isLeftToolbarGroup);
 
     return hasLeftButtonGroup || row.children.length >= 2;
   }
@@ -1149,7 +1153,7 @@ const hubNotice = (() => {
      * 메모장/✨/기타 확프의 DOM 그룹 존재 여부를 위치 기준으로 쓰지 않는다.
      *
      * 1) 입력창 하단 actionRow 자체를 좌표 기준으로 삼는다.
-     * 2) 왼쪽 툴바(space-x-2 계열)는 제외한다.
+     * 2) 왼쪽 툴바(space-x-2·gap-2 계열)는 제외한다.
      * 3) 남은 '전송 쪽 버튼들' 중 가장 오른쪽 버튼을 전송 버튼으로 본다.
      * 4) 그 전송 버튼의 중앙 바로 위 4px에 카운터를 절대좌표로 둔다.
      *
@@ -1166,10 +1170,7 @@ const hubNotice = (() => {
       (child) => child instanceof HTMLElement && child.id !== ID.wrap
     );
 
-    const leftToolbar = directChildren.find((child) => (
-      child.classList.contains('space-x-2')
-      || !!child.querySelector?.('.space-x-2')
-    )) || null;
+    const leftToolbar = directChildren.find(isLeftToolbarGroup) || null;
 
     const rects = new Map();
     const rectOf = button => { if (!rects.has(button)) rects.set(button,button.getBoundingClientRect()); return rects.get(button); };
@@ -6370,25 +6371,34 @@ const hubNotice = (() => {
 (() => {
   "use strict";
 
-  const YAME_MODELS = [
-    { slug: "yame-fable5", apiId: "fable5", source: "yame", label: "Fable 5.0", short: "F5" },
-  ];
-
+  // IGX 모델 목록(2026-11-06 /v2/statistics 26개). 처음 받기 전과 받기 실패 때 쓴다.
   const FALLBACK_MODELS = [
     { slug: "claude-fable-5.1", source: "igx", label: "Claude Fable 5.1", short: "F5.1" },
+    { slug: "claude-fable-5", source: "igx", label: "Claude Fable 5", short: "F5" },
+    { slug: "claude-opus-5.5", source: "igx", label: "Claude Opus 5.5", short: "O5.5" },
     { slug: "claude-opus-5", source: "igx", label: "Claude Opus 5", short: "O5" },
     { slug: "claude-opus-4.8", source: "igx", label: "Claude Opus 4.8", short: "O4.8" },
     { slug: "claude-opus-4.7", source: "igx", label: "Claude Opus 4.7", short: "O4.7" },
     { slug: "claude-opus-4.6", source: "igx", label: "Claude Opus 4.6", short: "O4.6" },
+    { slug: "claude-sonnet-5.5", source: "igx", label: "Claude Sonnet 5.5", short: "S5.5" },
     { slug: "claude-sonnet-5", source: "igx", label: "Claude Sonnet 5", short: "S5" },
+    { slug: "claude-haiku-5.5", source: "igx", label: "Claude Haiku 5.5", short: "H5.5" },
+    { slug: "gemini-4-argon", source: "igx", label: "Gemini 4 Argon", short: "G4A" },
     { slug: "gemini-3.1-pro-preview", source: "igx", label: "Gemini 3.1 Pro Preview", short: "G3.1P" },
     { slug: "gemini-2.5-pro", source: "igx", label: "Gemini 2.5 Pro", short: "G2.5P" },
+    { slug: "gemini-3.8-flash", source: "igx", label: "Gemini 3.8 Flash", short: "G3.8F" },
+    { slug: "gemini-3.7-flash", source: "igx", label: "Gemini 3.7 Flash", short: "G3.7F" },
     { slug: "gemini-3.6-flash", source: "igx", label: "Gemini 3.6 Flash", short: "G3.6F" },
     { slug: "gemini-3.5-flash", source: "igx", label: "Gemini 3.5 Flash", short: "G3.5F" },
     { slug: "gemini-3.5-flash-lite", source: "igx", label: "Gemini 3.5 Flash Lite", short: "G3.5FL" },
+    { slug: "gpt-6.1-terra", source: "igx", label: "ChatGPT 6.1 Terra", short: "G6.1T" },
+    { slug: "gpt-6-sol", source: "igx", label: "ChatGPT 6 Sol", short: "G6S" },
+    { slug: "gpt-6-luna", source: "igx", label: "ChatGPT 6 Luna", short: "G6L" },
     { slug: "gpt-5.6-sol", source: "igx", label: "ChatGPT 5.6 Sol", short: "G5.6S" },
     { slug: "gpt-5.6-terra", source: "igx", label: "ChatGPT 5.6 Terra", short: "G5.6T" },
     { slug: "gpt-5.6-luna", source: "igx", label: "ChatGPT 5.6 Luna", short: "G5.6L" },
+    { slug: "deepseek-v4.1-flash", source: "igx", label: "DeepSeek V4.1 Flash", short: "D4.1F" },
+    { slug: "deepseek-v4-pro", source: "igx", label: "DeepSeek V4 Pro", short: "D4P" },
   ];
 
   const EXCLUDED_MODELS = new Set([
@@ -6430,14 +6440,15 @@ const hubNotice = (() => {
 
   const IGX_BASE_URL = "https://rs.igx.kr";
 
-  const YAME_STATUS_URL = "https://claude-radiosonde.chyoyam.chatgpt.site/api/v1/status";
-  const POLL_MS = 60 * 1000;
   const VALID_STATUSES = new Set(["active", "degraded", "impacted"]);
 
   const STORE_KEY_VISIBILITY = "igx_rs_popup_vis_v3";
   const STORE_KEY_MODELS = "igx_rs_models_v3";
-  const STORE_KEY_HOME_CHECK = "igx_rs_home_check_v1";
-  const HOME_CHECK_MS = 30 * 60 * 1000;
+  const STORE_KEY_LIST = "igx_rs_list_v1"; // 목록을 받은 시각 · IGX가 모른다고 한 이름
+  const LIST_MS = 24 * 60 * 60 * 1000;
+  const LIST_RETRY_MS = 60 * 60 * 1000;
+  const BAD_MS = 7 * 24 * 60 * 60 * 1000;
+  const BULK_MAX = 20; // IGX 실측: 묶음 요청은 한 번에 20개까지
   const STORE_KEY_LATENCY = "igx_rs_show_latency_v1";
 
   function isIgxChatRoomPage() { return Core.route().isChat; }
@@ -6458,11 +6469,7 @@ const hubNotice = (() => {
       --c-degraded: #ffd54a;
       --c-impacted: #ff5c5c;
       --c-unknown: #9aa0a6;
-      --y-score-excellent: #74c78f;
-      --y-score-good: #74c78f;
-      --y-score-fair: #aaa06b;
-      --y-score-poor: #ce875f;
-      --y-score-error: #ef655c;
+      --c-impacted-ring: rgba(255, 92, 92, .28);
       font-family: system-ui, -apple-system, Segoe UI, Roboto, "Noto Sans KR", Arial;
       color: var(--text-title);
       box-sizing: border-box;
@@ -6483,11 +6490,7 @@ const hubNotice = (() => {
       --c-degraded: #d49500;
       --c-impacted: #e03535;
       --c-unknown: #7b8086;
-      --y-score-excellent: #2f8f50;
-      --y-score-good: #2f8f50;
-      --y-score-fair: #897d35;
-      --y-score-poor: #b85e2d;
-      --y-score-error: #d9433b;
+      --c-impacted-ring: rgba(224, 53, 53, .22);
     }
 
     .igx-inline-overlay-host {
@@ -6581,7 +6584,7 @@ const hubNotice = (() => {
     #igx-live-barline {
       display: flex;
       align-items: center;
-      gap: 6px;
+      gap: 11px;
       min-width: 0;
       flex: 1;
       white-space: nowrap;
@@ -6597,7 +6600,7 @@ const hubNotice = (() => {
     .bitem {
       display: inline-flex;
       align-items: center;
-      gap: 6px;
+      gap: 0;
       padding: 1px 2px;
       min-height: 0;
       flex: 0 0 auto;
@@ -6605,25 +6608,32 @@ const hubNotice = (() => {
 
     .bname {
       opacity: 1;
+      margin-right: 5px;
       font-weight: 700;
       color: var(--text-title);
       line-height: 1;
     }
 
     .bscore {
+      min-width: 2ch;
       font-weight: 900;
+      font-variant-numeric: tabular-nums;
+      text-align: right;
       line-height: 1;
     }
 
     .blat {
+      margin-left: 4px;
       opacity: .75;
       color: var(--text-name);
+      font-variant-numeric: tabular-nums;
       line-height: 1;
     }
 
     .bdot {
       width: 6px;
       height: 6px;
+      margin-right: 4px;
       border-radius: 999px;
       display: inline-block;
       flex: 0 0 auto;
@@ -6637,17 +6647,28 @@ const hubNotice = (() => {
     .b-impacted .bscore { color: var(--c-impacted); }
     .b-unknown .bdot { background: var(--c-unknown); }
     .b-unknown .bscore { color: var(--text-unknown); }
+    .b-active { --igx-dot: var(--c-active); }
+    .b-degraded { --igx-dot: var(--c-degraded); }
+    .b-impacted { --igx-dot: var(--c-impacted); }
+    .b-unknown { --igx-dot: var(--c-unknown); }
+    .b-impacted .bdot { box-shadow: 0 0 0 2px var(--c-impacted-ring); }
 
-    .y-score-excellent .bscore { color: var(--y-score-excellent) !important; }
-    .y-score-excellent .bdot { background: var(--y-score-excellent) !important; }
-    .y-score-good .bscore { color: var(--y-score-good) !important; }
-    .y-score-good .bdot { background: var(--y-score-good) !important; }
-    .y-score-fair .bscore { color: var(--y-score-fair) !important; }
-    .y-score-fair .bdot { background: var(--y-score-fair) !important; }
-    .y-score-poor .bscore { color: var(--y-score-poor) !important; }
-    .y-score-poor .bdot { background: var(--y-score-poor) !important; }
-    .y-score-error .bscore { color: var(--y-score-error) !important; }
-    .y-score-error .bdot { background: var(--y-score-error) !important; }
+    /* 움직임은 값이 바뀐 칸에 한 번만: 점수 톡 · 점에 불빛(.igx-chg), 상태가 바뀌면 점도 톡(.igx-bchg), 새 값이 들어오면 맥박이 왼쪽부터 그려지며 밝아짐(.igx-beat) */
+    .bitem.igx-chg .bscore { animation: igx-rs-pop .6s cubic-bezier(.34, 1.5, .64, 1); }
+    .bitem.igx-chg .bdot { animation: igx-rs-light .9s ease; }
+    .bitem.igx-bchg .bdot { animation: igx-rs-pop2 .7s cubic-bezier(.34, 1.5, .64, 1), igx-rs-light .9s ease; }
+    #igx-live-popup .inline-icon path { stroke-dasharray: 1; stroke-dashoffset: 0; }
+    #igx-live-popup .inline-icon.igx-beat { animation: igx-rs-glow 1.1s ease; }
+    #igx-live-popup .inline-icon.igx-beat path { animation: igx-rs-trace .9s cubic-bezier(.4, 0, .2, 1); }
+    @keyframes igx-rs-pop { 40% { transform: scale(1.22); } }
+    @keyframes igx-rs-pop2 { 40% { transform: scale(1.8); } }
+    @keyframes igx-rs-light { 35% { box-shadow: 0 0 6px 1px var(--igx-dot); } }
+    @keyframes igx-rs-glow { 30% { opacity: 1; } }
+    @keyframes igx-rs-trace { from { stroke-dashoffset: 1; } }
+    @media (prefers-reduced-motion: reduce) {
+      .bitem.igx-chg .bscore, .bitem.igx-chg .bdot, .bitem.igx-bchg .bdot,
+      #igx-live-popup .inline-icon.igx-beat, #igx-live-popup .inline-icon.igx-beat path { animation: none; }
+    }
 
     #igx-live-settings {
       display: none;
@@ -6778,8 +6799,8 @@ const hubNotice = (() => {
 
     @media (max-width: 600px) {
       #igx-live-head { padding: 0 4px 2px; }
-      #igx-live-barline { gap: 4px; }
-      .bitem { gap: 5px; }
+      #igx-live-barline { gap: 8px; }
+      .bitem { gap: 0; }
       .bname, .bscore, .blat { font-size: 11px; letter-spacing: -.3px; }
       #igx-live-settings { padding: 9px; }
       .igx-model-grid { gap: 7px 8px; }
@@ -6803,7 +6824,7 @@ const hubNotice = (() => {
 
   const inlineIcon = document.createElement("div");
   inlineIcon.className = "inline-icon";
-  inlineIcon.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:100%;height:100%;"><path d="M2 12h4l2.25-11.25a.5.5 0 0 1 .98 0l4.54 22.5a.5.5 0 0 0 .98 0L17 12h5"/></svg>`;
+  inlineIcon.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:100%;height:100%;"><path pathLength="1" d="M2 12h4l2.25-11.25a.5.5 0 0 1 .98 0l4.54 22.5a.5.5 0 0 0 .98 0L17 12h5"/></svg>`;
 
   const barline = document.createElement("div");
   barline.id = "igx-live-barline";
@@ -6845,6 +6866,13 @@ const hubNotice = (() => {
   // 4.2.0 이전 YAME Opus 항목은 더 이상 제공되지 않으므로 저장된 표시 설정에서도 정리한다.
   delete visibility["yame-opus5"];
   delete visibility["yame-opus48"];
+  // YAME는 2026-10-08에 운영을 끝냈다. Fable 5(F5)는 IGX 값으로 이어 간다. 둘 중 하나라도 켜 뒀으면 켠다.
+  if ("yame-fable5" in visibility) {
+    if (visibility["yame-fable5"]) visibility["claude-fable-5"] = true;
+    else if (visibility["claude-fable-5"] === undefined) visibility["claude-fable-5"] = false;
+    delete visibility["yame-fable5"];
+  }
+  try { localStorage.removeItem("igx_rs_home_check_v1"); } catch {}
 
   let showLatency = localStorage.getItem(STORE_KEY_LATENCY) !== "0";
   const last = new Map();
@@ -6871,8 +6899,6 @@ const hubNotice = (() => {
   }
 
   function settingsModelLabel(model, groupId) {
-    if (model?.source === "yame" && model?.apiId === "fable5") return "Fable 5.0";
-
     const { version, descriptors } = parseSlug(model?.slug);
     const shownVersion = /^\d+$/.test(version) ? `${version}.0` : version;
 
@@ -7058,8 +7084,8 @@ const hubNotice = (() => {
   function applyModels(nextModels) {
     if (!Array.isArray(nextModels) || nextModels.length === 0) return false;
 
-    const clean = YAME_MODELS.map(model => ({ ...model }));
-    const seen = new Set(clean.map(model => model.slug));
+    const clean = [];
+    const seen = new Set();
 
     for (const model of nextModels) {
       if (!model || typeof model.slug !== "string") continue;
@@ -7079,7 +7105,7 @@ const hubNotice = (() => {
     }
 
     clean.sort(compareModelOrder);
-    if (clean.length === YAME_MODELS.length || modelSignature(clean) === modelSignature(MODELS)) return false;
+    if (!clean.length || modelSignature(clean) === modelSignature(MODELS)) return false;
 
     MODELS = clean;
     for (const slug of [...last.keys()]) {
@@ -7091,28 +7117,12 @@ const hubNotice = (() => {
     return true;
   }
 
-  const YAME_SCORE_BANDS = new Set(["excellent", "good", "fair", "poor", "error"]);
-
   function normalizeStatus(status) {
     const value = String(status || "unknown").trim().toLowerCase();
     if (["active", "operational", "ok", "healthy", "online", "normal"].includes(value)) return "active";
-    if (["degraded", "slow", "warning", "warn"].includes(value)) return "degraded";
-    if (["impacted", "critical", "down", "offline", "error", "failed", "failure", "unavailable"].includes(value)) return "impacted";
+    if (["degraded", "slow", "warning", "warn", "unstable"].includes(value)) return "degraded";
+    if (["impacted", "critical", "down", "offline", "error", "failed", "failure", "unavailable", "inactive"].includes(value)) return "impacted";
     return VALID_STATUSES.has(value) ? value : "unknown";
-  }
-
-  function normalizeYameScoreBand(band, score, hasError = false) {
-    if (hasError) return "error";
-    const explicit = String(band || "").toLowerCase();
-    if (YAME_SCORE_BANDS.has(explicit)) return explicit;
-
-    if(score===null||score===undefined||score==='')return "";
-    const value = Number(score);
-    if (!Number.isFinite(value)) return "";
-    if (value >= 85) return "excellent";
-    if (value >= 70) return "good";
-    if (value >= 50) return "fair";
-    return "poor";
   }
 
   function titleWord(word) {
@@ -7144,7 +7154,8 @@ const hubNotice = (() => {
       .toLowerCase()
       .split("-")
       .map(value => value.trim())
-      .filter(Boolean);
+      .filter(Boolean)
+      .map((value, index) => (index > 0 && /^v\d/.test(value) ? value.slice(1) : value)); // deepseek-v4.1-flash → 4.1
 
     const brand = tokens[0] || "model";
     const isNumberToken = token => /^\d+(?:\.\d+)*$/.test(token);
@@ -7188,14 +7199,13 @@ const hubNotice = (() => {
       .join("");
 
     if (brand === "claude") {
-      const family = descriptors.find(v => ["opus", "sonnet", "haiku"].includes(v));
+      const family = descriptors.find(v => ["fable", "opus", "sonnet", "haiku"].includes(v));
       const familyInitial = family ? family.charAt(0).toUpperCase() : "C";
       return `${familyInitial}${version || ""}`;
     }
 
     if (brand === "gemini") {
-      const tier = descriptors.filter(v => v !== "pro").map(v => v.charAt(0).toUpperCase()).join("");
-      return `G${version || ""}${tier}`;
+      return `G${version || ""}${descriptorInitials}`;
     }
 
     if (version) {
@@ -7209,12 +7219,12 @@ const hubNotice = (() => {
     return brand.slice(0, 3).toUpperCase();
   }
 
-  function makeModelMeta(slug) {
+  function makeModelMeta(slug, display) {
     return {
       slug,
       apiId: slug,
       source: "igx",
-      label: autoLabel(slug),
+      label: display || autoLabel(slug),
       short: autoShort(slug),
     };
   }
@@ -7267,135 +7277,152 @@ const hubNotice = (() => {
   }
 
   const active = () => !document.hidden && isIgxChatRoomPage();
-  let nextModelListAt = 0;
-  let nextHomepageAt = 0;
-  try {
-    const checked = Number(localStorage.getItem(STORE_KEY_HOME_CHECK));
-    if (loadModelCache()?.length && checked > 0 && checked <= Date.now()) nextHomepageAt = checked + HOME_CHECK_MS;
-  } catch {}
   let nextRefreshAt = 0;
   let refreshBusy = false;
   let lastSuccessAt = 0;
+  let lastMeasuredAt = 0;
 
-  function gmGetText(url, accept = 'application/json') {
+  let listState = { at: 0, bad: {} };
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORE_KEY_LIST));
+    if (saved && typeof saved === "object") {
+      listState.at = Number(saved.at) || 0;
+      if (saved.bad && typeof saved.bad === "object") listState.bad = saved.bad;
+    }
+  } catch {}
+  function saveListState() {
+    try { localStorage.setItem(STORE_KEY_LIST, JSON.stringify(listState)); } catch {}
+  }
+
+  function gmGetJson(url, timeout = 15000) {
     return new Promise((resolve,reject) => {
-      GM_xmlhttpRequest({method:'GET',url,anonymous:true,timeout:15000,
-        headers:{Accept:accept},
+      GM_xmlhttpRequest({method:'GET',url,anonymous:true,timeout,
+        headers:{Accept:'application/json'},
         onload(response){
-          if(response.status<200||response.status>=300){reject(new Error('HTTP '+response.status));return;}
-          resolve(response.responseText);
+          if(response.status<200||response.status>=300){const error=new Error('HTTP '+response.status);error.status=response.status;reject(error);return;}
+          try{resolve(JSON.parse(response.responseText));}catch(error){reject(error);}
         },onerror:()=>reject(new Error('network error')),
         ontimeout:()=>reject(new Error('timeout')),onabort:()=>reject(new Error('aborted'))
       });
     });
   }
-  async function gmGetJson(url) { return JSON.parse(await gmGetText(url)); }
 
-  function homepageModelSlugs(html) {
-    // Read only the model-ID labels observed on the official homepage; never insert its HTML.
-    if(typeof html!=='string'||html.length>3*1024*1024)throw new Error('invalid homepage');
-    const ids=new Set();
-    const labels=/<div\b[^>]*\bclass=["'][^"']*\bcard-title-model-id\b[^"']*["'][^>]*>\s*([a-z0-9][a-z0-9._-]*)\s*<\/div>/gi;
-    for(const match of html.matchAll(labels)){
-      const slug=match[1].toLowerCase();
-      if(looksLikeModelSlug(slug))ids.add(slug);
-    }
-    if(!ids.size)throw new Error('homepage model labels missing');
-    return [...ids];
-  }
   function finite(value) {
     if(value===null||value===undefined||value===''||typeof value==='boolean')return null;
     const n=Number(value);return Number.isFinite(n)&&n>=0?n:null;
   }
+
+  function setModelList(slugs, names = new Map()) {
+    const list=[...slugs].filter(slug=>!listState.bad[slug]);
+    if(!list.length)return;
+    const models=ensureUniqueShorts(list.map(slug=>makeModelMeta(slug,names.get(slug)||MODELS.find(m=>m.slug===slug)?.label)));
+    saveModelCache(models);applyModels(models);
+  }
+
+  // 모델 목록은 하루 한 번. IGX 첫 화면이 쓰는 /v2/statistics(회사별 모델 · 표시 이름, 지난 기록까지 들어 있어 약 1MB)에서
+  // 이름만 남긴다. 못 받으면 /v2/models로 지금 목록에 더하기만 하고, 그것도 안 되면 한 시간 뒤에 다시 받는다.
+  // 목록에서 잠깐 빠져도 표시 설정(visibility)은 지우지 않으므로 다시 나타나면 그대로 이어진다.
   async function updateModelList() {
-    const signals=new Map();
-    if(Date.now()<nextModelListAt)return signals;
-    nextModelListAt=Date.now()+5*60*1000;
-    // A temporary omission must not delete models already discovered or their visibility preferences.
-    const slugs=new Set(MODELS.filter(m=>m.source==='igx').map(m=>m.slug));
+    if(Date.now()-listState.at<LIST_MS)return;
+    listState.at=Date.now();
+    for(const slug of Object.keys(listState.bad))if(Date.now()-listState.bad[slug]>BAD_MS)delete listState.bad[slug];
+    const current=MODELS.map(m=>m.slug);
+    let slugs=null;const names=new Map();
     try{
-      const payload=await gmGetJson(IGX_BASE_URL+'/api/v2/models');
-      if(payload?.success!==true||!Array.isArray(payload.data))throw new Error('invalid models');
-      for(const slug of payload.data)if(typeof slug==='string'&&looksLikeModelSlug(slug))slugs.add(slug);
-    }catch(_){/* Keep cached models and still try the independent homepage source when due. */}
-    if(active()&&Date.now()>=nextHomepageAt){
-      nextHomepageAt=Date.now()+5*60*1000;
+      const payload=await gmGetJson(IGX_BASE_URL+'/api/v2/statistics',30000);
+      if(!Array.isArray(payload?.data))throw new Error('invalid statistics');
+      const found=new Set();
+      for(const provider of payload.data){
+        for(const model of Array.isArray(provider?.models)?provider.models:[]){
+          const slug=typeof model?.model==='string'?model.model.trim():'';
+          if(!looksLikeModelSlug(slug)||found.has(slug))continue;
+          found.add(slug);delete listState.bad[slug];
+          if(typeof model.display==='string'&&model.display.trim())names.set(slug,model.display.trim().slice(0,60));
+        }
+      }
+      if(!found.size)throw new Error('empty statistics');
+      // 지금 목록의 절반도 안 오면 응답이 이상한 것으로 보고 더하기만 한다.
+      slugs=found.size*2>=current.length?found:new Set([...current,...found]);
+    }catch(_){
       try{
-        const candidates=homepageModelSlugs(await gmGetText(IGX_BASE_URL+'/', 'text/html'))
-          .filter(slug=>!slugs.has(slug));
-        let index=0,failed=false;
-        async function verify(){
-          while(active()&&index<candidates.length){
-            const slug=candidates[index++];
-            try{
-              const payload=await gmGetJson(IGX_BASE_URL+'/api/v2/simple/'+encodeURIComponent(slug));
-              parseIgx(payload); // A homepage label alone is not sufficient to add a model.
-              signals.set(slug,payload);
-            }catch(_){failed=true;}
-          }
-        }
-        await Promise.all(Array.from({length:Math.min(4,candidates.length)},verify));
-        for(const slug of candidates)if(signals.has(slug))slugs.add(slug);
-        if(!failed&&index===candidates.length){
-          const checked=Date.now();nextHomepageAt=checked+HOME_CHECK_MS;
-          try{localStorage.setItem(STORE_KEY_HOME_CHECK,String(checked));}catch{}
-        }
-      }catch(_){/* Layout/network failures retain the prior list; retry no sooner than five minutes. */}
+        const payload=await gmGetJson(IGX_BASE_URL+'/api/v2/models');
+        if(payload?.success!==true||!Array.isArray(payload.data))throw new Error('invalid models');
+        slugs=new Set(current);
+        for(const slug of payload.data)if(typeof slug==='string'&&looksLikeModelSlug(slug))slugs.add(slug);
+      }catch(_){listState.at=Date.now()-LIST_MS+LIST_RETRY_MS;}
     }
-    if(slugs.size){
-      const models=ensureUniqueShorts([...slugs].map(makeModelMeta));
-      saveModelCache(models);applyModels(models);
+    saveListState();
+    if(slugs?.size)setModelList(slugs,names);
+  }
+
+  function parseSignal(d) {
+    if(!d||typeof d!=='object')throw new Error('invalid signal');
+    const score=finite(d.score),latency=finite(d.latency),status=normalizeStatus(d.status);
+    if(score===null&&latency===null&&status==='unknown')throw new Error('missing metrics');
+    const measuredAt=typeof d.measuredAt==='number'?d.measuredAt:Date.parse(d.measuredAt);
+    return {status,score,latency,tps:finite(d.tps),measuredAt:Number.isFinite(measuredAt)?measuredAt:0};
+  }
+
+  // 묶음 요청(IGX 공지 권장). 모르는 이름이 하나라도 섞이면 통째로 400이라, 그때만 하나씩 확인해 뺀다(7일 동안 다시 안 물음).
+  async function fetchBulk(part) {
+    const url=slugs=>IGX_BASE_URL+'/api/v2/simple/bulk?models='+slugs.map(encodeURIComponent).join(',');
+    try{return await gmGetJson(url(part));}
+    catch(error){if(error.status!==400)throw error;}
+    const alive=[];
+    for(const slug of part){
+      try{await gmGetJson(IGX_BASE_URL+'/api/v2/simple/'+encodeURIComponent(slug));alive.push(slug);}
+      catch(error){
+        if(error.status===400||error.status===404)listState.bad[slug]=Date.now();
+        else alive.push(slug);
+      }
     }
-    return signals;
+    return alive.length?gmGetJson(url(alive)):{success:true,data:{}};
   }
-  function parseIgx(payload) {
-    if(payload?.success!==true||!payload.data||typeof payload.data!=='object')throw new Error('invalid signal');
-    const d=payload.data;
-    const score=finite(d.score),latency=finite(d.latency);
-    if(score===null&&latency===null)throw new Error('missing metrics');
-    return {status:normalizeStatus(d.status),score,latency,tps:finite(d.tps),scoreBand:''};
+
+  // 다음 받기: IGX 다음 측정(마지막 측정 + 5분) 30초 뒤. 1~6분 사이로. 아직 값을 못 받았으면 1분 뒤.
+  function nextRefreshWait() {
+    const wait=lastMeasuredAt?lastMeasuredAt+5*60*1000+30*1000-Date.now():60*1000;
+    return Math.max(60*1000,Math.min(6*60*1000,wait));
   }
-  function parseYame(payload,id) {
-    const m=payload?.models?.find(x=>x.id===id);
-    if(!m)throw new Error('missing YAME model');
-    const score=finite(m.experience_score?.value),latency=finite(m.metrics?.ttft_ms);
-    if(score===null&&latency===null&&!m.error)throw new Error('missing YAME metrics');
-    return {status:m.error?'impacted':normalizeStatus(m.state),score,latency,tps:finite(m.metrics?.tps),
-      scoreBand:normalizeYameScoreBand(m.experience_score?.band,score,!!m.error)};
-  }
+
   async function refreshAll() {
     if(!active()||refreshBusy)return;
-    refreshBusy=true;nextRefreshAt=Date.now()+POLL_MS;
+    refreshBusy=true;nextRefreshAt=Date.now()+60*1000;
     btnRefresh.disabled=true;
     try{
-      const discoveredSignals=await updateModelList();
+      await updateModelList();
       if(!active())return;
       const pending=MODELS.filter(m=>visibility[m.slug]);
-      let index=0,success=0,failed=0;
-      async function worker(){
-        while(active()&&index<pending.length){
-          const model=pending[index++];
+      const badBefore=Object.keys(listState.bad).length;
+      let success=0,failed=0;
+      for(let i=0;i<pending.length&&active();i+=BULK_MAX){
+        const part=pending.slice(i,i+BULK_MAX);
+        let data=null;
+        try{
+          const payload=await fetchBulk(part.map(m=>m.slug));
+          if(payload?.success===true&&payload.data&&typeof payload.data==='object')data=payload.data;
+        }catch(_){/* 이 묶음은 이전 값을 흐리게 둔다. */}
+        for(const model of part){
+          if(listState.bad[model.slug])continue;
           try{
-            const yame=model.source==='yame';
-            const payload=!yame&&discoveredSignals.has(model.slug)?discoveredSignals.get(model.slug)
-              :await gmGetJson(yame?YAME_STATUS_URL:IGX_BASE_URL+'/api/v2/simple/'+encodeURIComponent(model.slug));
-            const d=yame?parseYame(payload,model.apiId):parseIgx(payload);
-            last.set(model.slug,{status:d.status,score:fmt0(d.score)??'—',lat:latencySeconds(d.latency)??'—',
-              scoreBand:d.scoreBand,receivedAt:Date.now(),stale:false});success++;
+            const d=parseSignal(data?.[model.slug]);
+            if(d.measuredAt>lastMeasuredAt)lastMeasuredAt=d.measuredAt;
+            last.set(model.slug,{status:d.status,score:fmt0(d.score)??'—',lat:latencySeconds(d.latency)??'—',tps:d.tps,
+              receivedAt:Date.now(),stale:false});success++;
           }catch(_){
-            const previous=last.get(model.slug)||{status:'unknown',score:'—',lat:'—',scoreBand:''};
+            const previous=last.get(model.slug)||{status:'unknown',score:'—',lat:'—'};
             last.set(model.slug,{...previous,stale:true});failed++;
           }
         }
       }
-      await Promise.all(Array.from({length:Math.min(4,pending.length)},worker));
+      if(Object.keys(listState.bad).length!==badBefore){saveListState();setModelList(MODELS.map(m=>m.slug));}
       if(success)lastSuccessAt=Date.now();
       if(active()){
         renderBarline();
         btnRefresh.title=failed?`${failed}개 조회 실패 · 흐린 항목은 이전 수신값`:
           (success?`갱신 · 마지막 수신 ${new Date(lastSuccessAt).toLocaleTimeString()}`:'선택된 모델 없음');
       }
-    }finally{refreshBusy=false;btnRefresh.disabled=false;}
+    }finally{refreshBusy=false;btnRefresh.disabled=false;nextRefreshAt=Date.now()+nextRefreshWait();}
   }
 
   function fmt0(x) {
@@ -7411,19 +7438,83 @@ const hubNotice = (() => {
     return n >= 0 ? (n / 1000).toFixed(2) : null;
   }
 
+  const STATUS_KO = { active: "정상", degraded: "저하", impacted: "장애", unknown: "값 없음" };
+
+  function signalTitle(model, data) {
+    if (data.stale) return data.receivedAt ? `${model.label} · 조회 실패 · 이전 수신 ${new Date(data.receivedAt).toLocaleTimeString()}` : `${model.label} · 조회 실패 · 수신값 없음`;
+    const parts = [model.label, STATUS_KO[normalizeStatus(data.status)]];
+    if (data.score && data.score !== "—") parts.push(`점수 ${data.score}`);
+    if (data.lat && data.lat !== "—") parts.push(`첫 토큰 ${data.lat}초`);
+    if (Number.isFinite(data.tps)) parts.push(`초당 ${Math.round(data.tps)}토큰`);
+    return parts.join(" · ");
+  }
+
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+  const shown = new Map();
+  let barSignature = null;
+  let beatTimer = 0;
+
+  function rollNumber(node, from, to, digits, suffix = "") {
+    const start = performance.now();
+    const step = (now) => {
+      if (!node.isConnected) return;
+      const progress = Math.min(1, (now - start) / 700);
+      node.nodeValue = (from + (to - from) * (1 - Math.pow(1 - progress, 3))).toFixed(digits) + suffix;
+      if (progress < 1) requestAnimationFrame(step);
+    };
+    node.nodeValue = from.toFixed(digits) + suffix;
+    requestAnimationFrame(step);
+  }
+
+  function beatIcon() {
+    inlineIcon.classList.remove("igx-beat");
+    void inlineIcon.offsetWidth; // 같은 움직임을 처음부터 다시
+    inlineIcon.classList.add("igx-beat");
+    clearTimeout(beatTimer);
+    beatTimer = setTimeout(() => inlineIcon.classList.remove("igx-beat"), 1100);
+  }
+
+  // 값이 바뀐 칸만: 점수·응답 시간은 이전 값에서 굴러가고, 점수가 톡 튀며 점에 불빛이 들어온다. 상태가 바뀌면 점도 톡.
+  // 처음 값이 들어올 때는 맥박만 한 번. 탭이 안 보이거나 동작 줄이기 설정이면 움직이지 않는다.
+  function animateChanges(rows) {
+    const calm = document.hidden || reducedMotion.matches;
+    const items = barline.querySelectorAll(".bitem");
+    let changed = false;
+    rows.forEach((row, index) => {
+      const previous = shown.get(row.slug);
+      const item = items[index];
+      shown.set(row.slug, row);
+      if (!previous || !item) return;
+      const scoreMoved = Number.isFinite(previous.score) && Number.isFinite(row.score) && previous.score !== row.score;
+      const latencyMoved = Number.isFinite(previous.lat) && Number.isFinite(row.lat) && previous.lat !== row.lat;
+      const statusMoved = previous.status !== row.status && previous.status !== "unknown" && row.status !== "unknown";
+      if (scoreMoved || latencyMoved || statusMoved || (!Number.isFinite(previous.score) && Number.isFinite(row.score))) changed = true;
+      if (calm) return;
+      if (scoreMoved) rollNumber(item.querySelector(".bscore").firstChild, previous.score, row.score, 0);
+      const latencyNode = item.querySelector(".blat")?.firstChild;
+      if (latencyMoved && latencyNode) rollNumber(latencyNode, previous.lat, row.lat, 2, "s");
+      if (scoreMoved) item.classList.add("igx-chg");
+      if (statusMoved) item.classList.add("igx-bchg");
+      if (scoreMoved || statusMoved) setTimeout(() => item.classList.remove("igx-chg", "igx-bchg"), 950);
+    });
+    if (changed && !calm) beatIcon();
+  }
+
   function renderBarline() {
     const fragment = document.createDocumentFragment();
+    const rows = [];
     let visibleCount = 0;
 
     for (const model of MODELS) {
       if (!visibility[model.slug]) continue;
       visibleCount++;
 
-      const data = last.get(model.slug) || { status: "unknown", score: "—", lat: "—", scoreBand: "" };
+      const data = last.get(model.slug) || { status: "unknown", score: "—", lat: "—" };
+      rows.push({ slug: model.slug, status: normalizeStatus(data.status), score: Number(data.score), lat: Number(data.lat) });
       const item = document.createElement("span");
       item.className = `bitem b-${normalizeStatus(data.status)}`;
-      if(data.stale){item.style.opacity='.45';item.title=data.receivedAt?`조회 실패 · 이전 수신 ${new Date(data.receivedAt).toLocaleTimeString()}`:'조회 실패 · 수신값 없음';}
-      if (YAME_SCORE_BANDS.has(data.scoreBand)) item.classList.add(`y-score-${data.scoreBand}`);
+      if(data.stale)item.style.opacity='.45';
+      item.title = signalTitle(model, data);
 
       const dot = document.createElement("span");
       dot.className = "bdot";
@@ -7455,7 +7546,11 @@ const hubNotice = (() => {
       fragment.appendChild(empty);
     }
 
+    const signature = [...fragment.children].map(el => [el.className, el.style.opacity, el.title, el.textContent].join("~")).join("|");
+    if (signature === barSignature) return;
+    barSignature = signature;
     barline.replaceChildren(fragment);
+    animateChanges(rows);
   }
 
   let currentInlineHost = null;
@@ -7555,6 +7650,13 @@ const hubNotice = (() => {
     if (!document.hidden && isIgxChatRoomPage()) attachInlineIfPossible();
   });
 
+  barline.addEventListener("wheel", (event) => {
+    if (Math.abs(event.deltaY) > Math.abs(event.deltaX) && barline.scrollWidth > barline.clientWidth) {
+      barline.scrollLeft += event.deltaY;
+      event.preventDefault();
+    }
+  }, { passive: false });
+
   btnSettings.setAttribute("aria-expanded", "false");
   btnSettings.addEventListener("click", (event) => {
     event.stopPropagation();
@@ -7600,7 +7702,8 @@ const hubNotice = (() => {
   });
   window.addEventListener('online',()=>{if(active()&&Date.now()>=nextRefreshAt)refreshAll();},{passive:true});
   const initialCache=loadModelCache();
-  applyModels(initialCache?.length?initialCache:FALLBACK_MODELS);
+  const initialModels=(initialCache?.length?initialCache:FALLBACK_MODELS).filter(model=>!listState.bad[model.slug]);
+  applyModels(ensureUniqueShorts(initialModels.map(model=>makeModelMeta(model.slug,model.label))));
   applyTheme();
 
 })();
