@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         크랙 소설형 익명 캡처기 v2 + Custom Room 테마
 // @namespace    https://crack.wrtn.ai/
-// @version      2.5.3
-// @description  단계형 화면(① 범위 → ② 편집 → ③ 내보내기)과 크랙 테마를 따르는 유리 패널로 소설형 익명 캡처 · 조판·익명 치환·문단 제외 · 형광펜·밑줄·쪽지 · 원고 색·기울임 지문 · Custom Room 테마 그대로 캡처 · 사이드바 「익명 캡처 설정」(자동 저장) · 메시지 ··· 메뉴 '여기부터 캡처' · PNG/WebP 저장·복사·공유 · 내 글꼴(설치된 글꼴·웹폰트)·자간·가름선 모양 · 무늬·사진 배경 · 낱말 단위 익명 치환(조사 맞춤)
-// @author       그저 로그 캡처가 좋은 뤼붕이 & GPT & Claude
+// @version      2.5.7
+// @description  단계형 화면(① 범위 → ② 편집 → ③ 내보내기)과 크랙 테마를 따르는 유리 패널로 소설형 익명 캡처 · 조판·익명 치환·문단 제외 · 형광펜·밑줄·쪽지 · 원고 색·기울임 지문 · Custom Room 테마 그대로 캡처 · 사이드바 「익명 캡처 설정」(자동 저장) · 메시지 ··· 메뉴 '여기부터 캡처' · PNG/WebP 저장·복사·공유 · 내 글꼴(설치된 글꼴·웹폰트)·자간·가름선 모양 · 무늬·사진 배경 · 낱말 단위 익명 치환(조사 맞춤) · 문장 가리기(모자이크·투명) · 치환 한 줄에 여러 이름 · 상태창 줄 고르기 · 로그별 생성 시각·모델 · PDF 저장 · 코드블럭 모양 · 꾸밈 테마 10종 · 내 색 칸
+// @author       그저 로그 캡처가 좋은 뤼붕이 & GPT
 // @match        https://crack.wrtn.ai/*
 // @require      https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js
 // @grant        GM_addStyle
@@ -24,6 +24,7 @@
 // @connect      hsh011130.workers.dev
 // @connect      ytimg.com
 // @connect      wsrv.nl
+// @connect      cdn-image.wrtn.ai
 // @license      MIT
 // ==/UserScript==
 
@@ -136,6 +137,9 @@
     /* 익명 치환 줄 최대 개수(저장 크기·치환 횟수 안전선). 새로 설치하면 5줄로 시작한다. */
     const MASK_PAIR_MAX = 100;
 
+    /* 2.5.5 코드블럭 디자인. plain = 지금 모양(아무 규칙도 닿지 않는다). */
+    const CODE_DESIGNS = ['plain', 'card', 'window', 'corner', 'receipt'];
+
     const DEFAULT_CONFIG = {
         maskPairs: Array.from({ length: 5 }, () => ({ from: '', to: '' })),
         includeUser: true,
@@ -173,6 +177,12 @@
         themeUserFont: false,
         /* 2.5.0 배경: 단색·무늬·사진 중 하나(기본 단색 = 2.4.0). 사진은 IndexedDB에 두고 여기에는 id만 둔다. */
         pageBgMode: 'solid',
+        /* 2.5.6 꾸밈 테마(배경 '꾸밈'일 때만 쓴다)와 무늬 켜기 */
+        decorTheme: 'paper',
+        decorPattern: true,
+        /* 2.5.7 + 칸으로 고른 색(줄마다 8개)과 꾸밈 전 종이색·글자색 */
+        userColors: { bg: [], text: [], pattern: [], note: [], highlight: [], underline: [] },
+        plainColors: null,
         patternType: 'horizontal',
         patternColor: '#b8a48b',
         patternSpacing: 24,
@@ -186,6 +196,14 @@
         photoOpacity: 1,
         photoBlur: 0,
         photoDim: 0,
+        /* 2.5.5 문장 가리기 기본 모양 · 코드블럭 디자인 · 백틱 테두리 · 로그 정보. 기본값이면 2.5.4와 같은 모양이고 크랙에 묻지도 않는다. */
+        mosaicStyle: 'pattern',
+        codeDesign: 'plain',
+        inlineCodeBorder: false,
+        showTimestamp: false,
+        showModelBadge: false,
+        showModelName: false,
+        showOriginalModelName: false,
         /* 새 쪽지 기본값(설정 창 「쪽지 기본값」). color ''는 2.3.0처럼 자동(기본 회색, 테마면 테마 글자색). */
         commentDefaults: { fontPreset: 'system', size: 16, color: '', border: false, angle: 0, bold: false, italic: false, underline: false, align: 'left' }
     };
@@ -228,6 +246,73 @@
         };
     }
 
+    /* 2.5.7 내 색 칸: 줄마다 +로 고른 색(8개까지, 넘치면 오래된 색부터 뺀다). 기본 견본과 같은 색은 담지 않는다.
+       loadConfig가 쓰므로 config보다 먼저 둔다. 기본 견본 색은 화면의 견본과 같아야 한다. */
+    const USER_COLOR_ROWS = ['bg', 'text', 'pattern', 'note', 'highlight', 'underline'];
+    const USER_COLOR_MAX = 8;
+    const USER_COLOR_PRESETS = {
+        bg: ['#d8d6cf', '#fff8e6', '#172033', '#3d3d3d'],
+        text: ['#151515', '#3a2619', '#f4f1ea'],
+        pattern: ['#b8a48b', '#4e4a46', '#9bb4cf', '#8b5841', '#d9b8b0', '#6f8f7a'],
+        note: ['#555555', '#151515', '#8b5841', '#d9605a', '#2f5a96', '#f4f1ea'],
+        highlight: { yellow: '#ffe05c', pink: '#ffa6cf', green: '#34b373', blue: '#3a84de', purple: '#7e4ece' },
+        underline: { graphite: '#4e4a46', brown: '#8b5841', red: '#d9605a', blue: '#2f5a96', green: '#4c9a6c', purple: '#5e4290', light: '#d8d2cc' }
+    };
+
+    function userColorIsPreset(row, hex) {
+        const presets = USER_COLOR_PRESETS[row];
+        if (!presets) return false;
+        return (Array.isArray(presets) ? presets : Object.values(presets)).includes(hex);
+    }
+
+    /* 형광펜·밑줄은 기본 견본이 이름(yellow …)이라 같은 색이면 그 이름을 돌려준다. */
+    function userColorPresetName(row, hex) {
+        const table = row === 'highlight' || row === 'underline' ? USER_COLOR_PRESETS[row] : null;
+        if (!table) return '';
+        return Object.keys(table).find(name => table[name] === hex) || '';
+    }
+
+    function normalizeUserColors(value) {
+        const source = value && typeof value === 'object' ? value : {};
+        const out = {};
+        USER_COLOR_ROWS.forEach(row => {
+            const list = [];
+            (Array.isArray(source[row]) ? source[row] : []).forEach(item => {
+                const hex = normalizeHexColor(item, '');
+                if (hex && !list.includes(hex) && !userColorIsPreset(row, hex)) list.push(hex);
+            });
+            out[row] = list.slice(-USER_COLOR_MAX);
+        });
+        return out;
+    }
+
+    /* 예전 설정: + 칸에 들어 있던 직접 고른 색을 한 번만 내 색 칸으로 옮긴다(꾸밈 중이면 종이·글자색은 테마 색이라 옮기지 않는다). */
+    function migrateUserColors(source) {
+        const out = normalizeUserColors(null);
+        const add = (row, value) => {
+            const hex = normalizeHexColor(value, '');
+            if (hex && !out[row].includes(hex) && !userColorIsPreset(row, hex)) out[row].push(hex);
+        };
+        add('highlight', source.customHighlightColor);
+        if (/^#/.test(String(source.highlightColor || ''))) add('highlight', source.highlightColor);
+        add('underline', source.customUnderlineColor);
+        if (/^#/.test(String(source.underlineColor || ''))) add('underline', source.underlineColor);
+        if (source.pageBgMode !== 'decor') {
+            add('bg', source.bgColor);
+            add('text', source.textColor);
+        }
+        add('pattern', source.patternColor);
+        add('note', source.commentDefaults?.color);
+        return out;
+    }
+
+    /* 꾸밈에 들어가기 전 종이색·글자색(꾸밈에서 나올 때 되돌린다). */
+    function normalizePlainColors(value) {
+        const bg = normalizeHexColor(value?.bg, '');
+        const text = normalizeHexColor(value?.text, '');
+        return bg && text ? { bg, text } : null;
+    }
+
     function loadConfig() {
         const saved = GM_getValue(STORAGE_KEY, null);
         const legacy = GM_getValue(LEGACY_STORAGE_KEY, null);
@@ -262,7 +347,12 @@
             dividerStyle: ['classic', 'short', 'double', 'dotted', 'thin'].includes(source.dividerStyle) ? source.dividerStyle : 'classic',
             themeUserFont: source.themeUserFont === true,
             /* 2.5.0 배경(모르는 값은 기본값) */
-            pageBgMode: ['solid', 'pattern', 'photo'].includes(source.pageBgMode) ? source.pageBgMode : 'solid',
+            pageBgMode: ['solid', 'pattern', 'photo', 'decor'].includes(source.pageBgMode) ? source.pageBgMode : 'solid',
+            decorTheme: ['paper', 'white', 'cream', 'rose', 'sakura', 'sunset', 'sage', 'lavender', 'dark', 'night'].includes(source.decorTheme) ? source.decorTheme : 'paper',
+            decorPattern: source.decorPattern !== false,
+            /* 2.5.7 내 색 칸(처음이면 예전 + 칸 색을 옮긴다) · 꾸밈 전 색 */
+            userColors: source.userColors && typeof source.userColors === 'object' ? normalizeUserColors(source.userColors) : migrateUserColors(source),
+            plainColors: normalizePlainColors(source.plainColors),
             patternType: ['horizontal', 'grid', 'check', 'vertical'].includes(source.patternType) ? source.patternType : 'horizontal',
             patternColor: normalizeHexColor(source.patternColor, DEFAULT_CONFIG.patternColor),
             patternSpacing: Math.round(clampNumber(source.patternSpacing, 8, 120, 24)),
@@ -276,6 +366,13 @@
             photoOpacity: Math.round(clampNumber(source.photoOpacity, 0, 1, 1) * 100) / 100,
             photoBlur: Math.round(clampNumber(source.photoBlur, 0, 20, 0)),
             photoDim: Math.round(clampNumber(source.photoDim, 0, 0.8, 0) * 100) / 100,
+            mosaicStyle: source.mosaicStyle === 'blank' ? 'blank' : 'pattern',
+            codeDesign: CODE_DESIGNS.includes(source.codeDesign) ? source.codeDesign : 'plain',
+            inlineCodeBorder: source.inlineCodeBorder === true,
+            showTimestamp: source.showTimestamp === true,
+            showModelBadge: source.showModelBadge === true,
+            showModelName: source.showModelName === true,
+            showOriginalModelName: source.showOriginalModelName === true,
             commentDefaults: normalizeCommentDefaults(source.commentDefaults)
         };
     }
@@ -413,6 +510,9 @@
         'highlight-remove': makeEditorCursor('pencil-minus'),
         'underline-add': makeEditorCursor('pencil-plus'),
         'underline-remove': makeEditorCursor('pencil-minus'),
+        'mosaic-add': makeEditorCursor('pencil-plus'),
+        'mosaic-remove': makeEditorCursor('pencil-minus'),
+        'code-pick': makeEditorCursor('plain-plus'),
         /* 코멘트 모드: 빈 곳을 누르면 상자 추가 */
         comment: makeEditorCursor('plain-plus')
     };
@@ -757,6 +857,12 @@
         note24: '<svg width="24" height="24" ' + ICON_ATTR + ' stroke-width="1.8"><path d="M5 4h14a1 1 0 0 1 1 1v9l-6 6H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"></path><path d="M20 14h-5a1 1 0 0 0-1 1v5"></path><path d="M8 8.5h8"></path><path d="M8 12h4"></path></svg>',
         rangeBars: '<svg width="20" height="20" ' + ICON_ATTR + ' stroke-width="2"><rect x="4" y="4.5" width="16" height="6" rx="2"></rect><rect x="4" y="13.5" width="16" height="6" rx="2"></rect></svg>',
         sliders: '<svg width="20" height="20" ' + ICON_ATTR + ' stroke-width="2"><path d="M21 4h-7M10 4H3M21 12h-9M8 12H3M21 20h-5M12 20H3"></path><path d="M14 2v4M8 10v4M16 18v4"></path></svg>',
+        mosaic18: '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><rect x="4" y="4" width="5" height="5" rx="1"></rect><rect x="9.5" y="9.5" width="5" height="5" rx="1"></rect><rect x="15" y="4" width="5" height="5" rx="1"></rect><rect x="4" y="15" width="5" height="5" rx="1"></rect><rect x="15" y="15" width="5" height="5" rx="1"></rect></svg>',
+        eyeOff18: '<svg width="18" height="18" ' + ICON_ATTR + ' stroke-width="1.8"><path d="M3 12s3.5-6 9-6 9 6 9 6-3.5 6-9 6-9-6-9-6z"></path><path d="M4 20L20 4"></path></svg>',
+        lines18: '<svg width="18" height="18" ' + ICON_ATTR + ' stroke-width="1.8"><path d="M9 6h11M9 12h11M9 18h11"></path><path d="M4 6h1M4 12h1M4 18h1"></path></svg>',
+        minusBox16: '<svg width="16" height="16" ' + ICON_ATTR + ' stroke-width="1.9"><rect x="4" y="4" width="16" height="16" rx="3"></rect><path d="M8 12h8"></path></svg>',
+        keep16: '<svg width="16" height="16" ' + ICON_ATTR + ' stroke-width="1.9"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg>',
+        pdf17: '<svg width="17" height="17" ' + ICON_ATTR + ' stroke-width="1.8"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"></path><path d="M14 3v5h5"></path><path d="M9 13h6M9 17h4"></path></svg>',
         copy17: '<svg width="17" height="17" ' + ICON_ATTR + ' stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V5a2 2 0 0 1 2-2h10"></path></svg>',
         download17: '<svg width="17" height="17" ' + ICON_ATTR + ' stroke-width="2"><path d="M12 3v12"></path><path d="M7 10l5 5 5-5"></path><path d="M5 21h14"></path></svg>',
         share19: '<svg width="19" height="19" ' + ICON_ATTR + ' stroke-width="2.2"><path d="M12 3v12"></path><path d="M8 7l4-4 4 4"></path><path d="M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"></path></svg>',
@@ -3849,7 +3955,7 @@
        저장은 html2canvas에 넘기는 캔버스에 배경을 먼저 그리고(기기 해상도), 복제본의 원고 바탕을 지운 뒤 글을 얹는다.
        사진은 이 사이트(crack.wrtn.ai)의 IndexedDB에 둔다(GM 설정에는 id만). DB는 처음 필요할 때만 연다. */
     const PAGE_BG_PROPS = ['background-image', 'background-size', 'background-repeat', 'background-position'];
-    const PAGE_BG_MODES = ['solid', 'pattern', 'photo'];
+    const PAGE_BG_MODES = ['solid', 'pattern', 'photo', 'decor'];
     const PAGE_PATTERN_TYPES = ['horizontal', 'grid', 'check', 'vertical'];
     /* 무늬 타일은 사용자 값이 아니라 고정 모양으로 그린다(간격 120·굵기 0.5에서도 보이게). */
     const PAGE_PATTERN_TILE = { patternSpacing: 11, patternThickness: 1.5 };
@@ -3987,9 +4093,12 @@
                     layers = pagePhotoLayers(photo, getEffectivePageWidth(), '--nov-page-photo');
                     photoUrl = photo.url;
                 }
+            } else if (mode === 'decor') {
+                /* 2.5.6: 꾸밈 그림(원고 크기 조각들). 아직 없으면 그리도록 맡긴다. */
+                layers = decorPreviewLayers(page);
             }
         }
-        const on = layers.length > 0;
+        const on = layers.length > 0 || (pageBgMode() === 'decor' && !customRoomThemeSnapshot?.active);
         if (page.classList.contains('novcap-has-page-bg') !== on) page.classList.toggle('novcap-has-page-bg', on);
         const last = page.novcapPageBg || null;
         if (!on) {
@@ -4297,6 +4406,7 @@
                 thickness: Math.min(gap / 2, clampNumber(config.patternThickness, 0.5, 16, 1))
             };
         }
+        if (mode === 'decor') return { kind: 'decor', bg, pageW, themeKey: decorThemeKey(), pattern: config.decorPattern !== false };
         if (!config.pagePhotoId) return null;
         const settled = await pagePhotoSettled();
         if (!settled) return null;
@@ -4337,6 +4447,10 @@
             ctx.clip();
             if (backdrop.kind === 'pattern') paintPatternBands(ctx, backdrop, s, W, H);
             else if (backdrop.kind === 'photo') await paintPhotoTiles(ctx, backdrop, s, H);
+            else if (backdrop.kind === 'decor') {
+                ctx.scale(s, s);
+                drawDecorBackground(ctx, W, H, DECOR_THEMES[backdrop.themeKey] || DECOR_THEMES.paper, backdrop.pattern);
+            }
         } finally {
             ctx.restore();
         }
@@ -5006,6 +5120,472 @@
         (row?.querySelector('.novcap-photo-tile[tabindex="0"]') || row?.querySelector('#novcap-photo-file'))?.focus({ preventScroll: true });
     }
 
+    /* ── 2.5.6 꾸밈 테마(스타일 › 배경 › 꾸밈) ──
+       테마 색 10가지와 무늬 그리기는 「크랙 하트카메라 캡처」 3.7.4 render.js(muz)에서 옮겼다. 원고 전체를 한 쪽으로 보고,
+       흩뿌리는 무늬는 1600px 칸마다 칸 번호로 따로 뿌린다(원고가 길어지거나 줄어도 위쪽 무늬가 움직이지 않는다).
+       미리보기는 같은 그림을 2048px 조각 그림으로 깔고, 저장은 html2canvas 캔버스에 먼저 그린다(무늬·사진과 같은 길).
+
+       Theme palettes and decoration drawing adapted from "크랙 하트카메라 캡처" (crack-heart-camera.user.js) by muz.
+       MIT License — Copyright (c) muz
+       Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation
+       files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy,
+       modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the
+       Software is furnished to do so, subject to the following conditions: The above copyright notice and this permission notice
+       shall be included in all copies or substantial portions of the Software. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY
+       OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
+       PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+       LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR
+       THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
+    const DECOR_THEMES = {
+        paper: { name: '종이', decor: 'book', bg: '#FBF7EF', text: '#2A2018', accent: '#B9783A', rule: 'rgba(94,81,70,0.22)' },
+        white: { name: '화이트', decor: 'dots', bg: '#FFFFFF', text: '#111114', accent: '#007AFF', rule: 'rgba(60,60,67,0.16)' },
+        cream: { name: '크림', decor: 'sparkle', bg: '#FFF9EC', text: '#3A2A1A', accent: '#C8963E', rule: 'rgba(107,90,71,0.2)' },
+        rose: { name: '로즈', decor: 'hearts', bg: '#FFF6F6', text: '#33201F', accent: '#DB5C7A', rule: 'rgba(107,81,80,0.2)' },
+        sakura: { name: '벚꽃', decor: 'petals', bg: '#FFF8FA', bgTop: '#FFEFF4', text: '#3A2329', accent: '#E58AA6', rule: 'rgba(110,82,88,0.18)' },
+        sunset: { name: '노을', decor: 'sun', bg: '#FBEFF3', bgTop: '#FFE6D2', text: '#35202B', accent: '#E8865A', rule: 'rgba(106,80,89,0.18)' },
+        sage: { name: '세이지', decor: 'leaves', bg: '#F4F7F2', text: '#1F2A22', accent: '#5E8C6A', rule: 'rgba(78,92,82,0.2)' },
+        lavender: { name: '라벤더', decor: 'bokeh', bg: '#F8F5FD', text: '#2A2238', accent: '#8B6FD6', rule: 'rgba(93,83,112,0.2)' },
+        dark: { name: '다크', decor: 'vignette', bg: '#121214', text: '#F5F5F7', accent: '#0A84FF', rule: 'rgba(235,235,245,0.14)', dark: true },
+        night: { name: '밤하늘', decor: 'stars', bg: '#0F1529', bgTop: '#151D38', text: '#EEF1FA', accent: '#8FA8FF', rule: 'rgba(185,192,214,0.14)', dark: true }
+    };
+    const DECOR_TILE = 1600;
+    const DECOR_SEGMENT = 2048;
+
+    function decorThemeKey() {
+        return Object.prototype.hasOwnProperty.call(DECOR_THEMES, config.decorTheme) ? config.decorTheme : 'paper';
+    }
+
+    function decorRand(seed) {
+        let s = seed >>> 0 || 1;
+        return () => {
+            s = (s * 1664525 + 1013904223) >>> 0;
+            return s / 4294967296;
+        };
+    }
+
+    function decorSparkle(ctx, x, y, s, color) {
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.moveTo(x, y - s);
+        ctx.quadraticCurveTo(x, y, x + s, y);
+        ctx.quadraticCurveTo(x, y, x, y + s);
+        ctx.quadraticCurveTo(x, y, x - s, y);
+        ctx.quadraticCurveTo(x, y, x, y - s);
+        ctx.fill();
+    }
+
+    function decorHeart(ctx, x, y, s, rot, color) {
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(rot);
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.moveTo(0, s * 0.35);
+        ctx.bezierCurveTo(-s * 1.1, -s * 0.35, -s * 0.45, -s * 1.05, 0, -s * 0.45);
+        ctx.bezierCurveTo(s * 0.45, -s * 1.05, s * 1.1, -s * 0.35, 0, s * 0.35);
+        ctx.fill();
+        ctx.restore();
+    }
+
+    function decorPetal(ctx, x, y, s, rot, color) {
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(rot);
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.moveTo(0, -s);
+        ctx.bezierCurveTo(s * 0.8, -s * 0.6, s * 0.6, s * 0.7, 0, s);
+        ctx.bezierCurveTo(-s * 0.6, s * 0.7, -s * 0.8, -s * 0.6, -s * 0.12, -s * 0.85);
+        ctx.lineTo(0, -s * 0.7);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+    }
+
+    function decorSprig(ctx, x, y, size, angle, color) {
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(angle);
+        ctx.strokeStyle = color;
+        ctx.fillStyle = color;
+        ctx.lineWidth = size * 0.025;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.quadraticCurveTo(size * 0.5, -size * 0.12, size, 0);
+        ctx.stroke();
+        for (let i = 1; i <= 5; i++) {
+            const t = i / 6;
+            const px = size * t;
+            const py = -size * 0.12 * 4 * t * (1 - t) * 0.5;
+            for (const side of [-1, 1]) {
+                ctx.save();
+                ctx.translate(px, py);
+                ctx.rotate(side * 0.75 - 0.15);
+                ctx.beginPath();
+                ctx.ellipse(size * 0.07, 0, size * 0.09 * (1.1 - t * 0.4), size * 0.035, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+        }
+        ctx.restore();
+    }
+
+    function decorStars(ctx, w, h, seed) {
+        const r = decorRand(seed * 7919 + 17);
+        const n = Math.round((w * h) / 2600);
+        for (let i = 0; i < n; i++) {
+            const x = r() * w, y = r() * h, s = 0.3 + r() * 0.7, a = 0.06 + r() * 0.22;
+            ctx.fillStyle = 'rgba(230,236,255,' + a + ')';
+            ctx.beginPath();
+            ctx.arc(x, y, s, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        const m = Math.max(2, Math.round((w * h) / 90000));
+        for (let i = 0; i < m; i++) {
+            const x = r() * w, y = r() * h, s = 2 + r() * 2.2, a = 0.16 + r() * 0.14;
+            ctx.strokeStyle = 'rgba(235,240,255,' + a + ')';
+            ctx.lineWidth = 0.7;
+            ctx.beginPath();
+            ctx.moveTo(x - s, y);
+            ctx.lineTo(x + s, y);
+            ctx.moveTo(x, y - s);
+            ctx.lineTo(x, y + s);
+            ctx.stroke();
+            ctx.fillStyle = 'rgba(245,248,255,' + (a + 0.15) + ')';
+            ctx.beginPath();
+            ctx.arc(x, y, 0.8, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        if (seed === 1) {
+            /* 첫머리 오른쪽 위 옅은 초승달 */
+            const cx = w - 44, cy = 40, rr = 11;
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(cx, cy, rr, 0, Math.PI * 2);
+            ctx.clip();
+            ctx.beginPath();
+            ctx.rect(cx - rr - 2, cy - rr - 2, rr * 2 + 4, rr * 2 + 4);
+            ctx.arc(cx + rr * 0.5, cy - rr * 0.35, rr * 0.92, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(244,238,210,0.3)';
+            ctx.fill('evenodd');
+            ctx.restore();
+        }
+    }
+
+    function decorGrain(ctx, w, h, theme, seed, amount) {
+        const r = decorRand(seed * 104729 + 3);
+        const n = Math.round((w * h) / 90 * (amount || 1));
+        for (let i = 0; i < n; i++) {
+            const a = 0.018 + r() * 0.035;
+            ctx.fillStyle = theme.dark ? 'rgba(255,255,255,' + a + ')' : 'rgba(90,70,40,' + a + ')';
+            ctx.fillRect(r() * w, r() * h, 0.6 + r() * 0.9, 0.6 + r() * 0.9);
+        }
+    }
+
+    /* 칸 하나에 흩뿌리는 무늬(seed = 칸 번호 + 1, 칸 높이 1600) */
+    function drawDecorTile(ctx, w, h, theme, seed) {
+        const r = decorRand(seed * 2654435 + 97);
+        const area = w * h;
+        switch (theme.decor) {
+            case 'stars':
+                decorStars(ctx, w, h, seed);
+                break;
+            case 'book':
+                decorGrain(ctx, w, h, theme, seed, 0.6);
+                break;
+            case 'sparkle': {
+                const n = Math.max(6, Math.round(area / 26000));
+                for (let i = 0; i < n; i++) decorSparkle(ctx, r() * w, r() * h, 2.5 + r() * 4.5, 'rgba(200,150,62,' + (0.14 + r() * 0.2) + ')');
+                for (let i = 0; i < n * 2; i++) {
+                    ctx.fillStyle = 'rgba(200,150,62,' + (0.1 + r() * 0.12) + ')';
+                    ctx.beginPath();
+                    ctx.arc(r() * w, r() * h, 0.6 + r() * 0.8, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                break;
+            }
+            case 'hearts': {
+                const n = Math.max(8, Math.round(area / 16000));
+                for (let i = 0; i < n; i++) decorHeart(ctx, r() * w, r() * h, 4 + r() * 6, (r() - 0.5) * 0.9, 'rgba(219,92,122,' + (0.12 + r() * 0.14) + ')');
+                break;
+            }
+            case 'petals': {
+                const n = Math.max(10, Math.round(area / 13000));
+                for (let i = 0; i < n; i++) decorPetal(ctx, r() * w, r() * h, 3.5 + r() * 5, r() * Math.PI * 2, 'rgba(240,140,170,' + (0.2 + r() * 0.2) + ')');
+                break;
+            }
+            case 'sun': {
+                ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+                ctx.lineCap = 'round';
+                const n = Math.max(3, Math.round(area / 90000));
+                for (let i = 0; i < n; i++) {
+                    const y = 30 + r() * (h - 60), x = r() * w * 0.8, len = 40 + r() * 70;
+                    ctx.lineWidth = 1.2 + r() * 1.4;
+                    ctx.globalAlpha = 0.5 + r() * 0.4;
+                    ctx.beginPath();
+                    ctx.moveTo(x, y);
+                    ctx.lineTo(x + len, y);
+                    ctx.stroke();
+                    ctx.beginPath();
+                    ctx.moveTo(x + len * 0.25, y + 6);
+                    ctx.lineTo(x + len * 0.85, y + 6);
+                    ctx.stroke();
+                }
+                ctx.globalAlpha = 1;
+                break;
+            }
+            case 'bokeh': {
+                const n = Math.max(4, Math.round(area / 50000));
+                for (let i = 0; i < n; i++) {
+                    const x = r() * w, y = r() * h, R = 26 + r() * 54;
+                    const g = ctx.createRadialGradient(x, y, 0, x, y, R);
+                    g.addColorStop(0, 'rgba(170,140,235,' + (0.1 + r() * 0.08) + ')');
+                    g.addColorStop(1, 'rgba(170,140,235,0)');
+                    ctx.fillStyle = g;
+                    ctx.fillRect(x - R, y - R, R * 2, R * 2);
+                }
+                for (let i = 0; i < n; i++) decorSparkle(ctx, r() * w, r() * h, 2 + r() * 3, 'rgba(139,111,214,' + (0.18 + r() * 0.15) + ')');
+                break;
+            }
+            case 'vignette':
+                decorGrain(ctx, w, h, theme, seed, 0.8);
+                break;
+        }
+    }
+
+    /* 원고 전체에 한 번 그리는 무늬(테두리 · 점 격자 · 햇무리 · 모서리 잎 · 가장자리 어둡게). from~to 밖의 점은 건너뛴다. */
+    function drawDecorPageParts(ctx, w, h, theme, from, to) {
+        switch (theme.decor) {
+            case 'book': {
+                ctx.strokeStyle = theme.rule;
+                ctx.lineWidth = 0.8;
+                ctx.strokeRect(12.5, 12.5, w - 25, h - 25);
+                ctx.lineWidth = 0.5;
+                ctx.strokeRect(16.5, 16.5, w - 33, h - 33);
+                for (const [x, y] of [[14.5, 14.5], [w - 14.5, 14.5], [14.5, h - 14.5], [w - 14.5, h - 14.5]]) {
+                    ctx.fillStyle = theme.accent;
+                    ctx.globalAlpha = 0.45;
+                    ctx.save();
+                    ctx.translate(x, y);
+                    ctx.rotate(Math.PI / 4);
+                    ctx.fillRect(-2.2, -2.2, 4.4, 4.4);
+                    ctx.restore();
+                    ctx.globalAlpha = 1;
+                }
+                break;
+            }
+            case 'dots': {
+                ctx.fillStyle = 'rgba(60,60,67,0.09)';
+                const first = 12 + Math.max(0, Math.floor((from - 12) / 18)) * 18;
+                for (let y = first; y < Math.min(h, to + 2); y += 18) {
+                    for (let x = 12; x < w; x += 18) {
+                        ctx.beginPath();
+                        ctx.arc(x, y, 0.75, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                }
+                break;
+            }
+            case 'sun': {
+                const cx = w * 0.82, cy = Math.min(h * 0.12, 90), R = Math.min(w, 420) * 0.32;
+                const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, R);
+                g.addColorStop(0, 'rgba(255,190,140,0.45)');
+                g.addColorStop(0.45, 'rgba(255,175,150,0.18)');
+                g.addColorStop(1, 'rgba(255,175,150,0)');
+                ctx.fillStyle = g;
+                ctx.fillRect(0, 0, w, Math.min(h, cy + R));
+                break;
+            }
+            case 'leaves': {
+                const c = 'rgba(94,140,106,0.22)';
+                decorSprig(ctx, w - 6, 8, 96, Math.PI * 0.78, c);
+                decorSprig(ctx, w - 2, 34, 64, Math.PI * 0.9, c);
+                decorSprig(ctx, 6, h - 8, 96, -Math.PI * 0.22, c);
+                decorSprig(ctx, 2, h - 34, 64, -Math.PI * 0.1, c);
+                break;
+            }
+            case 'vignette': {
+                const g = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.35, w / 2, h / 2, Math.max(w, h) * 0.75);
+                g.addColorStop(0, 'rgba(0,0,0,0)');
+                g.addColorStop(1, 'rgba(0,0,0,0.35)');
+                ctx.fillStyle = g;
+                ctx.fillRect(0, 0, w, h);
+                break;
+            }
+        }
+    }
+
+    /* 꾸밈 배경 전체: 바탕색 · 위쪽 물들임 · (무늬를 켜면) 칸마다 흩뿌린 무늬 + 원고 전체 무늬. 원고 px from~to만 그린다(캔버스 좌표 = 원고 좌표). */
+    function drawDecorBackground(ctx, w, h, theme, pattern, from = 0, to = h) {
+        ctx.fillStyle = theme.bg;
+        ctx.fillRect(0, from, w, Math.max(0, to - from));
+        if (theme.bgTop && from < 1400) {
+            const g = ctx.createLinearGradient(0, 0, 0, Math.min(h, 1400));
+            g.addColorStop(0, theme.bgTop);
+            g.addColorStop(1, theme.bg);
+            ctx.fillStyle = g;
+            ctx.fillRect(0, 0, w, Math.min(h, 1400));
+        }
+        if (!pattern) return;
+        for (let top = Math.floor(Math.max(0, from) / DECOR_TILE) * DECOR_TILE; top < Math.min(h, to); top += DECOR_TILE) {
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(0, top, w, Math.min(DECOR_TILE, h - top));
+            ctx.clip();
+            ctx.translate(0, top);
+            drawDecorTile(ctx, w, DECOR_TILE, theme, top / DECOR_TILE + 1);
+            ctx.restore();
+        }
+        drawDecorPageParts(ctx, w, h, theme, from, to);
+    }
+
+    /* 원고 크기의 꾸밈 그림을 2048px 조각으로 만든다(아이폰 캔버스 한도 안). 돌려주는 주소는 부른 쪽이 놓는다. */
+    async function renderDecorLayers(W, H, themeKey, pattern) {
+        const theme = DECOR_THEMES[themeKey] || DECOR_THEMES.paper;
+        const k = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+        const layers = [];
+        const urls = [];
+        for (let y0 = 0; y0 < H; y0 += DECOR_SEGMENT) {
+            const sh = Math.min(DECOR_SEGMENT, H - y0);
+            const canvas = document.createElement('canvas');
+            canvas.width = Math.max(1, Math.ceil(W * k));
+            canvas.height = Math.max(1, Math.ceil(sh * k));
+            const ctx = canvas.getContext('2d');
+            if (!ctx) break;
+            ctx.scale(k, k);
+            ctx.translate(0, -y0);
+            drawDecorBackground(ctx, W, H, theme, pattern, y0, y0 + sh);
+            const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+            canvas.width = canvas.height = 1;
+            if (!blob) continue;
+            const url = URL.createObjectURL(blob);
+            urls.push(url);
+            layers.push({ image: `url("${url}")`, size: `${W}px ${sh}px`, repeat: 'no-repeat', position: `0px ${y0}px` });
+        }
+        return { layers, urls };
+    }
+
+    let decorPreviewTimer = 0;
+    let decorPreviewGen = 0;
+    /* 미리보기 꾸밈 그림 주소(편집·설정 창을 닫으면 모두 놓는다) */
+    let decorPreviewUrls = [];
+
+    function decorPreviewKey(page) {
+        return [decorThemeKey(), config.decorPattern !== false ? 1 : 0, page.offsetWidth, page.offsetHeight].join('|');
+    }
+
+    /* applyPageBackground가 부른다: 지금 크기에 맞는 그림이 있으면 그 층, 아니면 새로 그리도록 맡기고 지난 층을 그대로 둔다(번쩍이지 않게). */
+    function decorPreviewLayers(page) {
+        const ready = page.novcapDecorPreview || null;
+        if (!ready || ready.key !== decorPreviewKey(page)) scheduleDecorPreview(page);
+        return ready ? ready.layers : [];
+    }
+
+    function scheduleDecorPreview(page) {
+        clearTimeout(decorPreviewTimer);
+        decorPreviewTimer = setTimeout(() => {
+            decorPreviewTimer = 0;
+            renderDecorPreview(page);
+        }, 120);
+    }
+
+    async function renderDecorPreview(page) {
+        if (!page?.isConnected || page !== editorPage || pageBgMode() !== 'decor' || customRoomThemeSnapshot?.active) return;
+        if (!page.offsetWidth || !page.offsetHeight) return;
+        const key = decorPreviewKey(page);
+        if (page.novcapDecorPreview?.key === key) return;
+        const gen = ++decorPreviewGen;
+        const result = await renderDecorLayers(page.offsetWidth, page.offsetHeight, decorThemeKey(), config.decorPattern !== false);
+        if (gen !== decorPreviewGen || page !== editorPage) {
+            result.urls.forEach(url => URL.revokeObjectURL(url));
+            return;
+        }
+        const old = page.novcapDecorPreview;
+        page.novcapDecorPreview = { key, layers: result.layers, urls: result.urls };
+        decorPreviewUrls.push(...result.urls);
+        applyPageBackground(page);
+        /* 새 그림이 깔린 다음에 지난 주소를 놓는다 */
+        if (old) setTimeout(() => {
+            old.urls.forEach(url => URL.revokeObjectURL(url));
+            decorPreviewUrls = decorPreviewUrls.filter(url => !old.urls.includes(url));
+        }, 1000);
+        /* 크기가 그사이 또 바뀌었으면 한 번 더 */
+        if (page.novcapDecorPreview.key !== decorPreviewKey(page)) scheduleDecorPreview(page);
+    }
+
+    function releaseDecorPreviewUrls() {
+        clearTimeout(decorPreviewTimer);
+        decorPreviewTimer = 0;
+        decorPreviewGen++;
+        decorPreviewUrls.forEach(url => URL.revokeObjectURL(url));
+        decorPreviewUrls = [];
+        if (editorPage) editorPage.novcapDecorPreview = null;
+    }
+
+    /* PDF: 저장할 원고 크기(빠진 문단을 지운 높이)로 다시 그려 그 원고에 깐다. */
+    async function paintDecorOnto(page) {
+        const result = await renderDecorLayers(page.offsetWidth, page.offsetHeight, decorThemeKey(), config.decorPattern !== false);
+        decorPreviewUrls.push(...result.urls);
+        const join = key => result.layers.map(layer => layer[key]).join(', ');
+        page.style.setProperty('background-image', join('image'));
+        page.style.setProperty('background-size', join('size'));
+        page.style.setProperty('background-repeat', join('repeat'));
+        page.style.setProperty('background-position', join('position'));
+    }
+
+    /* 테마 고르는 칸의 작은 그림(처음 보일 때 한 번만 그린다) */
+    function paintDecorTileFaces() {
+        editorOverlay?.querySelectorAll('.novcap-decor-tile canvas:not([data-drawn])').forEach(canvas => {
+            const theme = DECOR_THEMES[canvas.closest('.novcap-decor-tile').dataset.decor];
+            const ctx = canvas.getContext('2d');
+            if (!theme || !ctx) return;
+            ctx.scale(2, 2);
+            drawDecorBackground(ctx, 52, 38, theme, true);
+            ctx.fillStyle = theme.text;
+            ctx.globalAlpha = 0.55;
+            ctx.fillRect(9, 14, 30, 2);
+            ctx.fillRect(9, 20, 34, 2);
+            ctx.fillRect(9, 26, 22, 2);
+            ctx.globalAlpha = 1;
+            canvas.setAttribute('data-drawn', '');
+        });
+    }
+
+    function novcapDecorTiles() {
+        return Object.entries(DECOR_THEMES).map(([key, theme]) =>
+            `<button type="button" class="novcap-decor-tile" role="radio" aria-checked="false" data-decor="${key}" aria-label="${theme.name}"><canvas width="104" height="76" aria-hidden="true"></canvas><span aria-hidden="true">${theme.name}</span></button>`).join('');
+    }
+
+    /* 테마를 고르면 꾸밈으로 바꾸고 종이색·글자색을 그 테마 색으로 맞춘다(글자색은 그 뒤에 따로 바꿀 수 있다). */
+    function pickDecorTheme(key) {
+        if (pageBgLocked()) return;
+        const themeKey = Object.prototype.hasOwnProperty.call(DECOR_THEMES, key) ? key : 'paper';
+        const theme = DECOR_THEMES[themeKey];
+        /* 2.5.7: 다른 배경에서 꾸밈으로 들어올 때 쓰던 종이색·글자색을 기억한다(꾸밈에서 나오면 되돌린다). */
+        if (pageBgMode() !== 'decor') config.plainColors = { bg: normalizeHexColor(config.bgColor, DEFAULT_CONFIG.bgColor), text: normalizeHexColor(config.textColor, DEFAULT_CONFIG.textColor) };
+        config.decorTheme = themeKey;
+        config.pageBgMode = 'decor';
+        setEditorColors(theme.bg, theme.text);
+    }
+
+    /* 설정 창 미리보기: 상자 크기로 작게 그린다 */
+    let decorSettingsPv = { key: '', url: '' };
+    function decorSettingsPreviewUrl(box) {
+        const w = Math.max(1, Math.round(box.clientWidth || 280));
+        const h = Math.max(1, Math.round(box.clientHeight || 200));
+        const key = [decorThemeKey(), config.decorPattern !== false ? 1 : 0, w, h].join('|');
+        if (decorSettingsPv.key === key) return decorSettingsPv.url;
+        const canvas = document.createElement('canvas');
+        canvas.width = w * 2;
+        canvas.height = h * 2;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return '';
+        ctx.scale(2, 2);
+        drawDecorBackground(ctx, w, h, DECOR_THEMES[decorThemeKey()], config.decorPattern !== false);
+        decorSettingsPv = { key, url: canvas.toDataURL('image/png') };
+        return decorSettingsPv.url;
+    }
     /* ── 화면 ── */
     function setPageBgMode(mode) {
         if (pageBgLocked() || !PAGE_BG_MODES.includes(mode)) return;
@@ -5013,7 +5593,15 @@
             syncPageBgControls();
             return;
         }
+        /* 2.5.6: 꾸밈은 지금 고른 테마의 종이색·글자색까지 같이 바꾼다 */
+        if (mode === 'decor') {
+            pickDecorTheme(config.decorTheme);
+            return;
+        }
+        const leavingDecor = pageBgMode() === 'decor';
         config.pageBgMode = mode;
+        /* 2.5.7: 꾸밈에서 나오면 꾸밈에 들어가기 전 종이색·글자색으로 돌아간다(다시 꾸밈을 누르면 테마 색). */
+        if (leavingDecor && config.plainColors) setEditorColors(config.plainColors.bg, config.plainColors.text);
         syncPageBgControls();
         refreshPageBackground();
         if (mode !== 'photo') return;
@@ -5086,6 +5674,19 @@
             if (button.disabled !== locked) button.disabled = locked;
         });
         editorOverlay.querySelectorAll('.novcap-bg-panel').forEach(panel => setAttrIfChanged(panel, 'data-open', String(panel.dataset.bgPanel === mode)));
+        /* 2.5.6 꾸밈: 고른 테마 · 무늬 스위치 · 배경색 칸(꾸밈이면 테마가 정하므로 숨긴다) */
+        const decorKey = decorThemeKey();
+        editorOverlay.querySelectorAll('.novcap-decor-tile').forEach(tile => {
+            setAttrIfChanged(tile, 'aria-checked', String(mode === 'decor' && tile.dataset.decor === decorKey));
+            if (tile.disabled !== locked) tile.disabled = locked;
+        });
+        const decorSwitch = editorOverlay.querySelector('#novcap-decor-pattern');
+        if (decorSwitch) {
+            if (decorSwitch.checked !== (config.decorPattern !== false)) decorSwitch.checked = config.decorPattern !== false;
+            if (decorSwitch.disabled !== locked) decorSwitch.disabled = locked;
+        }
+        setHiddenIfChanged(editorOverlay.querySelector('#novcap-bg-swatches'), mode === 'decor');
+        paintDecorTileFaces();
         /* 무늬 */
         const type = PAGE_PATTERN_TYPES.includes(config.patternType) ? config.patternType : 'horizontal';
         editorOverlay.querySelectorAll('.novcap-pattern-tile').forEach(tile => {
@@ -5173,6 +5774,9 @@
                 layers = pagePhotoLayers(photo, pageW, '--pv-photo', kPhoto);
                 photoUrl = photo.url;
             }
+        } else if (mode === 'decor') {
+            const url = decorSettingsPreviewUrl(box);
+            if (url) layers = [{ image: 'url("' + url + '")', size: '100% 100%', repeat: 'no-repeat', position: '0px 0px' }];
         }
         const join = key => layers.map(layer => layer[key]).join(', ');
         setStyleVarIfChanged(box, '--pv-photo', photoUrl ? `url("${photoUrl}")` : 'none');
@@ -5202,6 +5806,7 @@
 
     /* 편집·설정 창을 닫으면 사진 주소(작은 그림·사진·흐림)를 모두 놓는다. 다음에 열면 DB에서 다시 읽는다. */
     function releasePagePhotoUrls() {
+        releaseDecorPreviewUrls();
         settingsPvWidthObserver?.disconnect();
         settingsPvWidthObserver = null;
         settingsPvWidthBox = null;
@@ -5232,6 +5837,13 @@
     function bindPageBgUi() {
         const overlay = editorOverlay;
         overlay.querySelectorAll('[data-bg-mode]').forEach(button => button.addEventListener('click', () => setPageBgMode(button.dataset.bgMode)));
+        /* 2.5.6 꾸밈 테마 · 무늬 */
+        overlay.querySelectorAll('.novcap-decor-tile').forEach(tile => tile.addEventListener('click', () => pickDecorTheme(tile.dataset.decor)));
+        overlay.querySelector('#novcap-decor-pattern')?.addEventListener('change', event => {
+            if (pageBgLocked()) return;
+            config.decorPattern = event.target.checked;
+            refreshPageBackground();
+        });
         overlay.querySelectorAll('.novcap-pattern-tile').forEach(tile => tile.addEventListener('click', () => {
             if (pageBgLocked()) return;
             if (config.patternType !== tile.dataset.pattern) {
@@ -5342,27 +5954,35 @@
     }
 
     const CAT_KEYS = NOVCAP_CATS.map(cat => cat.key);
+    /* 2.5.7 내 색 칸 안내(스타일 · 펜 · 쪽지 ⓘ) */
+    const USER_COLOR_HELP = '+로 고른 색은 칸으로 남아요(줄마다 8개). 지우려면 PC는 색에 마우스를 올리고, 폰은 길게 눌러 ×를 눌러요.';
     const CAT_HELP = {
         type: ['원고 폭을 바꾸면 줄바꿈을 다시 맞춰요.', '문단 제외를 켜고 원고의 문단을 누르면 빠지고, 다시 누르면 돌아와요.', '익명 치환은 왼쪽 말을 오른쪽 말로 바꿔요. 적용한 뒤엔 저절로 돌아가지 않아요.',
             '낱말 단위로 바꾸기를 켜면 다른 낱말 속 글자(들린다의 린)는 그대로 두고, 은/는·이/가 같은 조사도 바꾼 말에 맞춰요.',
             '그대로 둔 곳이 있으면 적용 알림의 보기로 하나씩 살펴보고, 이름이면 그 곳만 바꿀 수 있어요.',
+            '가릴 말은 Enter로 한 줄에 여러 개 넣어요. 여러 줄을 붙여 넣어도 돼요.',
+            '문단 제외를 켜고 상태창을 누르면 그 줄만 빠지고, INFO 칸을 누르면 상태창이 통째로 빠져요.',
+            '상태창 줄 고르기를 켜고 시작 줄과 끝 줄을 누른 뒤 빼기나 남기기를 눌러요. 한 줄만 고르려면 한 번만 눌러요.',
             '글꼴 추가에서 PC에 설치된 글꼴이나 웹폰트를 내 글꼴로 넣어요.', '자간과 가름선 모양은 기본 조판에만 써요.', '「테마에서도 내 글꼴 쓰기」를 켜면 고른 글씨체를 테마 글에도 써요.'],
-        pen: ['색을 고른 뒤 시작 단어와 끝 단어를 차례로 누르면 칠해져요. 같은 단어를 두 번 누르면 그 단어만 칠해요.', 'PC에서는 원고를 드래그해도 돼요. 단어 단위를 켜면 드래그가 단어 끝까지 맞춰져요.', '지우기를 켜고 칠한 곳을 누르거나 드래그하면 지워져요.'],
-        note: ['쪽지 편집을 켜고 원고의 빈 곳을 누르면 쪽지가 붙어요. 새 쪽지는 보이는 화면 가운데에 붙어요.', '쪽지를 끌면 옮겨지고, 오른쪽 아래 손잡이로 폭을, 둥근 손잡이로 기울기를 바꿔요.', '쪽지는 20개까지 붙일 수 있어요.'],
+        pen: ['색을 고른 뒤 시작 단어와 끝 단어를 차례로 누르면 칠해져요. 같은 단어를 두 번 누르면 그 단어만 칠해요.', 'PC에서는 원고를 드래그해도 돼요. 단어 단위를 켜면 드래그가 단어 끝까지 맞춰져요.', '지우기를 켜고 칠한 곳을 누르거나 드래그하면 지워져요.', '가리기는 저장 그림과 PDF에 글자를 남기지 않아요. 모자이크는 칸만, 투명은 빈자리만 보여요.', USER_COLOR_HELP],
+        note: ['쪽지 편집을 켜고 원고의 빈 곳을 누르면 쪽지가 붙어요. 새 쪽지는 보이는 화면 가운데에 붙어요.', '쪽지를 끌면 옮겨지고, 오른쪽 아래 손잡이로 폭을, 둥근 손잡이로 기울기를 바꿔요.', '쪽지는 20개까지 붙일 수 있어요.', USER_COLOR_HELP],
         /* 굵은 강조 안내는 아래 2.3.0 줄(#novcap-emphasis-help)이 맡는다 */
         style: ['배경은 단색·무늬·사진 중 하나를 골라요. 무늬와 사진은 기본 조판에만 써요.', '체크는 간격이 한 칸 크기예요. 굵기는 격자·줄무늬에만 써요.',
             '선명도를 낮추면 사진이 배경색에 옅게 섞여요.', '사진은 긴 변 2048px로 줄여 이 브라우저에만 보관해요. 크랙 사이트 데이터를 지우면 함께 지워져요.',
-            '흐림은 *로 감싼 지문을 옅게, 이탤릭은 기울여 보여 줘요.'],
-        show: ['Custom Room 테마는 방의 배경·버블·대사 장식을 그대로 담아요.', '유저 입력을 끄면 캐릭터 답변만 담아요.', 'Custom Room 테마와 유저 입력은 다음 캡처부터 적용돼요.']
+            '흐림은 *로 감싼 지문을 옅게, 이탤릭은 기울여 보여 줘요.',
+            '꾸밈은 종이색·글자색과 잔잔한 무늬를 한 번에 바꿔요. 다른 배경으로 돌아오면 꾸밈 전 색으로 돌아가요. 무늬를 끄면 색만 남아요. 테마는 크랙 하트카메라 캡처(muz)에서 가져왔어요.', USER_COLOR_HELP,
+            '코드블럭 모양은 고르지 않으면 지금 모양 그대로예요. 고르면 테마로 찍을 때도 그 모양이 돼요.', '백틱 글자 테두리는 `로 감싼 글자에 줄마다 테두리를 둘러요.'],
+        show: ['Custom Room 테마는 방의 배경·버블·대사 장식을 그대로 담아요.', '유저 입력을 끄면 캐릭터 답변만 담아요.', 'Custom Room 테마와 유저 입력은 다음 캡처부터 적용돼요.', '로그 정보는 말풍선 아래에 작게 들어가요. 모델은 AI 답변에만 붙어요.']
     };
     const CAT_HELP_SETTINGS = {
         type: ['원고 폭을 바꾸면 줄바꿈을 다시 맞춰요.', '익명 치환은 왼쪽 말을 오른쪽 말로 바꿔요. 여기 적은 줄은 새 캡처마다 미리 채워져요.',
+            '가릴 말은 Enter로 한 줄에 여러 개 넣어요. 여러 줄을 붙여 넣어도 돼요.',
             '낱말 단위로 바꾸기를 켜면 다른 낱말 속 글자(들린다의 린)는 그대로 두고, 은/는·이/가 같은 조사도 바꾼 말에 맞춰요.',
             '글꼴 추가에서 PC에 설치된 글꼴이나 웹폰트를 내 글꼴로 넣어요.', '자간과 가름선 모양은 기본 조판에만 써요.', '「테마에서도 내 글꼴 쓰기」를 켜면 고른 글씨체를 테마 글에도 써요.'],
-        pen: ['PC에서 드래그할 때 단어 단위를 켜면 단어 끝까지 맞춰 칠해요.'],
-        note: ['새로 붙이는 쪽지가 이 모양으로 시작해요.', '원고의 쪽지를 끌면 옮겨지고, 누르면 편집 화면에서 고칠 수 있어요.'],
+        pen: ['PC에서 드래그할 때 단어 단위를 켜면 단어 끝까지 맞춰 칠해요.', USER_COLOR_HELP],
+        note: ['새로 붙이는 쪽지가 이 모양으로 시작해요.', '원고의 쪽지를 끌면 옮겨지고, 누르면 편집 화면에서 고칠 수 있어요.', USER_COLOR_HELP],
         style: CAT_HELP.style,
-        show: ['Custom Room 테마는 방의 배경·버블·대사 장식을 그대로 담아요.', '유저 입력을 끄면 캐릭터 답변만 담아요.']
+        show: ['Custom Room 테마는 방의 배경·버블·대사 장식을 그대로 담아요.', '유저 입력을 끄면 캐릭터 답변만 담아요.', '로그 정보는 말풍선 아래에 작게 들어가요. 모델은 AI 답변에만 붙어요.']
     };
     /* 스타일 ⓘ의 2.3.0 줄(#novcap-emphasis-help). 흐림·기울임 설명은 CAT_HELP.style 첫 줄이 맡으므로 이 줄은 굵은 강조만 말한다(F7, D 문구). */
     const EMPHASIS_HELP_TEXT = '굵은 강조는 그대로 남아요.';
@@ -5850,7 +6470,7 @@
             height: 18px;
         }
 
-        .novcap-preview-page.novcap-hide-images img,
+        .novcap-preview-page.novcap-hide-images img:not(.novcap-log-icon),
         .novcap-preview-page.novcap-hide-images .novcap-svg-image,
         .novcap-preview-page.novcap-hide-images .novcap-youtube-card {
             display: none !important;
@@ -6014,7 +6634,298 @@
             cursor: grab !important;
         }
 
-        .novcap-underline-layer {
+        /* ── 2.5.5 문장 가리기 ──
+           글자는 원고에 남겨 두되(되돌리기·지우기용) 저장 그림과 PDF에는 그리지 않는다. */
+        :is(#novcap-live-preview-page, #novcap-capture-page) [data-novcap-mosaic="pattern"] {
+            color: transparent !important;
+            -webkit-text-fill-color: transparent !important;
+            text-shadow: none !important;
+            background-color: #666 !important;
+            background-image: linear-gradient(90deg, #777 50%, transparent 50%), linear-gradient(0deg, #444 50%, #999 50%) !important;
+            background-size: .4em .4em !important;
+            border-radius: 2px;
+            padding: .06em 0;
+            -webkit-box-decoration-break: clone;
+            box-decoration-break: clone;
+        }
+
+        .novcap-preview-page [data-novcap-mosaic="blank"] {
+            opacity: 0 !important;
+        }
+
+        /* 가리기 펜일 때만 비워 둔 자리가 옅게 보인다(저장에는 들어가지 않는다). */
+        .novcap-preview-page.novcap-mosaic-tool [data-novcap-mosaic="blank"] {
+            opacity: 1 !important;
+            color: transparent !important;
+            -webkit-text-fill-color: transparent !important;
+            text-shadow: none !important;
+            background-color: rgba(128, 128, 128, .18) !important;
+            border-radius: 2px;
+            -webkit-box-decoration-break: clone;
+            box-decoration-break: clone;
+        }
+
+        .novcap-mosaic-rect {
+            position: absolute;
+            pointer-events: none;
+            border-radius: 2px;
+            background-color: #666;
+            background-image: linear-gradient(90deg, #777 50%, transparent 50%), linear-gradient(0deg, #444 50%, #999 50%);
+            background-repeat: repeat;
+        }
+
+        /* ── 2.5.5 상태창 줄 고르기 ── */
+        #novcap-live-preview-page [data-novcap-code-picked] {
+            display: block;
+            background-color: rgba(214, 170, 60, .28) !important;
+            box-shadow: inset 2px 0 0 rgba(160, 110, 20, .85) !important;
+            border-radius: 3px;
+            padding-left: 8px !important;
+            margin-left: -8px !important;
+        }
+
+        #novcap-live-preview-page [data-novcap-code-picked] span:not([data-novcap-highlight]):not([data-novcap-mosaic]) {
+            background-color: transparent !important;
+        }
+
+        /* ── 2.5.5 로그 정보(생성 시각 · 모델) ── */
+        .novcap-log-footer {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            width: 100%;
+            flex-basis: 100%;
+            margin-top: 12px;
+            min-height: 22px;
+            box-sizing: border-box;
+            font-size: 11px;
+            line-height: 1;
+            letter-spacing: 0;
+            color: inherit;
+            opacity: .65;
+            break-inside: avoid;
+        }
+
+        .novcap-log-model {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            margin-left: auto;
+            min-width: 0;
+        }
+
+        .novcap-preview-page img.novcap-log-icon {
+            display: block;
+            flex: none;
+            width: 20px;
+            height: 20px;
+            margin: 0;
+            border-radius: 0;
+        }
+
+        /* ── 2.5.5 백틱 글자 줄마다 테두리 ── */
+        .novcap-preview-page.novcap-code-border :is(.novcap-novel-content, [data-novcap-content-root]) code:not(pre code) {
+            font-family: inherit !important;
+            border: 1px solid currentColor !important;
+            border-radius: .2em !important;
+            padding: .05em .28em !important;
+            -webkit-box-decoration-break: clone;
+            box-decoration-break: clone;
+        }
+
+        /* ── 2.5.5 코드블럭 디자인(고르지 않으면 이 규칙이 하나도 닿지 않는다) ── */
+        .novcap-code-dots {
+            display: none !important;
+        }
+
+        .novcap-preview-page[data-novcap-code-design] .wrtn-codeblock {
+            border: 0 !important;
+            border-radius: 0 !important;
+            margin: 1.5em 0 !important;
+            padding: 0 !important;
+            box-shadow: none !important;
+            background: none !important;
+        }
+
+        .novcap-preview-page[data-novcap-code-design] .wrtn-codeblock > [data-novcap-code-head] {
+            display: block !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            background: none !important;
+            border: 0 !important;
+            font-size: .72em !important;
+            line-height: 1.4 !important;
+            text-transform: none !important;
+            font-family: inherit !important;
+        }
+
+        .novcap-preview-page[data-novcap-code-design] .wrtn-codeblock > [data-novcap-code-head] > :not(span):not(.novcap-code-dots) {
+            display: none !important;
+        }
+
+        .novcap-preview-page[data-novcap-code-design] .wrtn-codeblock > [data-novcap-code-head] span {
+            color: inherit !important;
+            font: inherit !important;
+            letter-spacing: inherit !important;
+            text-transform: inherit !important;
+            background: none !important;
+        }
+
+        .novcap-preview-page[data-novcap-code-design] .wrtn-codeblock > [data-novcap-code-empty] {
+            display: none !important;
+        }
+
+        .novcap-preview-page[data-novcap-code-design] .wrtn-codeblock > :not([data-novcap-code-head]) {
+            padding: 0 !important;
+            margin: 0 !important;
+            background: none !important;
+            border: 0 !important;
+            box-shadow: none !important;
+            overflow: visible !important;
+            max-height: none !important;
+        }
+
+        .novcap-preview-page[data-novcap-code-design] .wrtn-codeblock pre,
+        .novcap-preview-page[data-novcap-code-design] .wrtn-codeblock code {
+            background: none !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            border: 0 !important;
+            color: inherit !important;
+            white-space: pre-wrap !important;
+            overflow: visible !important;
+            line-height: 1.72 !important;
+        }
+
+        .novcap-preview-page[data-novcap-code-design] .wrtn-codeblock pre {
+            font-size: .94em !important;
+        }
+
+        .novcap-preview-page[data-novcap-code-design] .wrtn-codeblock code {
+            font-size: 1em !important;
+        }
+
+        .novcap-preview-page[data-novcap-code-design] .wrtn-codeblock pre span:not([data-novcap-highlight]):not([data-novcap-mosaic]):not([data-novcap-code-picked]) {
+            background: none !important;
+            color: inherit !important;
+        }
+
+        /* 카드 */
+        .novcap-preview-page[data-novcap-code-design="card"] .wrtn-codeblock {
+            padding: 14px 18px 16px !important;
+            border-radius: 14px !important;
+            background: rgba(var(--nov-code-t), .065) !important;
+        }
+
+        .novcap-preview-page[data-novcap-code-design="card"] .wrtn-codeblock > [data-novcap-code-head] {
+            font-weight: 600;
+            color: rgba(var(--nov-code-t), .55) !important;
+            margin-bottom: .4em !important;
+        }
+
+        .novcap-preview-page[data-novcap-code-design="card"] .wrtn-codeblock pre,
+        .novcap-preview-page[data-novcap-code-design="card"] .wrtn-codeblock code {
+            font-family: inherit !important;
+        }
+
+        /* 창 */
+        .novcap-preview-page[data-novcap-code-design="window"] .wrtn-codeblock {
+            border-radius: 12px !important;
+            overflow: hidden !important;
+            background: rgb(var(--nov-code-wb)) !important;
+            color: rgb(var(--nov-code-wf)) !important;
+        }
+
+        .novcap-preview-page[data-novcap-code-design="window"] .wrtn-codeblock > [data-novcap-code-head],
+        .novcap-preview-page[data-novcap-code-design="window"] .wrtn-codeblock > [data-novcap-code-empty] {
+            display: flex !important;
+            justify-content: flex-start !important;
+            align-items: center;
+            padding: 10px 14px !important;
+            background: rgba(var(--nov-code-wf), .08) !important;
+            color: rgba(var(--nov-code-wf), .7) !important;
+            letter-spacing: .05em;
+        }
+
+        .novcap-preview-page[data-novcap-code-design="window"] .wrtn-codeblock .novcap-code-dots {
+            display: flex !important;
+            flex: none;
+            gap: 5px;
+            margin-right: 12px;
+        }
+
+        .novcap-preview-page[data-novcap-code-design="window"] .novcap-code-dots b {
+            display: block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: rgba(var(--nov-code-wf), .5);
+        }
+
+        .novcap-preview-page[data-novcap-code-design="window"] .novcap-code-dots b + b {
+            background: rgba(var(--nov-code-wf), .32);
+        }
+
+        .novcap-preview-page[data-novcap-code-design="window"] .novcap-code-dots b + b + b {
+            background: rgba(var(--nov-code-wf), .18);
+        }
+
+        .novcap-preview-page[data-novcap-code-design="window"] .wrtn-codeblock pre {
+            padding: 12px 16px 15px !important;
+        }
+
+        /* 코너 */
+        .novcap-preview-page[data-novcap-code-design="corner"] .wrtn-codeblock {
+            --nov-code-c: rgba(var(--nov-code-t), .72);
+            padding: 16px 20px 18px !important;
+            background:
+                linear-gradient(var(--nov-code-c), var(--nov-code-c)) left top / 16px 2px no-repeat,
+                linear-gradient(var(--nov-code-c), var(--nov-code-c)) left top / 2px 16px no-repeat,
+                linear-gradient(var(--nov-code-c), var(--nov-code-c)) right top / 16px 2px no-repeat,
+                linear-gradient(var(--nov-code-c), var(--nov-code-c)) right top / 2px 16px no-repeat,
+                linear-gradient(var(--nov-code-c), var(--nov-code-c)) left bottom / 16px 2px no-repeat,
+                linear-gradient(var(--nov-code-c), var(--nov-code-c)) left bottom / 2px 16px no-repeat,
+                linear-gradient(var(--nov-code-c), var(--nov-code-c)) right bottom / 16px 2px no-repeat,
+                linear-gradient(var(--nov-code-c), var(--nov-code-c)) right bottom / 2px 16px no-repeat,
+                linear-gradient(rgba(var(--nov-code-t), .04), rgba(var(--nov-code-t), .04)) !important;
+        }
+
+        .novcap-preview-page[data-novcap-code-design="corner"] .wrtn-codeblock > [data-novcap-code-head] {
+            letter-spacing: .24em;
+            text-transform: uppercase !important;
+            color: rgba(var(--nov-code-t), .62) !important;
+            margin-bottom: .7em !important;
+        }
+
+        /* 영수증 */
+        .novcap-preview-page[data-novcap-code-design="receipt"] .wrtn-codeblock {
+            padding: 14px 18px 14px !important;
+            border-top: 2px dashed rgba(var(--nov-code-t), .42) !important;
+            border-bottom: 2px dashed rgba(var(--nov-code-t), .42) !important;
+            background: rgba(var(--nov-code-t), .03) !important;
+        }
+
+        .novcap-preview-page[data-novcap-code-design="receipt"] .wrtn-codeblock > [data-novcap-code-head] {
+            text-align: center;
+            letter-spacing: .36em;
+            text-transform: uppercase !important;
+            color: rgba(var(--nov-code-t), .7) !important;
+            margin-bottom: .8em !important;
+        }
+
+        .novcap-preview-page[data-novcap-code-design="receipt"] .wrtn-codeblock::after {
+            content: "* * *";
+            display: block;
+            text-align: center;
+            margin-top: .5em;
+            letter-spacing: .3em;
+            color: rgba(var(--nov-code-t), .45);
+            font-size: .8em;
+        }
+
+        .novcap-underline-layer,
+        .novcap-mosaic-layer {
             position: absolute;
             inset: 0;
             z-index: 3;
@@ -8306,6 +9217,61 @@
             height: 28px;
         }
 
+        /* 2.5.7 내 색 칸: + 앞에 쌓이고 넘치면 다음 줄로. ×는 PC는 올리면, 폰은 길게 누르면 보인다 */
+        .novcap-swatches:has(> .novcap-sw-user) {
+            flex-wrap: wrap;
+        }
+
+        .novcap-ui .novcap-sw-user {
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+
+        .novcap-ui .novcap-sw-user > .novcap-sw-x {
+            position: absolute;
+            top: -6px;
+            right: -6px;
+            z-index: 2;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-sizing: border-box;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: #1c1c1f;
+            border: 1.5px solid #fff;
+            box-shadow: 0 1px 4px rgba(0,0,0,.4);
+            opacity: 0;
+            transform: scale(.5);
+            pointer-events: none;
+            transition: opacity 140ms var(--novcap-ease-out), transform 240ms cubic-bezier(.34,1.56,.64,1);
+        }
+
+        .novcap-ui .novcap-sw-user > .novcap-sw-x svg {
+            display: block !important;
+            width: 9px !important;
+            height: 9px !important;
+            stroke: #fff !important;
+            opacity: 1 !important;
+        }
+
+        @media (hover: hover) {
+            .novcap-ui .novcap-sw-user:not(:disabled):hover > .novcap-sw-x {
+                opacity: 1;
+                transform: scale(1);
+                pointer-events: auto;
+            }
+        }
+
+        .novcap-ui .novcap-sw-user.is-armed > .novcap-sw-x,
+        .novcap-ui .novcap-sw-user:focus-visible > .novcap-sw-x {
+            opacity: 1;
+            transform: scale(1);
+            pointer-events: auto;
+        }
+
         /* 조판: 문단 제외 */
         .novcap-tool-card {
             display: flex;
@@ -8364,7 +9330,7 @@
         .novcap-mask-cols {
             height: 18px;
             display: grid;
-            grid-template-columns: minmax(0, 1fr) 32px minmax(0, 1fr) 32px;
+            grid-template-columns: minmax(0, 1.7fr) 28px minmax(0, 1fr) 28px;
             gap: 6px;
             font-size: 12px;
             line-height: 18px;
@@ -8381,24 +9347,25 @@
         }
 
         .novcap-mask-row {
-            height: 50px;
+            min-height: 50px;
             margin: 0 -3px;
             padding: 0 3px;
             overflow: hidden;
         }
 
         .novcap-mask-row[data-leaving] {
-            height: 0;
+            height: 0 !important;
+            min-height: 0 !important;
             opacity: 0;
         }
 
         .novcap-mask-grid {
-            height: 44px;
-            margin-top: 3px;
+            min-height: 44px;
+            margin: 3px 0;
             display: grid;
-            grid-template-columns: minmax(0, 1fr) 32px minmax(0, 1fr) 32px;
+            grid-template-columns: minmax(0, 1.7fr) 28px minmax(0, 1fr) 28px;
             gap: 6px;
-            align-items: center;
+            align-items: start;
         }
 
         .novcap-ui .novcap-mask-row .novcap-input {
@@ -8422,7 +9389,7 @@
 
         .novcap-ui .novcap-mask-swap,
         .novcap-ui .novcap-mask-remove {
-            width: 32px;
+            width: 28px;
             height: 40px;
             border-radius: 10px;
             color: var(--nc-text-2);
@@ -9689,7 +10656,7 @@
             }
             .novcap-mask-cols,
             .novcap-mask-grid {
-                grid-template-columns: minmax(0, 1fr) 44px minmax(0, 1fr) 44px;
+                grid-template-columns: minmax(0, 1.5fr) 36px minmax(0, 1fr) 36px;
             }
             .novcap-ui .novcap-mask-row .novcap-input {
                 height: 44px;
@@ -11007,7 +11974,7 @@
         }
 
         /* 익명 치환 줄 더하기·지우기(D-spec §7.2.9): 줄은 제자리에서 자라거나 접히고, 안쪽 칸만 살짝 내려온다. */
-        @keyframes novcap-row-in { from { height: 0; opacity: 0; } }
+        @keyframes novcap-row-in { from { height: 0; min-height: 0; opacity: 0; } to { height: 50px; min-height: 50px; opacity: 1; } }
         @keyframes novcap-row-slide { from { transform: translateY(-6px); } }
         .novcap-mask-row[data-new] {
             animation: novcap-row-in 240ms var(--novcap-ease-out) backwards;
@@ -11416,7 +12383,7 @@
             }
             .novcap-mask-cols,
             .novcap-mask-grid {
-                grid-template-columns: minmax(0, 1fr) 44px minmax(0, 1fr) 44px;
+                grid-template-columns: minmax(0, 1.5fr) 36px minmax(0, 1fr) 36px;
             }
             .novcap-ui .novcap-mask-row .novcap-input {
                 height: 44px;
@@ -11863,6 +12830,284 @@
 
         #novcap-editor-overlay[data-novcap-mode="settings"] .novcap-div-label {
             margin-top: 16px;
+        }
+
+        /* ── 2.5.5 익명 치환: 한 줄에 여러 이름 ── */
+        .novcap-mask-from-field {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            min-width: 0;
+            min-height: 40px;
+            padding: 4px 6px;
+            align-items: center;
+            box-sizing: border-box;
+            border-radius: 10px;
+            border: 1px solid var(--nc-input-border);
+            background-color: var(--nc-input-bg);
+            cursor: text;
+            transition: border-color var(--novcap-dur-micro) var(--novcap-ease-out), box-shadow var(--novcap-dur-micro) var(--novcap-ease-out);
+        }
+
+        .novcap-mask-from-field:focus-within {
+            border-color: var(--nc-focus);
+            box-shadow: 0 0 0 3px var(--nc-soft-2);
+        }
+
+        .novcap-mask-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 2px;
+            max-width: 100%;
+            min-width: 0;
+            height: 28px;
+            padding: 0 2px 0 8px;
+            border-radius: 8px;
+            background: var(--nc-chip-bg);
+            color: var(--nc-chip-fg);
+            font-size: 13px;
+            font-weight: 600;
+            cursor: default;
+        }
+
+        .novcap-mask-chip-text {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .novcap-ui .novcap-mask-chip-x {
+            flex: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 22px;
+            height: 24px;
+            border-radius: 6px;
+            color: var(--nc-text-2);
+        }
+
+        .novcap-ui .novcap-mask-typer {
+            flex: 1 1 56px;
+            min-width: 56px;
+            width: 56px;
+            height: 28px;
+            padding: 0 2px;
+            border: 0;
+            outline: none;
+            background: none;
+            box-shadow: none;
+            color: var(--nc-text);
+            font-size: 13px;
+        }
+
+        .novcap-ui .novcap-mask-swap[aria-disabled="true"] {
+            opacity: .3;
+            pointer-events: none;
+        }
+
+        @media (max-width: 700px), (pointer: coarse) {
+            .novcap-ui .novcap-mask-typer {
+                font-size: 16px;
+            }
+            .novcap-ui .novcap-mask-swap,
+            .novcap-ui .novcap-mask-remove {
+                width: 36px;
+            }
+        }
+
+        /* ── 2.5.5 상태창 줄 고르기 칸 ── */
+        #novcap-code-pick-row {
+            margin-top: 8px;
+        }
+
+        .novcap-code-actions {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 8px;
+            margin-top: 8px;
+        }
+
+        .novcap-code-actions[hidden] {
+            display: none;
+        }
+
+        .novcap-ui .novcap-code-actions .novcap-btn-toggle {
+            margin-top: 0;
+        }
+
+        .novcap-ui .novcap-code-actions .novcap-btn[aria-disabled="true"] {
+            opacity: .45;
+            pointer-events: none;
+        }
+
+        /* ── 2.5.5 가리기 견본 ── */
+        .novcap-sample-mosaic {
+            color: transparent;
+            border-radius: 2px;
+            padding: .06em 0;
+            background-color: #666;
+            background-image: linear-gradient(90deg, #777 50%, transparent 50%), linear-gradient(0deg, #444 50%, #999 50%);
+            background-size: .4em .4em;
+            transition: background-color var(--novcap-dur-micro) var(--novcap-ease-out);
+        }
+
+        #novcap-mosaic-sample[data-style="blank"] .novcap-sample-mosaic {
+            background: none;
+            box-shadow: inset 0 0 0 1px rgba(58, 38, 25, .22);
+            border-radius: 3px;
+        }
+
+        /* ── 2.5.5 코드블럭 모양 고르기 ── */
+        .novcap-code-tiles {
+            margin-top: 6px;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+
+        .novcap-ui .novcap-code-tile {
+            flex: 0 0 52px;
+            width: 52px;
+            height: 36px;
+            border-radius: 10px;
+            color: var(--nc-text-2);
+        }
+
+        .novcap-ui .novcap-code-tile > span {
+            position: relative;
+            width: 46px;
+            height: 30px;
+            border-radius: 8px;
+            background-color: var(--nc-card-bg);
+        }
+
+        .novcap-ui .novcap-code-tile[aria-checked="true"] {
+            color: var(--nc-text);
+        }
+
+        .novcap-ui .novcap-code-tile .novcap-code-shape {
+            position: relative;
+            display: block;
+            width: 30px;
+            height: 18px;
+            box-sizing: border-box;
+        }
+
+        .novcap-code-tile[data-code-design="plain"] .novcap-code-shape {
+            border: 1px solid currentColor;
+            border-radius: 3px;
+            opacity: .6;
+            background: linear-gradient(currentColor, currentColor) 0 4px / 100% 1px no-repeat;
+        }
+
+        .novcap-code-tile[data-code-design="card"] .novcap-code-shape {
+            border-radius: 5px;
+            background: currentColor;
+            opacity: .26;
+        }
+
+        .novcap-code-tile[data-code-design="window"] .novcap-code-shape {
+            border-radius: 4px;
+            background: currentColor;
+            opacity: .8;
+        }
+
+        .novcap-code-tile[data-code-design="window"] .novcap-code-shape::before {
+            content: "";
+            position: absolute;
+            left: 3px;
+            top: 3px;
+            width: 3px;
+            height: 3px;
+            border-radius: 50%;
+            background: var(--nc-card-bg);
+            box-shadow: 5px 0 0 var(--nc-card-bg), 10px 0 0 var(--nc-card-bg);
+        }
+
+        .novcap-code-tile[data-code-design="corner"] .novcap-code-shape {
+            background:
+                linear-gradient(currentColor, currentColor) left top / 7px 1.5px no-repeat,
+                linear-gradient(currentColor, currentColor) left top / 1.5px 7px no-repeat,
+                linear-gradient(currentColor, currentColor) right top / 7px 1.5px no-repeat,
+                linear-gradient(currentColor, currentColor) right top / 1.5px 7px no-repeat,
+                linear-gradient(currentColor, currentColor) left bottom / 7px 1.5px no-repeat,
+                linear-gradient(currentColor, currentColor) left bottom / 1.5px 7px no-repeat,
+                linear-gradient(currentColor, currentColor) right bottom / 7px 1.5px no-repeat,
+                linear-gradient(currentColor, currentColor) right bottom / 1.5px 7px no-repeat;
+        }
+
+        .novcap-code-tile[data-code-design="receipt"] .novcap-code-shape {
+            border-top: 1.5px dashed currentColor;
+            border-bottom: 1.5px dashed currentColor;
+        }
+
+        .novcap-ui .novcap-code-border-row {
+            margin-top: 6px;
+        }
+
+        /* ── 2.5.5 로그 정보 안내 ── */
+        #novcap-log-status[hidden] {
+            display: none;
+        }
+
+        /* ── 2.5.6 꾸밈 테마 고르기 ── */
+        .novcap-decor-tiles {
+            display: grid;
+            grid-template-columns: repeat(5, minmax(0, 1fr));
+            gap: 8px 6px;
+        }
+
+        .novcap-ui .novcap-decor-tile {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+            min-width: 0;
+            padding: 2px 0 0;
+            border: 0;
+            background: none;
+            cursor: pointer;
+            font-size: 11px;
+            line-height: 14px;
+            color: var(--nc-text-2);
+            transition: color var(--novcap-dur-micro) var(--novcap-ease-out);
+        }
+
+        .novcap-ui .novcap-decor-tile canvas {
+            display: block;
+            width: 52px;
+            height: 38px;
+            border-radius: 9px;
+            box-shadow: 0 0 0 1px var(--nc-hair);
+            transition: transform var(--novcap-dur-micro) var(--novcap-ease-out), box-shadow var(--novcap-dur-micro) var(--novcap-ease-out);
+        }
+
+        .novcap-ui .novcap-decor-tile[aria-checked="true"] {
+            color: var(--nc-text);
+            font-weight: 600;
+        }
+
+        .novcap-ui .novcap-decor-tile[aria-checked="true"] canvas {
+            box-shadow: 0 0 0 2px var(--nc-text);
+            transform: scale(1.04);
+        }
+
+        .novcap-ui .novcap-decor-tile:active canvas {
+            transform: scale(.94);
+        }
+
+        .novcap-ui .novcap-decor-tile:disabled {
+            opacity: .4;
+            cursor: default;
+        }
+
+        .novcap-ui .novcap-decor-pattern-row {
+            margin-top: 8px;
+        }
+
+        #novcap-bg-swatches[hidden] {
+            display: none;
         }
 
         .novcap-divider-tiles {
@@ -13282,7 +14527,7 @@
                         </div>
                         <input type="range" id="novcap-result-width-slider" class="novcap-range novcap-export-range" min="320" max="1600" step="1" aria-label="원고 폭 조절">
                         <div id="novcap-export-help" class="novcap-popover novcap-info-pop novcap-export-help" hidden>
-                            <ul class="novcap-info-lines"><li>원고 폭을 바꾸면 줄바꿈을 다시 맞춰요.</li><li>이미지도 그 폭으로 새로 만들어요.</li><li>해상도는 이미지 크기만 바꿔요.</li></ul>
+                            <ul class="novcap-info-lines"><li>원고 폭을 바꾸면 줄바꿈을 다시 맞춰요.</li><li>이미지도 그 폭으로 새로 만들어요.</li><li>해상도는 이미지 크기만 바꿔요.</li><li>PDF로 저장을 누르면 새 창에 인쇄 화면이 떠요. 대상을 「PDF로 저장」으로 고르세요.</li></ul>
                             <button type="button" class="d-ico novcap-pop-close" aria-label="도움말 닫기" title="도움말 닫기" data-novcap-pop-cancel>${ICONS.closeSmall}</button>
                         </div>
                         </div>
@@ -13294,6 +14539,7 @@
                         </div>
                         <div class="novcap-export-secondary">
                             <button type="button" id="novcap-save-copy" class="novcap-btn novcap-btn-line">${ICONS.copy17}<span class="novcap-btn-label">클립보드 복사</span></button>
+                            <button type="button" id="novcap-save-pdf" class="novcap-btn novcap-btn-line">${ICONS.pdf17}<span class="novcap-btn-label">PDF로 저장</span></button>
                         </div>
                     </div>
                 </div>
@@ -13382,6 +14628,16 @@
                                                 <span class="novcap-flex"></span>
                                                 <button type="button" id="novcap-mark-remove" class="novcap-switch-btn active" role="switch" aria-checked="true" aria-labelledby="novcap-exclude-label"><span class="novcap-switch-thumb" aria-hidden="true"></span></button>
                                             </div>
+                                            <div class="novcap-tool-card" id="novcap-code-pick-row">
+                                                <span class="novcap-tool-card-ico">${ICONS.lines18}</span>
+                                                <span class="novcap-tool-card-text"><span class="novcap-tool-card-title">상태창 줄 고르기</span><span id="novcap-code-pick-label" class="novcap-tool-card-label">상태창 줄 고르기</span></span>
+                                                <span class="novcap-flex"></span>
+                                                <button type="button" id="novcap-code-pick" class="novcap-switch-btn" role="switch" aria-checked="false" aria-labelledby="novcap-code-pick-label"><span class="novcap-switch-thumb" aria-hidden="true"></span></button>
+                                            </div>
+                                            <div class="novcap-code-actions" id="novcap-code-actions" hidden>
+                                                <button type="button" id="novcap-code-exclude" class="novcap-btn novcap-btn-toggle novcap-btn-sm" aria-disabled="true">${ICONS.minusBox16}<span class="novcap-btn-label">빼기</span></button>
+                                                <button type="button" id="novcap-code-keep" class="novcap-btn novcap-btn-toggle novcap-btn-sm" aria-disabled="true">${ICONS.keep16}<span class="novcap-btn-label">남기기</span></button>
+                                            </div>
                                             <button type="button" id="novcap-restore-excluded" class="novcap-btn novcap-btn-ghost novcap-btn-sm" aria-disabled="true">${ICONS.reset16}<span class="novcap-btn-label">모두 되살리기</span></button>
                                         </div></div>
                                     </div>
@@ -13402,10 +14658,11 @@
 
                                 <section class="novcap-cat" data-novcap-cat="pen" data-pen="highlight" aria-label="펜" hidden>
                                     <div class="novcap-pv-side novcap-pen-side" data-novcap-settings-only><span class="novcap-sublbl">미리보기</span><div class="novcap-pv-pen"></div></div>
-                                    <div class="novcap-seg novcap-seg-pen" role="radiogroup" aria-label="펜 종류" style="--n:2;--si:0">
+                                    <div class="novcap-seg novcap-seg-pen" role="radiogroup" aria-label="펜 종류" style="--n:3;--si:0">
                                         <span class="novcap-seg-thumb" aria-hidden="true"></span>
                                         <button type="button" class="novcap-seg-btn" role="radio" aria-checked="true" data-novcap-pen-seg="highlight">${ICONS.pen18}<span>형광펜</span></button>
                                         <button type="button" class="novcap-seg-btn" role="radio" aria-checked="false" data-novcap-pen-seg="underline">${ICONS.underline18}<span>밑줄</span></button>
+                                        <button type="button" class="novcap-seg-btn" role="radio" aria-checked="false" data-novcap-pen-seg="mosaic">${ICONS.mosaic18}<span>가리기</span></button>
                                     </div>
                                     <div class="novcap-pen-pane" data-novcap-pen-pane="highlight" role="group" aria-label="형광펜 설정">
                                         <div class="novcap-row-grid novcap-row-sw">
@@ -13463,6 +14720,18 @@
                                         </div>
                                         <button type="button" id="novcap-remove-underline" class="novcap-btn novcap-btn-toggle" aria-pressed="false" data-novcap-editor-only>${ICONS.eraser}<span class="novcap-btn-label">지우기</span></button>
                                         <div id="novcap-underline-sample" class="novcap-sample" role="img" aria-label="밑줄 미리보기"><span class="novcap-pv-ctx" data-novcap-settings-only aria-hidden="true">"응, </span><span class="novcap-sample-ul" aria-hidden="true">지도에 표시된 곳</span><span class="novcap-pv-ctx" data-novcap-settings-only aria-hidden="true">이 바로 여기야."</span></div>
+                                    </div>
+                                    <div class="novcap-pen-pane" data-novcap-pen-pane="mosaic" role="group" aria-label="가리기 설정" hidden>
+                                        <div class="novcap-row-grid novcap-row-seg">
+                                            <span class="novcap-rowlbl" id="novcap-mosaic-shape-label">모양</span>
+                                            <div class="novcap-seg novcap-seg-sm" id="novcap-mosaic-seg" role="radiogroup" aria-labelledby="novcap-mosaic-shape-label" style="--n:2;--si:0">
+                                                <span class="novcap-seg-thumb" aria-hidden="true"></span>
+                                                <button type="button" class="novcap-seg-btn novcap-mosaic-btn" data-style="pattern" role="radio" aria-checked="true">${ICONS.mosaic18}<span>모자이크</span></button>
+                                                <button type="button" class="novcap-seg-btn novcap-mosaic-btn" data-style="blank" role="radio" aria-checked="false">${ICONS.eyeOff18}<span>투명</span></button>
+                                            </div>
+                                        </div>
+                                        <button type="button" id="novcap-remove-mosaic" class="novcap-btn novcap-btn-toggle" aria-pressed="false" data-novcap-editor-only>${ICONS.eraser}<span class="novcap-btn-label">지우기</span></button>
+                                        <div id="novcap-mosaic-sample" class="novcap-sample" role="img" aria-label="가리기 미리보기" data-style="pattern"><span class="novcap-sample-mosaic" aria-hidden="true">비가 쏟아지기 시작했다</span></div>
                                     </div>
                                 </section>
 
@@ -13540,14 +14809,15 @@
                                     <div class="novcap-pv-side novcap-style-side" data-novcap-settings-only><span class="novcap-sublbl">미리보기</span><div id="novcap-style-preview" class="novcap-pv-box novcap-pv-page" role="img" aria-label="원고 색 미리보기"><div class="novcap-pv-role" aria-hidden="true"><span>CHARACTER</span></div><div class="novcap-pv-lines" aria-hidden="true"><p>"여기가 맞아?" A가 물었다.</p><p class="novcap-pv-em">그는 젖은 난간을 붙잡은 채 한참 동안 바다를 내려다보았다.</p></div></div></div>
                                     <div class="novcap-bg-head">
                                         <span class="novcap-sublbl" id="novcap-bg-label">배경</span>
-                                        <div class="novcap-seg novcap-seg-sm novcap-bg-mode" id="novcap-bg-mode" role="radiogroup" aria-label="배경 종류" style="--n:3;--si:0">
+                                        <div class="novcap-seg novcap-seg-sm novcap-bg-mode" id="novcap-bg-mode" role="radiogroup" aria-label="배경 종류" style="--n:4;--si:0">
                                             <span class="novcap-seg-thumb" aria-hidden="true"></span>
                                             <button type="button" class="novcap-seg-btn" role="radio" aria-checked="true" data-bg-mode="solid"><span>단색</span></button>
                                             <button type="button" class="novcap-seg-btn" role="radio" aria-checked="false" data-bg-mode="pattern"><span>무늬</span></button>
                                             <button type="button" class="novcap-seg-btn" role="radio" aria-checked="false" data-bg-mode="photo"><span>사진</span></button>
+                                            <button type="button" class="novcap-seg-btn" role="radio" aria-checked="false" data-bg-mode="decor"><span>꾸밈</span></button>
                                         </div>
                                     </div>
-                                    <div class="novcap-swatches novcap-swatches-lg" role="radiogroup" aria-labelledby="novcap-bg-label">
+                                    <div class="novcap-swatches novcap-swatches-lg" id="novcap-bg-swatches" role="radiogroup" aria-labelledby="novcap-bg-label">
                                         <button type="button" class="novcap-sw novcap-sw-sq novcap-bg-preset" data-color="#d8d6cf" role="radio" aria-checked="false" aria-label="회백색 배경" style="--sw:#d8d6cf"><span></span></button>
                                         <button type="button" class="novcap-sw novcap-sw-sq novcap-bg-preset" data-color="#fff8e6" role="radio" aria-checked="false" aria-label="아이보리 배경" style="--sw:#fff8e6"><span></span></button>
                                         <button type="button" class="novcap-sw novcap-sw-sq novcap-bg-preset" data-color="#172033" role="radio" aria-checked="false" aria-label="감색 배경" style="--sw:#172033"><span></span></button>
@@ -13637,6 +14907,12 @@
                                             </div>
                                         </div></div>
                                     </div>
+                                    <div class="novcap-bg-panel" id="novcap-bg-decor-panel" data-bg-panel="decor" data-open="false" role="group" aria-label="꾸밈 설정">
+                                        <div class="novcap-bg-panel-inner"><div class="novcap-bg-panel-body">
+                                            <div class="novcap-decor-tiles" role="radiogroup" aria-label="꾸밈 테마">${novcapDecorTiles()}</div>
+                                            <label class="novcap-switch-row novcap-switch-row-tight novcap-decor-pattern-row"><span class="novcap-switch-text">무늬</span><input type="checkbox" id="novcap-decor-pattern" class="novcap-switch" role="switch" checked></label>
+                                        </div></div>
+                                    </div>
                                     <span class="novcap-sublbl novcap-sublbl-gap" id="novcap-fg-label">글자</span>
                                     <div class="novcap-swatches novcap-swatches-lg" role="radiogroup" aria-labelledby="novcap-fg-label">
                                         <button type="button" class="novcap-sw novcap-sw-round-lg novcap-text-preset" data-color="#151515" role="radio" aria-checked="false" aria-label="검정 글자" style="--sw:#151515"><span></span></button>
@@ -13665,6 +14941,16 @@
                                         <button type="button" class="novcap-sw novcap-div-tile" role="radio" aria-checked="false" data-divider="dotted" aria-label="점선"><span class="novcap-div-shape" aria-hidden="true"><i></i><b></b><i></i></span></button>
                                         <button type="button" class="novcap-sw novcap-div-tile" role="radio" aria-checked="false" data-divider="thin" aria-label="위아래 실선"><span class="novcap-div-shape" aria-hidden="true"><i></i><b></b><i></i></span></button>
                                     </div>
+                                    <div class="novcap-hair novcap-hair-flat novcap-hair-gap"></div>
+                                    <span class="novcap-sublbl" id="novcap-code-label">코드블럭</span>
+                                    <div class="novcap-swatches novcap-code-tiles" role="radiogroup" aria-labelledby="novcap-code-label">
+                                        <button type="button" class="novcap-sw novcap-code-tile" role="radio" aria-checked="false" data-code-design="plain" aria-label="지금 모양" title="지금 모양"><span><i class="novcap-code-shape" aria-hidden="true"></i></span></button>
+                                        <button type="button" class="novcap-sw novcap-code-tile" role="radio" aria-checked="false" data-code-design="card" aria-label="카드" title="카드"><span><i class="novcap-code-shape" aria-hidden="true"></i></span></button>
+                                        <button type="button" class="novcap-sw novcap-code-tile" role="radio" aria-checked="false" data-code-design="window" aria-label="창" title="창"><span><i class="novcap-code-shape" aria-hidden="true"></i></span></button>
+                                        <button type="button" class="novcap-sw novcap-code-tile" role="radio" aria-checked="false" data-code-design="corner" aria-label="코너" title="코너"><span><i class="novcap-code-shape" aria-hidden="true"></i></span></button>
+                                        <button type="button" class="novcap-sw novcap-code-tile" role="radio" aria-checked="false" data-code-design="receipt" aria-label="영수증" title="영수증"><span><i class="novcap-code-shape" aria-hidden="true"></i></span></button>
+                                    </div>
+                                    <label class="novcap-switch-row novcap-switch-row-tight novcap-code-border-row"><span class="novcap-switch-text">백틱 글자 테두리</span><input type="checkbox" id="novcap-inline-code-border" class="novcap-switch" role="switch"></label>
                                     <button type="button" id="novcap-font-add-row" class="novcap-font-add-row" aria-haspopup="dialog">${ICONS.fontAdd}<span class="novcap-font-add-text">글꼴 추가…</span><span class="novcap-font-add-chev">${ICONS.chevRight16}</span></button>
                                 </section>
 
@@ -13676,6 +14962,14 @@
                                                 <label class="novcap-switch-row"><span class="novcap-switch-text">원본 이미지</span><input type="checkbox" id="novcap-editor-images" class="novcap-switch" role="switch"></label>
                                                 <label class="novcap-switch-row"><span class="novcap-switch-text">HUD/코드블럭</span><input type="checkbox" id="novcap-editor-hud" class="novcap-switch" role="switch"></label>
                                                 <label class="novcap-switch-row"><span class="novcap-switch-text">CHARACTER / USER 가름선</span><input type="checkbox" id="novcap-editor-role-labels" class="novcap-switch" role="switch"></label>
+                                            </div>
+                                            <p class="novcap-sublbl novcap-sublbl-gap2">로그 정보</p>
+                                            <div class="novcap-card novcap-card-list">
+                                                <label class="novcap-switch-row"><span class="novcap-switch-text">생성 시각</span><input type="checkbox" id="novcap-log-time" class="novcap-switch" role="switch"></label>
+                                                <label class="novcap-switch-row"><span class="novcap-switch-text">모델 아이콘</span><input type="checkbox" id="novcap-log-icon" class="novcap-switch" role="switch"></label>
+                                                <label class="novcap-switch-row"><span class="novcap-switch-text">모델 이름</span><input type="checkbox" id="novcap-log-name" class="novcap-switch" role="switch"></label>
+                                                <label class="novcap-switch-row"><span class="novcap-switch-text">원래 모델 이름</span><input type="checkbox" id="novcap-log-engine" class="novcap-switch" role="switch"></label>
+                                                <div id="novcap-log-status" class="novcap-status-card" data-tone="info" role="status" hidden></div>
                                             </div>
                                         </div>
                                         <div class="novcap-show-col">
@@ -13807,6 +15101,7 @@
         bindFontUi();
         bindPageBgUi();
         bindSettingsOnly();
+        bindUserSwatches();
     }
 
     /* 처음 쓸 때 한 번 만든다(스타일 · 불러오는 중 · 편집/내보내기 화면 · 범위 고르기 막대).
@@ -14053,6 +15348,7 @@
     function armVisiblePenPane() {
         if (!canArmTools()) return;
         if (uiPenPane === 'underline') setEditorTool('underline-add');
+        else if (uiPenPane === 'mosaic') setEditorTool('mosaic-add');
         else setEditorTool('highlight-add', activeHighlightColor);
     }
 
@@ -14103,7 +15399,7 @@
     /* 펜 안의 [형광펜 | 밑줄]. 편집 화면에서 누르면 그 펜을 켠다. 설정 창에서는 보기만 바꾼다. */
     function setPenPane(pane, options = {}) {
         if (!editorOverlay) return;
-        const next = pane === 'underline' ? 'underline' : 'highlight';
+        const next = pane === 'underline' || pane === 'mosaic' ? pane : 'highlight';
         uiPenPane = next;
         const section = editorOverlay.querySelector('section[data-novcap-cat="pen"]');
         setAttrIfChanged(section, 'data-pen', next);
@@ -14111,6 +15407,7 @@
         syncSegments();
         if (options.arm && canArmTools()) {
             if (next === 'underline') setEditorTool('underline-add');
+            else if (next === 'mosaic') setEditorTool('mosaic-add');
             else setEditorTool('highlight-add', activeHighlightColor);
         }
     }
@@ -14123,7 +15420,7 @@
 
     function syncSegments() {
         if (!editorOverlay) return;
-        const penIndex = uiPenPane === 'underline' ? 1 : 0;
+        const penIndex = uiPenPane === 'underline' ? 1 : uiPenPane === 'mosaic' ? 2 : 0;
         syncSegment(editorOverlay.querySelector('.novcap-seg-pen'), penIndex);
         editorOverlay.querySelectorAll('[data-novcap-pen-seg]').forEach((button, i) => setAttrIfChanged(button, 'aria-checked', String(i === penIndex)));
         const style = isSettingsOnlyMode() ? config.underlineStyle : activeUnderlineStyle;
@@ -14131,6 +15428,9 @@
         const styleIndex = Math.max(0, styleButtons.findIndex(button => button.dataset.style === style));
         syncSegment(styleButtons[0]?.parentElement, styleIndex);
         styleButtons.forEach((button, i) => setAttrIfChanged(button, 'aria-checked', String(i === styleIndex)));
+        const mosaicIndex = config.mosaicStyle === 'blank' ? 1 : 0;
+        syncSegment(editorOverlay.querySelector('#novcap-mosaic-seg'), mosaicIndex);
+        editorOverlay.querySelectorAll('.novcap-mosaic-btn').forEach((button, i) => setAttrIfChanged(button, 'aria-checked', String(i === mosaicIndex)));
         const emIndex = config.emphasisMode === 'italic' ? 1 : 0;
         const emSeg = editorOverlay.querySelector('.novcap-seg-em');
         syncSegment(emSeg, emIndex);
@@ -14146,26 +15446,25 @@
         return table[name] || '';
     }
 
-    /* 직접 고른 색 칸(+): 쓰는 색이면 그 색으로 채운다. 고른 색이 직접 고른 색일 때만 고리를 단다. */
+    /* 직접 고른 색 칸(+): 2.5.7부터 고른 색은 내 색 칸으로 남으므로 +는 비워 둔다.
+       지금 쓰는 색이 어느 칸에도 없을 때만(그 칸을 지운 색 등) +를 그 색으로 채우고 고리를 단다. */
     function syncPenCustomSwatches() {
         if (!editorOverlay) return;
         const settings = isSettingsOnlyMode();
         const highlight = settings ? normalizeHighlightColorName(config.highlightColor) : activeHighlightColor;
         const underline = settings ? config.underlineColor : activeUnderlineColor;
-        const customHighlight = normalizeHexColor(config.customHighlightColor, DEFAULT_CONFIG.customHighlightColor);
-        const customUnderline = normalizeHexColor(config.customUnderlineColor, DEFAULT_CONFIG.customUnderlineColor);
         const pens = [
-            ['#novcap-custom-highlight', highlight, customHighlight, DEFAULT_CONFIG.customHighlightColor],
-            ['#novcap-custom-underline', underline, customUnderline, DEFAULT_CONFIG.customUnderlineColor]
+            ['#novcap-custom-highlight', highlight, 'highlight'],
+            ['#novcap-custom-underline', underline, 'underline']
         ];
-        pens.forEach(([selector, active, custom, fallback]) => {
+        pens.forEach(([selector, active, row]) => {
             const button = editorOverlay.querySelector(selector);
             if (!button) return;
-            const isHex = /^#[0-9a-f]{6}$/i.test(active || '');
-            const fill = isHex ? String(active).toLowerCase() : (custom !== fallback ? custom : '');
-            button.classList.toggle('is-used', Boolean(fill));
-            setStyleVarIfChanged(button, '--sw', fill || 'transparent');
-            setSwatchChecked(button, isHex);
+            const hex = /^#[0-9a-f]{6}$/i.test(active || '') ? String(active).toLowerCase() : '';
+            const loose = Boolean(hex) && !userColorListed(row, hex);
+            button.classList.toggle('is-used', loose);
+            setStyleVarIfChanged(button, '--sw', loose ? hex : 'transparent');
+            setSwatchChecked(button, loose);
         });
     }
 
@@ -14295,6 +15594,7 @@
         const underlineSpan = editorOverlay.querySelector('#novcap-underline-sample .novcap-sample-ul');
         setStyleVarIfChanged(underlineSpan, '--ul-color', getUnderlineColor(underline));
         setStyleVarIfChanged(underlineSpan, '--ul-style', style === 'wavy' ? 'wavy' : style === 'pencil' ? 'dashed' : 'solid');
+        setAttrIfChanged(editorOverlay.querySelector('#novcap-mosaic-sample'), 'data-style', config.mosaicStyle === 'blank' ? 'blank' : 'pattern');
     }
 
     function syncExcludeCount() {
@@ -14331,6 +15631,14 @@
             dot = swatchHexFor(activeUnderlineColor, UNDERLINE_SWATCH_HEX);
         } else if (editorToolMode === 'underline-remove') {
             text = '밑줄 지우기 켜짐';
+        } else if (editorToolMode === 'mosaic-add') {
+            text = '가리기 · ' + (config.mosaicStyle === 'blank' ? '투명' : '모자이크');
+            icon = true;
+        } else if (editorToolMode === 'mosaic-remove') {
+            text = '가리기 지우기 켜짐';
+        } else if (editorToolMode === 'code-pick') {
+            text = '상태창 줄 고르기 켜짐';
+            icon = true;
         } else if (editorToolMode === 'comment') {
             text = '쪽지 편집 켜짐';
         }
@@ -14502,7 +15810,7 @@
             const toggle = card.querySelector('#novcap-mark-remove');
             if (button.parentElement !== card || button.nextElementSibling !== toggle) card.insertBefore(button, toggle);
         } else if (button.parentElement === card) {
-            card.after(button);
+            (editorOverlay.querySelector('#novcap-code-actions') || card).after(button);
         }
         button.classList.toggle('novcap-restore-in-card', phone);
         setTextIfChanged(button.querySelector('.novcap-btn-label'), phone ? '되살리기' : '모두 되살리기');
@@ -14518,18 +15826,19 @@
         const download = editorOverlay.querySelector('#novcap-save-download');
         const copy = editorOverlay.querySelector('#novcap-save-copy');
         const share = editorOverlay.querySelector('#novcap-save-share');
+        const pdf = editorOverlay.querySelector('#novcap-save-pdf');
         if (!download || !copy || !share) return;
         const primary = resultPopup.querySelector('.novcap-export-primary');
         const secondary = resultPopup.querySelector('.novcap-export-secondary');
         if (phone) {
-            moveInto(resultPopup.querySelector('.novcap-export-card-actions'), [copy, download]);
+            moveInto(resultPopup.querySelector('.novcap-export-card-actions'), [copy, pdf, download]);
             moveInto(editorOverlay.querySelector('.novcap-share-slot-phone'), [share]);
         } else if (coarse) {
             moveInto(primary, [share]);
-            moveInto(secondary, [copy, download]);
+            moveInto(secondary, [copy, pdf, download]);
         } else {
             moveInto(primary, [download, share]);
-            moveInto(secondary, [copy]);
+            moveInto(secondary, [copy, pdf]);
         }
         /* 공유 단추는 2.3.0처럼 터치 화면에서만 보인다. */
         setHiddenIfChanged(share, !coarse);
@@ -14665,9 +15974,9 @@
         });
     }
 
-    /* 설정 창 「기본값으로 되돌리기」: 처음 설치한 값(익명 치환 빈 줄 5개 포함)으로. 색 보관함(V3)은 건드리지 않는다. */
+    /* 설정 창 「기본값으로 되돌리기」: 처음 설치한 값(익명 치환 빈 줄 5개 포함)으로. 색 보관함(V3)과 내 색 칸(2.5.7)은 건드리지 않는다. */
     function resetSettingsToDefaults() {
-        config = { ...cloneJson(DEFAULT_CONFIG), commentDefaults: normalizeCommentDefaults(DEFAULT_CONFIG.commentDefaults) };
+        config = { ...cloneJson(DEFAULT_CONFIG), commentDefaults: normalizeCommentDefaults(DEFAULT_CONFIG.commentDefaults), userColors: normalizeUserColors(config.userColors) };
         activeHighlightColor = normalizeHighlightColorName(config.highlightColor);
         activeUnderlineStyle = config.underlineStyle;
         activeUnderlineColor = config.underlineColor;
@@ -17280,6 +18589,8 @@
         if (customRoomThemeSnapshot?.active) {
             const themedSection = makeThemedContentSection(bubble, role);
             materializeContentEmbeds(themedSection.querySelector('[data-novcap-content-root]'));
+            prepareCodeBlocks(themedSection);
+            snapshotBubbleModel(bubble, themedSection);
             return themedSection;
         }
 
@@ -17292,6 +18603,8 @@
         cleanNovelClone(clone);
         replaceYouTubeEmbeds(clone);
         section.appendChild(clone);
+        prepareCodeBlocks(section);
+        snapshotBubbleModel(bubble, section);
         return section;
     }
 
@@ -19013,7 +20326,7 @@
 
     /* 2.5.0과 같은 차례(빈 줄 빼고 긴 말부터)로 규칙을 한 번 만든다. */
     function maskWordRules(pairs) {
-        return maskLinkRules(pairs
+        return maskLinkRules(expandMaskPairs(pairs)
             .map(pair => ({ from: String(pair?.from || '').trim(), to: String(pair?.to || '').trim() }))
             .filter(pair => pair.from)
             .sort((a, b) => b.from.length - a.from.length)
@@ -19523,7 +20836,7 @@
         const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
             acceptNode(node) {
                 if (node.nodeType === 1) {
-                    if (node.matches('style, script, .novcap-role-label')) {
+                    if (node.matches('style, script, .novcap-role-label, .novcap-log-footer')) {
                         broken = true;
                         return NodeFilter.FILTER_REJECT;
                     }
@@ -19531,7 +20844,7 @@
                     return NodeFilter.FILTER_SKIP;
                 }
                 if (!node.parentElement) return NodeFilter.FILTER_REJECT;
-                if (node.parentElement.closest('style, script, .novcap-role-label')) return NodeFilter.FILTER_REJECT;
+                if (node.parentElement.closest('style, script, .novcap-role-label, .novcap-log-footer')) return NodeFilter.FILTER_REJECT;
                 return NodeFilter.FILTER_ACCEPT;
             }
         });
@@ -20004,7 +21317,7 @@
             applyMaskWordRules(root, maskWordRules(normalizeMaskPairs(pairs)), stats);
             return;
         }
-        const rules = normalizeMaskPairs(pairs)
+        const rules = expandMaskPairs(normalizeMaskPairs(pairs))
             .map(pair => ({ from: pair.from.trim(), to: pair.to.trim() }))
             .filter(pair => pair.from)
             .sort((a, b) => b.from.length - a.from.length)
@@ -20015,7 +21328,7 @@
         const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
             acceptNode(node) {
                 if (!node.parentElement) return NodeFilter.FILTER_REJECT;
-                if (node.parentElement.closest('style, script, .novcap-role-label')) return NodeFilter.FILTER_REJECT;
+                if (node.parentElement.closest('style, script, .novcap-role-label, .novcap-log-footer')) return NodeFilter.FILTER_REJECT;
                 return NodeFilter.FILTER_ACCEPT;
             }
         });
@@ -20510,14 +21823,160 @@
         return editorOverlay.querySelector('#novcap-editor-mask-pairs');
     }
 
+    /* 2.5.5: 한 줄의 가릴 말 여러 개는 줄바꿈으로 이어 from에 둔다. 적용할 때 줄마다 펼친다. */
+    function maskAliases(value) {
+        const seen = new Set();
+        return String(value || '').split('\n').map(item => item.trim()).filter(item => {
+            if (!item || seen.has(item)) return false;
+            seen.add(item);
+            return true;
+        });
+    }
+
+    function expandMaskPairs(pairs) {
+        const out = [];
+        (pairs || []).forEach(pair => {
+            const to = String(pair?.to || '');
+            maskAliases(pair?.from).forEach(from => out.push({ from, to }));
+        });
+        return out;
+    }
+
+    function maskChipMarkup(name) {
+        const safe = escapeHtml(name);
+        return '<span class="novcap-mask-chip" data-name="' + safe + '"><span class="novcap-mask-chip-text">' + safe + '</span>' +
+            '<button type="button" class="novcap-mask-chip-x d-ico" aria-label="' + safe + ' 지우기">' + ICONS.closeSmall + '</button></span>';
+    }
+
     function maskRowMarkup(pair, i) {
         const n = i + 1;
         return '<div class="novcap-mask-row" role="listitem"><div class="novcap-mask-grid">' +
-            '<input type="text" class="novcap-input novcap-mask-from" data-index="' + i + '" value="' + escapeHtml(pair.from) + '" placeholder="가릴 말 ' + n + '" aria-label="가릴 말 ' + n + '">' +
+            '<div class="novcap-mask-from-field">' + maskAliases(pair.from).map(maskChipMarkup).join('') +
+            '<input type="text" class="novcap-mask-typer" data-index="' + i + '" placeholder="가릴 말 ' + n + '" aria-label="가릴 말 ' + n + '" autocomplete="off" spellcheck="false"></div>' +
             '<button type="button" class="novcap-mask-swap d-ico" aria-label="' + n + '번 줄 좌우 바꾸기" title="좌우 바꾸기"><span class="novcap-swap-icon">' + ICONS.swap + '</span></button>' +
             '<input type="text" class="novcap-input novcap-mask-to" data-index="' + i + '" value="' + escapeHtml(pair.to) + '" placeholder="바꿀 말 ' + n + '" aria-label="바꿀 말 ' + n + '">' +
             '<button type="button" class="novcap-mask-remove d-ico" data-index="' + i + '" aria-label="' + n + '번 줄 삭제" title="줄 삭제">' + ICONS.del + '</button>' +
             '</div></div>';
+    }
+
+    /* 이 줄의 가릴 말(아직 쓰는 중인 글자도 넣는다: 칸을 다시 그려도 쓴 글이 남는다) */
+    function maskRowNames(row) {
+        const names = Array.from(row.querySelectorAll('.novcap-mask-chip:not([data-leaving])'), chip => chip.dataset.name);
+        const typed = row.querySelector('.novcap-mask-typer')?.value.trim();
+        if (typed && !names.includes(typed)) names.push(typed);
+        return names;
+    }
+
+    function saveMaskRowsSoon() {
+        config.maskPairs = readMaskRows();
+        clearTimeout(maskSaveTimer);
+        maskSaveTimer = setTimeout(() => {
+            maskSaveTimer = null;
+            saveConfig();
+        }, 300);
+    }
+
+    /* 칸 하나의 상태: 이름이 있으면 짧은 안내, 여러 개면 좌우 바꾸기를 잠근다. */
+    function syncMaskRowField(row, n) {
+        const typer = row.querySelector('.novcap-mask-typer');
+        const count = row.querySelectorAll('.novcap-mask-chip:not([data-leaving])').length;
+        setAttrIfChanged(typer, 'placeholder', count ? '+ 이름' : '가릴 말 ' + n);
+        setAttrIfChanged(row.querySelector('.novcap-mask-swap'), 'aria-disabled', maskRowNames(row).length > 1 ? 'true' : null);
+    }
+
+    function addMaskChips(row, names) {
+        const typer = row.querySelector('.novcap-mask-typer');
+        if (!typer) return false;
+        const have = new Set(Array.from(row.querySelectorAll('.novcap-mask-chip:not([data-leaving])'), chip => chip.dataset.name));
+        let added = false;
+        names.map(name => String(name || '').trim()).filter(Boolean).forEach(name => {
+            if (have.has(name)) return;
+            have.add(name);
+            typer.insertAdjacentHTML('beforebegin', maskChipMarkup(name));
+            playOnce(typer.previousElementSibling, [{ opacity: 0, transform: 'scale(.8)' }], { duration: 160 });
+            added = true;
+        });
+        return added;
+    }
+
+    /* 쓰던 글자를 이름표로 만든다(Enter · 칸을 떠날 때). */
+    function commitMaskTyper(typer) {
+        const value = typer.value.trim();
+        if (!value) {
+            if (typer.value) typer.value = '';
+            return false;
+        }
+        const row = typer.closest('.novcap-mask-row');
+        addMaskChips(row, [value]);
+        typer.value = '';
+        syncMaskRowsMeta();
+        saveMaskRowsSoon();
+        return true;
+    }
+
+    function removeMaskChip(chip) {
+        const row = chip.closest('.novcap-mask-row');
+        chip.setAttribute('data-leaving', '');
+        const animation = playOnce(chip, [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'scale(.8)' }], { duration: 120 });
+        if (animation) animation.onfinish = () => chip.remove();
+        else chip.remove();
+        syncMaskRowsMeta();
+        saveMaskRowsSoon();
+        row?.querySelector('.novcap-mask-typer')?.focus({ preventScroll: true });
+    }
+
+    function bindMaskChips() {
+        const holder = getMaskHolder();
+        holder.addEventListener('keydown', event => {
+            const typer = event.target.closest?.('.novcap-mask-typer');
+            if (!typer) return;
+            /* 한글을 쓰는 중에 누른 Enter는 글자가 완성된 뒤에 이름표로 만든다. */
+            if (event.isComposing || event.keyCode === 229) {
+                if (event.key === 'Enter' || event.code === 'Enter') typer.dataset.commitAfterIme = 'true';
+                return;
+            }
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                commitMaskTyper(typer);
+            } else if (event.key === 'Backspace' && !typer.value) {
+                const chips = typer.closest('.novcap-mask-row').querySelectorAll('.novcap-mask-chip:not([data-leaving])');
+                if (chips.length) removeMaskChip(chips[chips.length - 1]);
+            }
+        });
+        holder.addEventListener('compositionend', event => {
+            const typer = event.target.closest?.('.novcap-mask-typer');
+            if (!typer || typer.dataset.commitAfterIme !== 'true') return;
+            delete typer.dataset.commitAfterIme;
+            setTimeout(() => commitMaskTyper(typer), 0);
+        });
+        holder.addEventListener('focusout', event => {
+            const typer = event.target.closest?.('.novcap-mask-typer');
+            if (typer) commitMaskTyper(typer);
+        });
+        holder.addEventListener('paste', event => {
+            const typer = event.target.closest?.('.novcap-mask-typer');
+            if (!typer) return;
+            const text = event.clipboardData?.getData('text') || '';
+            if (!/[\r\n]/.test(text)) return;
+            event.preventDefault();
+            const names = text.split(/\r\n|\r|\n/);
+            const row = typer.closest('.novcap-mask-row');
+            if (typer.value.trim()) names.unshift(typer.value);
+            typer.value = '';
+            addMaskChips(row, names);
+            syncMaskRowsMeta();
+            saveMaskRowsSoon();
+        });
+        holder.addEventListener('click', event => {
+            const closeButton = event.target.closest?.('.novcap-mask-chip-x');
+            if (closeButton) {
+                const chip = closeButton.closest('.novcap-mask-chip');
+                if (chip) removeMaskChip(chip);
+                return;
+            }
+            const field = event.target.closest?.('.novcap-mask-from-field');
+            if (field && !event.target.closest('.novcap-mask-typer')) field.querySelector('.novcap-mask-typer')?.focus({ preventScroll: true });
+        });
     }
 
     /* 지우는 중(잠깐 남아 접히는) 줄은 빼고 센다. */
@@ -20530,13 +21989,13 @@
         const rows = liveMaskRows();
         rows.forEach((row, i) => {
             const n = i + 1;
-            const from = row.querySelector('.novcap-mask-from');
+            const from = row.querySelector('.novcap-mask-typer');
             const to = row.querySelector('.novcap-mask-to');
             const swap = row.querySelector('.novcap-mask-swap');
             const remove = row.querySelector('.novcap-mask-remove');
             setAttrIfChanged(from, 'data-index', i);
-            setAttrIfChanged(from, 'placeholder', '가릴 말 ' + n);
             setAttrIfChanged(from, 'aria-label', '가릴 말 ' + n);
+            syncMaskRowField(row, n);
             setAttrIfChanged(to, 'data-index', i);
             setAttrIfChanged(to, 'placeholder', '바꿀 말 ' + n);
             setAttrIfChanged(to, 'aria-label', '바꿀 말 ' + n);
@@ -20564,7 +22023,7 @@
     /* 치환 줄은 이 칸 안에서만 읽는다. */
     function readMaskRows() {
         return liveMaskRows().slice(0, MASK_PAIR_MAX).map(row => ({
-            from: row.querySelector('.novcap-mask-from').value.trim(),
+            from: maskRowNames(row).join('\n'),
             to: row.querySelector('.novcap-mask-to').value.trim()
         }));
     }
@@ -20670,6 +22129,8 @@
     }
 
     function syncEditorControlsFromConfig(options = {}) {
+        /* 2.5.7 내 색 칸을 먼저 맞춘다(아래 잠금·고리 동기화가 새 칸까지 맡게). */
+        renderUserSwatches();
         editorOverlay.querySelector('#novcap-editor-bg-color').value = config.bgColor;
         editorOverlay.querySelector('#novcap-editor-text-color').value = config.textColor;
         refreshFontOptions();
@@ -20695,6 +22156,8 @@
         setTextIfChanged(editorOverlay.querySelector('#novcap-underline-opacity-label'), `${Math.round(config.underlineOpacity * 100)}%`);
         editorOverlay.querySelector('#novcap-highlight-word').checked = config.highlightWordSnap !== false;
         editorOverlay.querySelector('#novcap-mask-word').checked = config.maskWordMode !== false;
+        syncLogInfoControls();
+        syncCodeLookControls();
         const themeLocked = Boolean(customRoomThemeSnapshot?.active);
         /* 글이 같으면 쓰지 않는다(다시 열 때마다 글자 노드를 갈아 끼우지 않게). */
         setTextIfChanged(editorOverlay.querySelector('#novcap-emphasis-help'), themeLocked
@@ -20797,6 +22260,8 @@
         }
         editorPage.classList.toggle('novcap-hide-images', !config.includeImages);
         editorPage.classList.toggle('novcap-hide-hud', config.removeHud);
+        /* 2.5.5 코드블럭 디자인·백틱 테두리(기본값이면 아무것도 적지 않는다) */
+        applyCodeBlockLook(editorPage);
         /* 2.5.0 자간·가름선·새 글꼴·테마 글꼴(기본값이면 아무것도 적지 않는다) */
         applyFontTypography(editorPage, themeActive);
 
@@ -20849,11 +22314,14 @@
         clone.querySelectorAll('[contenteditable]').forEach(el => el.removeAttribute('contenteditable'));
         clone.classList.remove('novcap-tool-active');
         clone.style.removeProperty('--nov-editor-cursor');
+        /* 2.5.5: 고르던 줄·로그 꼬리줄은 기록하지 않는다(꼬리줄은 켠 스위치로 다시 그린다). */
+        clone.querySelectorAll('[data-novcap-code-picked]').forEach(el => el.removeAttribute('data-novcap-code-picked'));
+        clone.querySelectorAll('.novcap-log-footer').forEach(el => el.remove());
         stashHistoryImages(clone);
         return {
             html: clone.innerHTML,
-            /* 치환 목록은 기록하지 않는다(되돌리기가 목록을 바꾸지 않게). */
-            config: { ...cloneJson(config), maskPairs: [] }
+            /* 치환 목록·내 색 칸·꾸밈 전 색은 기록하지 않는다(되돌리기가 바꾸지 않게). */
+            config: { ...cloneJson(config), maskPairs: [], userColors: null, plainColors: null }
         };
     }
 
@@ -20880,8 +22348,19 @@
             /* 낱말 단위 치환도 치환 목록처럼 되돌리기와 상관없이 지금 값을 유지한다. */
             maskWordMode: config.maskWordMode,
             /* 쪽지 기본값은 설정 창 값이라 되돌리지 않는다. */
-            commentDefaults: config.commentDefaults
+            commentDefaults: config.commentDefaults,
+            /* 2.5.5: 가리기 기본 모양·로그 정보 스위치도 기본값이라 되돌리지 않는다. 코드블럭 모양은 원고 모양이라 함께 되돌린다. */
+            mosaicStyle: config.mosaicStyle,
+            showTimestamp: config.showTimestamp,
+            showModelBadge: config.showModelBadge,
+            showModelName: config.showModelName,
+            showOriginalModelName: config.showOriginalModelName,
+            /* 2.5.7 내 색 칸 · 꾸밈 전 색도 지금 값을 유지한다. */
+            userColors: config.userColors,
+            plainColors: config.plainColors
         };
+        codePickStart = null;
+        codePickEnd = null;
         resetHighlightStart();
         pendingCommentPlan = null;
         layoutEditPlan = null;
@@ -20895,6 +22374,7 @@
         selectedEditItem = null;
         syncEditorControlsFromConfig();
         applyDraftSettings({ save: true });
+        refreshLogFooters(editorPage);
         updateEditorToolUi();
         /* 2.5.1: 되돌리기·다시실행 뒤 그대로 둔 곳을 다시 센다(바꾼 자리가 돌아오면 그 자리로). */
         if (maskReview) refreshMaskReview();
@@ -21014,7 +22494,11 @@
 
             previewResizeObserver?.disconnect();
             if (typeof ResizeObserver !== 'undefined') {
-                previewResizeObserver = new ResizeObserver(() => queuePreviewZoomLayout());
+                previewResizeObserver = new ResizeObserver(() => {
+                    queuePreviewZoomLayout();
+                    /* 2.5.6: 원고 높이가 바뀌면 꾸밈 그림도 그 크기로 다시 그린다 */
+                    if (editorPage && pageBgMode() === 'decor') applyPageBackground(editorPage);
+                });
                 previewResizeObserver.observe(editorPage);
                 previewResizeObserver.observe(editorOverlay.querySelector('#novcap-preview-stage'));
             }
@@ -21045,6 +22529,8 @@
             updateHistoryButtons();
 
             captureStage = 'editing';
+            /* 2.5.5: 로그 정보를 켜 둔 때만 크랙에 묻는다(기다리지 않고 도착하면 그린다). */
+            startLogInfo(editorPage);
             playEditorEnter();
             if (pagePhotoOpen === 'missing') showToast('사진을 찾지 못해 단색 배경으로 바꿨어요');
             else if (pagePhotoOpen === 'unavailable') notePagePhotoMemoryOnly();
@@ -21077,6 +22563,9 @@
         historyImageData.clear();
         layoutEditPlan = null;
         previewRefitPending = false;
+        codePickStart = null;
+        codePickEnd = null;
+        logInfoJob = null;
     }
 
     /* 편집 화면을 다시 붙이지 않으므로(P6) 숨겼다 다시 보이면 브라우저가 지난번 스크롤 자리를 되살린다.
@@ -21167,8 +22656,14 @@
         return element.closest('p, li, h1, h2, h3, h4, h5, h6, td, th, dt, dd, blockquote, pre, hr');
     }
 
-    function getRemovableBlock(target) {
+    function getRemovableBlock(target, clientY = 0) {
         if (!target || !editorPage?.contains(target)) return null;
+        /* 2.5.5: 상태창은 누른 줄만 뺀다. 머리글(INFO)을 누르면 통째로 빼고, 통째로 뺀 것은 어디를 눌러도 되살린다. */
+        const codeBlock = target.closest?.('.wrtn-codeblock');
+        if (codeBlock?.getAttribute('data-novcap-remove') === 'true') return codeBlock;
+        const codeLine = codeLineAtPoint(target, clientY);
+        if (codeLine) return codeLine;
+        if (codeBlock) return codeBlock;
         /* 바꾼 SVG 카드·유튜브 카드는 그림처럼 통째로 제외한다. */
         const card = target.closest?.('.novcap-svg-image, .novcap-youtube-card');
         if (card) return card.closest('p, li, blockquote, pre') || card;
@@ -21177,7 +22672,7 @@
         return target.closest?.('p, li, blockquote, pre, hr') || null;
     }
 
-    const PEN_TOOL_MODES = ['highlight-add', 'highlight-remove', 'underline-add', 'underline-remove'];
+    const PEN_TOOL_MODES = ['highlight-add', 'highlight-remove', 'underline-add', 'underline-remove', 'mosaic-add', 'mosaic-remove'];
 
     function updateEditorToolUi() {
         if (!editorOverlay) return;
@@ -21198,6 +22693,10 @@
         setAttrIfChanged(removeHighlightButton, 'aria-pressed', String(editorToolMode === 'highlight-remove'));
         removeUnderlineButton?.classList.toggle('active', editorToolMode === 'underline-remove');
         setAttrIfChanged(removeUnderlineButton, 'aria-pressed', String(editorToolMode === 'underline-remove'));
+        const removeMosaicButton = editorOverlay.querySelector('#novcap-remove-mosaic');
+        removeMosaicButton?.classList.toggle('active', editorToolMode === 'mosaic-remove');
+        setAttrIfChanged(removeMosaicButton, 'aria-pressed', String(editorToolMode === 'mosaic-remove'));
+        syncCodePickUi();
 
         editorOverlay.querySelectorAll('.novcap-highlight-btn').forEach(button => {
             button.classList.toggle(
@@ -21205,7 +22704,7 @@
                 editorToolMode === 'highlight-add' && button.dataset.color === activeHighlightColor
             );
         });
-        editorOverlay.querySelector('#novcap-custom-highlight')?.classList.toggle('active', editorToolMode === 'highlight-add' && highlightIsCustom);
+        editorOverlay.querySelector('#novcap-custom-highlight')?.classList.toggle('active', editorToolMode === 'highlight-add' && highlightIsCustom && !userColorListed('highlight', activeHighlightColor));
         editorOverlay.querySelectorAll('.novcap-underline-btn').forEach(button => {
             button.classList.toggle(
                 'active',
@@ -21218,7 +22717,7 @@
                 editorToolMode === 'underline-add' && button.dataset.color === activeUnderlineColor
             );
         });
-        editorOverlay.querySelector('#novcap-custom-underline')?.classList.toggle('active', editorToolMode === 'underline-add' && underlineIsCustom);
+        editorOverlay.querySelector('#novcap-custom-underline')?.classList.toggle('active', editorToolMode === 'underline-add' && underlineIsCustom && !userColorListed('underline', activeUnderlineColor));
 
         const commentModeButton = editorOverlay.querySelector('#novcap-comment-mode');
         if (commentModeButton) {
@@ -21228,6 +22727,7 @@
         /* 펜을 켜면 그 펜 칸을 보인다(누르기만 바꾸고 다시 켜지는 않는다). */
         if (editorToolMode.startsWith('highlight') && uiPenPane !== 'highlight') setPenPane('highlight');
         else if (editorToolMode.startsWith('underline') && uiPenPane !== 'underline') setPenPane('underline');
+        else if (editorToolMode.startsWith('mosaic') && uiPenPane !== 'mosaic') setPenPane('mosaic');
         syncSwatchRings();
         syncSegments();
         updatePenSamples();
@@ -21236,6 +22736,7 @@
         if (!editorPage) return;
         /* 아무 도구도 안 켠 상태(idle)면 원고 위 도구 커서를 없앤다. */
         editorPage.classList.toggle('novcap-tool-active', editorToolMode !== 'idle');
+        editorPage.classList.toggle('novcap-mosaic-tool', editorToolMode.startsWith('mosaic'));
         /* 코멘트 모드: 상자 글자를 바로 고쳐 쓴다(V3). 다른 모드에서는 상자 클릭이 아래 글자로 통과한다. */
         editorPage.classList.toggle('novcap-comment-mode', editorToolMode === 'comment');
         editorPage.querySelectorAll('.novcap-comment').forEach(comment => {
@@ -21260,6 +22761,7 @@
         /* 마지막으로 고른 형광펜 색을 다음 편집의 기본 색으로 기억한다. */
         if (mode === 'highlight-add' && color) rememberHighlightColor(color);
         editorToolMode = mode;
+        if (mode !== 'code-pick') clearCodePick();
         if (color) activeHighlightColor = color;
         window.getSelection()?.removeAllRanges();
         updateEditorToolUi();
@@ -21272,6 +22774,17 @@
         } catch {
             return false;
         }
+    }
+
+    /* 2.5.4: 공백만 든 글자 노드도 칠한다(*지문* **굵게** 사이가 끊기지 않게). 문단·표 칸 사이 줄바꿈처럼 화면에 자리가 없는 공백은 빼서 구조에 손대지 않는다. */
+    function textNodeIsRendered(node) {
+        if (!node.nodeValue) return false;
+        if (node.nodeValue.trim()) return true;
+        const range = node.ownerDocument.createRange();
+        range.selectNodeContents(node);
+        const rendered = Array.from(range.getClientRects()).some(rect => rect.width > 0);
+        range.detach?.();
+        return rendered;
     }
 
     function applyHighlightRange(range, colorName) {
@@ -21287,8 +22800,8 @@
         let node;
         while ((node = walker.nextNode())) {
             if (!closestContentRoot(node) || !range.intersectsNode(node)) continue;
-            if (!node.nodeValue.trim() || !node.parentElement.getClientRects().length ||
-                node.parentElement.closest('[data-novcap-remove="true"]')) continue;
+            if (!textNodeIsRendered(node) || !node.parentElement.getClientRects().length ||
+                node.parentElement.closest('[data-novcap-remove="true"], [data-novcap-mosaic]')) continue;
             const start = node === range.startContainer ? range.startOffset : 0;
             const end = node === range.endContainer ? range.endOffset : node.length;
             if (end > start) slices.push({ node, start, end });
@@ -21313,11 +22826,37 @@
         parent.normalize();
     }
 
+    /* 2.5.4: 공백 조각은 양옆이 칠해져 있을 때만 남긴다. 낱말을 눌러 지우면 공백 조각이 남아 누를 수도 없는 얼룩이 되므로 함께 지운다. */
+    function dropStrandedBlankMarks(attribute) {
+        const selector = '[' + attribute + ']';
+        const walker = document.createTreeWalker(editorPage, NodeFilter.SHOW_TEXT);
+        const textEdge = (mark, last) => {
+            const inner = document.createTreeWalker(mark, NodeFilter.SHOW_TEXT);
+            let node = inner.nextNode();
+            let found = node;
+            while (last && (node = inner.nextNode())) found = node;
+            return found;
+        };
+        const touchesPainted = (mark, step) => {
+            const edge = textEdge(mark, step === 'nextNode');
+            if (!edge) return false;
+            walker.currentNode = edge;
+            let node = walker[step]();
+            while (node && !node.nodeValue.length) node = walker[step]();
+            const other = node?.parentElement?.closest(selector);
+            return Boolean(other && other !== mark && other.textContent.trim());
+        };
+        Array.from(editorPage.querySelectorAll(selector))
+            .filter(mark => !mark.textContent.trim() && !(touchesPainted(mark, 'previousNode') && touchesPainted(mark, 'nextNode')))
+            .forEach(unwrapElement);
+    }
+
     function removeHighlightsInRange(range) {
         const marks = Array.from(editorPage.querySelectorAll('[data-novcap-highlight]'))
             .filter(mark => rangeIntersectsElement(range, mark));
         if (!marks.length) return false;
         marks.forEach(unwrapElement);
+        dropStrandedBlankMarks('data-novcap-highlight');
         return true;
     }
 
@@ -21333,8 +22872,8 @@
         let node;
         while ((node = walker.nextNode())) {
             if (!closestContentRoot(node) || !range.intersectsNode(node)) continue;
-            if (!node.nodeValue.trim() || !node.parentElement.getClientRects().length ||
-                node.parentElement.closest('[data-novcap-remove="true"]')) continue;
+            if (!textNodeIsRendered(node) || !node.parentElement.getClientRects().length ||
+                node.parentElement.closest('[data-novcap-remove="true"], [data-novcap-mosaic]')) continue;
             const start = node === range.startContainer ? range.startOffset : 0;
             const end = node === range.endContainer ? range.endOffset : node.length;
             if (end > start) slices.push({ node, start, end });
@@ -21358,9 +22897,43 @@
             .filter(mark => rangeIntersectsElement(range, mark));
         if (!marks.length) return false;
         marks.forEach(unwrapElement);
+        dropStrandedBlankMarks('data-novcap-underline');
         return true;
     }
 
+    /* ── 2.5.5 문장 가리기 ──
+       글자마다 따로 감싸 문단 구조를 그대로 둔다. 이미 가린 곳과 뺀 문단은 건너뛴다. */
+    function applyMosaicRange(range) {
+        const style = config.mosaicStyle === 'blank' ? 'blank' : 'pattern';
+        const slices = [];
+        const walker = document.createTreeWalker(editorPage, NodeFilter.SHOW_TEXT);
+        let node;
+        while ((node = walker.nextNode())) {
+            if (!closestContentRoot(node) || !range.intersectsNode(node)) continue;
+            if (!textNodeIsRendered(node) || !node.parentElement.getClientRects().length ||
+                node.parentElement.closest('[data-novcap-remove="true"], [data-novcap-mosaic]')) continue;
+            const start = node === range.startContainer ? range.startOffset : 0;
+            const end = node === range.endContainer ? range.endOffset : node.length;
+            if (end > start) slices.push({ node, start, end });
+        }
+        for (const { node, start, end } of slices.reverse()) {
+            const part = document.createRange();
+            part.setStart(node, start);
+            part.setEnd(node, end);
+            const span = document.createElement('span');
+            span.dataset.novcapMosaic = style;
+            part.surroundContents(span);
+        }
+        return slices.length > 0;
+    }
+
+    function removeMosaicsInRange(range) {
+        const marks = Array.from(editorPage.querySelectorAll('[data-novcap-mosaic]'))
+            .filter(mark => rangeIntersectsElement(range, mark));
+        if (!marks.length) return false;
+        marks.forEach(unwrapElement);
+        return true;
+    }
     /* 시작 단어 안내(highlightStatus)는 편집 화면을 만들 때 함께 만든다. */
     function resetHighlightStart() {
         highlightStartWord = null;
@@ -21546,7 +23119,7 @@
         window.getSelection()?.removeAllRanges();
         if (!highlightStartWord || highlightStartWord.collapsed || !editorPage.contains(highlightStartWord.startContainer)) {
             highlightStartWord = word;
-            const toolName = editorToolMode.startsWith('underline') ? '밑줄' : '형광펜';
+            const toolName = editorToolMode.startsWith('underline') ? '밑줄' : editorToolMode.startsWith('mosaic') ? '가리기' : '형광펜';
             const verb = editorToolMode.endsWith('remove') ? ' 지우기' : '';
             setTextIfChanged(highlightStatus.querySelector('.novcap-hint-text'), `${toolName}${verb} 시작 “${selectedToken.slice(0, 24)}” · 끝 단어를 누르세요 (같은 단어 = 한 단어)`);
             highlightStatus.style.display = 'block';
@@ -21567,7 +23140,9 @@
             'highlight-add': () => applyHighlightRange(range, activeHighlightColor),
             'highlight-remove': () => removeHighlightsInRange(range),
             'underline-add': () => applyUnderlineRange(range, activeUnderlineStyle, activeUnderlineColor),
-            'underline-remove': () => removeUnderlinesInRange(range)
+            'underline-remove': () => removeUnderlinesInRange(range),
+            'mosaic-add': () => applyMosaicRange(range),
+            'mosaic-remove': () => removeMosaicsInRange(range)
         };
         const action = actions[editorToolMode];
         if (!action) return false;
@@ -21592,7 +23167,7 @@
         if (!editorPage.contains(range.commonAncestorContainer)) return false;
         resetHighlightStart();
         /* 단어 단위로 칠하기를 켜면 형광펜 드래그 양 끝을 단어 끝까지 넓힌다(밑줄·지우기 아닌 칠하기만이 아니라 형광펜 두 모드). */
-        if (editorToolMode.startsWith('highlight') && config.highlightWordSnap !== false) expandRangeToWords(range);
+        if ((editorToolMode.startsWith('highlight') || editorToolMode.startsWith('mosaic')) && config.highlightWordSnap !== false) expandRangeToWords(range);
         return applyPenRange(range);
     }
 
@@ -21655,13 +23230,22 @@
         /* 문단 제외 켜짐: 누른 문단을 빼고, 뺀 문단을 다시 누르면 되살린다. */
         editorOverlay.addEventListener('click', event => {
             if (!editorPage || !editorPage.contains(event.target)) return;
-            if (!['remove-mark', 'remove-unmark'].includes(editorToolMode)) return;
+            /* 2.5.5: 원고 안 링크를 눌러도 이동하지 않는다(링크 글자를 칠하거나 가리려면 눌러야 한다). */
+            if (event.target.closest?.('a[href]')) event.preventDefault();
+            if (!['remove-mark', 'remove-unmark', 'code-pick'].includes(editorToolMode)) return;
             if (Date.now() < suppressPreviewClickUntil) return;
 
             const selectedText = window.getSelection()?.toString()?.trim();
             if (selectedText) return;
 
-            const block = getRemovableBlock(event.target);
+            /* 2.5.5: 상태창 줄 고르기 */
+            if (editorToolMode === 'code-pick') {
+                const line = codeLineAtPoint(event.target, event.clientY);
+                if (line) pickCodeLine(line);
+                return;
+            }
+
+            const block = getRemovableBlock(event.target, event.clientY);
             if (!block) return;
 
             if (editorToolMode === 'remove-mark' && block.getAttribute('data-novcap-remove') !== 'true') block.setAttribute('data-novcap-remove', 'true');
@@ -22006,12 +23590,18 @@
             const swapButton = event.target.closest('.novcap-mask-swap');
             if (!swapButton) return;
             const row = swapButton.closest('.novcap-mask-row');
-            const fromInput = row?.querySelector('.novcap-mask-from');
             const toInput = row?.querySelector('.novcap-mask-to');
-            if (!fromInput || !toInput) return;
-            const previous = fromInput.value;
-            fromInput.value = toInput.value;
+            const typer = row?.querySelector('.novcap-mask-typer');
+            if (!toInput || !typer) return;
+            /* 2.5.5: 이름이 여럿이면 바꿀 말 칸에 옮길 수 없어 잠근다. */
+            const names = maskRowNames(row);
+            if (names.length > 1) return;
+            const previous = names[0] || '';
+            row.querySelectorAll('.novcap-mask-chip').forEach(chip => chip.remove());
+            typer.value = '';
+            addMaskChips(row, [toInput.value]);
             toInput.value = previous;
+            syncMaskRowsMeta();
             const icon = swapButton.querySelector('.novcap-swap-icon');
             if (icon) icon.dataset.flip = icon.dataset.flip === 'true' ? 'false' : 'true';
             config.maskPairs = readMaskRows();
@@ -22084,6 +23674,7 @@
         editorOverlay.querySelector('#novcap-remove-underline').onclick = () => {
             setEditorTool(editorToolMode === 'underline-remove' ? 'underline-add' : 'underline-remove');
         };
+        bindCaptureAdditions();
     }
 
     /* ── 형광펜·밑줄 색 직접 고르기(V3 색 편집 창) ──
@@ -22300,18 +23891,23 @@
         colorField('#novcap-color-confirm').onclick = () => {
             if (!validateRgbFields() || !readColorHex()) return;
             const hex = rgbToHex(hsvToRgb(colorDraft.h, colorDraft.s, colorDraft.v));
+            /* 2.5.7: 고른 색은 그 줄의 내 색 칸으로 남는다(+는 비워 둔다). 기본 견본과 같은 색이면 그 견본을 고른다. */
             if (colorTarget === 'underline') {
+                const name = userColorPresetName('underline', hex);
                 config.customUnderlineColor = hex;
-                config.underlineColor = hex;
-                activeUnderlineColor = hex;
+                config.underlineColor = name || hex;
+                activeUnderlineColor = name || hex;
+                if (!name) addUserColor('underline', hex);
                 saveConfig();
                 closeColorDialog();
                 setEditorTool('underline-add');
             } else {
+                const name = userColorPresetName('highlight', hex);
                 config.customHighlightColor = hex;
+                if (!name) addUserColor('highlight', hex);
                 saveConfig();
                 closeColorDialog();
-                setEditorTool('highlight-add', hex);
+                setEditorTool('highlight-add', name || hex);
             }
         };
         colorField('#novcap-color-cancel').onclick = closeColorDialog;
@@ -22334,6 +23930,309 @@
             pointerOnBackdrop = false;
         });
     }
+    /* ── 2.5.7 내 색 칸 ──
+       +로 고른 색은 그 줄의 + 앞에 칸으로 남고 +는 늘 비어 있다(지금 색이 어느 칸에도 없을 때만 +를 그 색으로 채운다).
+       칸은 그 줄 견본과 같은 class를 달아 고리·잠금은 원래 동기화가 맡는다. 누르기·지우기는 칸을 만들 때 단다.
+       ×: PC는 올리면, 터치는 길게(480ms) 누르면 보인다. 길게 누르고 뗄 때 따라오는 click은 350ms 막는다. Delete·Backspace로도 지운다. */
+    const USER_COLOR_SPEC = {
+        bg: { plus: '#novcap-bg-custom', cls: 'novcap-sw-sq novcap-bg-preset', name: '배경' },
+        text: { plus: '#novcap-text-custom', cls: 'novcap-sw-round-lg novcap-text-preset', name: '글자' },
+        pattern: { plus: '#novcap-pattern-custom', cls: 'novcap-sw-round-lg novcap-pattern-color-btn', name: '무늬' },
+        note: { plus: '#novcap-comment-color', parent: true, cls: 'novcap-note-color', name: '쪽지' },
+        highlight: { plus: '#novcap-custom-highlight', cls: 'novcap-highlight-btn', name: '형광펜' },
+        underline: { plus: '#novcap-custom-underline', cls: 'novcap-underline-color-btn', name: '밑줄' }
+    };
+    const USER_COLOR_X = '<i class="novcap-sw-x" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></i>';
+    let userSwatchHold = null;
+    let userSwatchGuardUntil = 0;
+
+    function userColorPlus(row) {
+        const spec = USER_COLOR_SPEC[row];
+        const el = spec && editorOverlay ? editorOverlay.querySelector(spec.plus) : null;
+        return spec?.parent ? (el?.parentElement || null) : el;
+    }
+
+    function userColorListed(row, value) {
+        const hex = normalizeHexColor(value, '');
+        return Boolean(hex) && Array.isArray(config.userColors?.[row]) && config.userColors[row].includes(hex);
+    }
+
+    function createUserSwatch(row, hex, disabled) {
+        const spec = USER_COLOR_SPEC[row];
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'novcap-sw ' + spec.cls + ' novcap-sw-user';
+        button.dataset.color = hex;
+        button.dataset.userRow = row;
+        button.setAttribute('role', 'radio');
+        button.setAttribute('aria-checked', 'false');
+        button.setAttribute('tabindex', '-1');
+        button.setAttribute('aria-label', spec.name + ' 내 색 ' + hex);
+        button.setAttribute('aria-keyshortcuts', 'Delete');
+        button.style.setProperty('--sw', hex);
+        button.innerHTML = '<span></span>' + USER_COLOR_X;
+        button.disabled = Boolean(disabled);
+        button.addEventListener('click', onUserSwatchClick);
+        button.addEventListener('keydown', onUserSwatchKey);
+        button.addEventListener('pointerdown', onUserSwatchPointerDown);
+        button.addEventListener('contextmenu', event => event.preventDefault());
+        return button;
+    }
+
+    /* 칸을 config.userColors에 맞춘다. 남는 칸은 그대로 두고(초점·고리 유지) 빠진 칸만 지우고 새 칸만 + 앞에 넣는다. */
+    function renderUserSwatches(added = null) {
+        if (!editorOverlay) return;
+        const lists = config.userColors = normalizeUserColors(config.userColors);
+        USER_COLOR_ROWS.forEach(row => {
+            const plus = userColorPlus(row);
+            const group = plus?.parentElement;
+            if (!group) return;
+            const list = lists[row];
+            const current = Array.from(group.querySelectorAll(':scope > .novcap-sw-user'));
+            const currentHex = current.map(button => button.dataset.color);
+            if (currentHex.join(',') === list.join(',')) return;
+            const kept = currentHex.filter(hex => list.includes(hex));
+            const inOrder = kept.join(',') === list.slice(0, kept.length).join(',');
+            current.forEach(button => {
+                if (!inOrder || !list.includes(button.dataset.color)) button.remove();
+            });
+            const preset = group.querySelector(':scope > .novcap-sw:not(.novcap-sw-user):not(.novcap-sw-custom)');
+            list.slice(inOrder ? kept.length : 0).forEach(hex => {
+                const button = createUserSwatch(row, hex, preset?.disabled);
+                plus.before(button);
+                if (added && added.row === row && added.hex === hex) playUserSwatchIn(button);
+            });
+            if (group.getAttribute('role') === 'radiogroup') syncRadioRoving(group);
+        });
+    }
+
+    /* 들어올 때는 폭이 0에서 벌어지며 튀어나오고, 나갈 때는 오므라들며 빠진다(옆 칸이 미끄러진다). 움직임 줄이기면 하지 않는다. */
+    function userSwatchGap(button) {
+        return parseFloat(getComputedStyle(button.parentElement).columnGap) || 0;
+    }
+
+    function playUserSwatchIn(button) {
+        if (!overlayShown() || !button.offsetParent) return;
+        const w = button.getBoundingClientRect().width;
+        if (!w) return;
+        const gap = userSwatchGap(button);
+        playOnce(button, [{ flexBasis: '0px', width: '0px', marginRight: -gap + 'px' }, { flexBasis: w + 'px', width: w + 'px', marginRight: '0px' }], { duration: 220 });
+        playOnce(button, [{ opacity: 0, transform: 'scale(.3)' }, { opacity: 1, transform: 'scale(1)' }], { duration: 380, easing: EASE_SPRING });
+    }
+
+    function playUserSwatchOut(button) {
+        if (!overlayShown() || !button.offsetParent) return null;
+        const w = button.getBoundingClientRect().width;
+        const gap = userSwatchGap(button);
+        return playOnce(button, [
+            { flexBasis: w + 'px', width: w + 'px', marginRight: '0px', opacity: 1, transform: 'scale(1)' },
+            { flexBasis: '0px', width: '0px', marginRight: -gap + 'px', opacity: 0, transform: 'scale(.3)' }
+        ], { duration: 180, easing: 'cubic-bezier(.4,0,.2,1)', fill: 'forwards' });
+    }
+
+    function syncUserColorRow(row) {
+        if (row === 'pattern') syncPageBgControls();
+        else syncSwatchRings();
+    }
+
+    function addUserColor(row, value) {
+        const hex = normalizeHexColor(value, '');
+        if (!hex || !USER_COLOR_SPEC[row] || userColorIsPreset(row, hex)) return false;
+        const lists = config.userColors = normalizeUserColors(config.userColors);
+        if (lists[row].includes(hex)) return false;
+        lists[row] = lists[row].concat(hex).slice(-USER_COLOR_MAX);
+        saveConfig();
+        renderUserSwatches({ row, hex });
+        syncUserColorRow(row);
+        return true;
+    }
+
+    function removeUserColor(row, hex, button = null) {
+        const index = normalizeUserColors(config.userColors)[row]?.indexOf(hex) ?? -1;
+        if (index < 0) return;
+        const group = button?.parentElement || userColorPlus(row)?.parentElement || null;
+        const hadFocus = Boolean(button) && document.activeElement === button;
+        let done = false;
+        const finish = () => {
+            if (done) return;
+            done = true;
+            const lists = config.userColors = normalizeUserColors(config.userColors);
+            lists[row] = lists[row].filter(item => item !== hex);
+            saveConfig();
+            renderUserSwatches();
+            syncUserColorRow(row);
+            if (hadFocus && group) {
+                const items = group.querySelectorAll(':scope > .novcap-sw-user');
+                const plus = userColorPlus(row);
+                const next = items[index] || items[index - 1] || (plus?.matches('label') ? plus.querySelector('input') : plus);
+                next?.focus({ preventScroll: true });
+            }
+            showToastAction('색을 지웠어요', '되돌리기', () => restoreUserColor(row, hex, index));
+        };
+        if (button) {
+            button.style.pointerEvents = 'none';
+            const anim = playUserSwatchOut(button);
+            if (anim) {
+                anim.onfinish = finish;
+                anim.oncancel = finish;
+                return;
+            }
+        }
+        finish();
+    }
+
+    function restoreUserColor(row, hex, index) {
+        const lists = config.userColors = normalizeUserColors(config.userColors);
+        if (lists[row].includes(hex)) return;
+        const list = lists[row].slice();
+        list.splice(Math.min(index, list.length), 0, hex);
+        lists[row] = list.slice(-USER_COLOR_MAX);
+        saveConfig();
+        renderUserSwatches({ row, hex });
+        syncUserColorRow(row);
+    }
+
+    /* 칸을 누르면 그 줄의 기본 견본을 누른 것과 같다. */
+    function useUserColor(row, hex) {
+        if (row === 'bg') setEditorColors(hex, config.textColor);
+        else if (row === 'text') setEditorColors(config.bgColor, hex);
+        else if (row === 'pattern') setPatternColor(hex);
+        else if (row === 'note') {
+            const input = editorOverlay.querySelector('#novcap-comment-color');
+            if (!input || input.disabled || (!isSettingsOnlyMode() && !selectedComment())) return;
+            input.value = hex;
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+        } else if (row === 'highlight') setEditorTool('highlight-add', hex);
+        else if (row === 'underline') {
+            activeUnderlineColor = hex;
+            config.underlineColor = hex;
+            saveConfig();
+            setEditorTool('underline-add');
+        }
+    }
+
+    function onUserSwatchClick(event) {
+        const button = event.currentTarget;
+        if (userSwatchGuardUntil === Infinity && !userSwatchHold) userSwatchGuardUntil = 0;
+        /* 길게 눌러 ×를 띄운 뒤 손을 뗄 때 따라오는 click은 고르기로 치지 않는다. */
+        if (Date.now() < userSwatchGuardUntil) {
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+        }
+        if (event.target.closest?.('.novcap-sw-x')) {
+            event.preventDefault();
+            event.stopPropagation();
+            removeUserColor(button.dataset.userRow, button.dataset.color, button);
+            return;
+        }
+        disarmUserSwatches();
+        useUserColor(button.dataset.userRow, button.dataset.color);
+    }
+
+    function onUserSwatchKey(event) {
+        if (event.key !== 'Delete' && event.key !== 'Backspace') return;
+        if (event.altKey || event.ctrlKey || event.metaKey) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const button = event.currentTarget;
+        removeUserColor(button.dataset.userRow, button.dataset.color, button);
+    }
+
+    function clearUserSwatchHold() {
+        if (userSwatchHold) clearTimeout(userSwatchHold.timer);
+        userSwatchHold = null;
+    }
+
+    function disarmUserSwatches(except = null) {
+        editorOverlay?.querySelectorAll('.novcap-sw-user.is-armed').forEach(button => {
+            if (button !== except) button.classList.remove('is-armed');
+        });
+    }
+
+    function onUserSwatchPointerDown(event) {
+        const button = event.currentTarget;
+        if (!userSwatchHold && userSwatchGuardUntil === Infinity) userSwatchGuardUntil = 0;
+        if (event.pointerType === 'mouse' || !event.isPrimary || button.disabled) return;
+        clearUserSwatchHold();
+        userSwatchHold = {
+            button,
+            id: event.pointerId,
+            x: event.clientX,
+            y: event.clientY,
+            armed: false,
+            timer: setTimeout(() => {
+                const hold = userSwatchHold;
+                if (!hold || hold.button !== button || !button.isConnected) return;
+                hold.armed = true;
+                userSwatchGuardUntil = Infinity;
+                disarmUserSwatches(button);
+                button.classList.add('is-armed');
+            }, 480)
+        };
+    }
+
+    function trackUserSwatchHold(event) {
+        const hold = userSwatchHold;
+        if (!hold || hold.id !== event.pointerId) return;
+        if (event.type === 'pointermove') {
+            if (!hold.armed && Math.hypot(event.clientX - hold.x, event.clientY - hold.y) > 10) clearUserSwatchHold();
+            return;
+        }
+        if (hold.armed) userSwatchGuardUntil = Date.now() + 350;
+        clearUserSwatchHold();
+    }
+
+    /* 색 입력 칸(+): 고르는 동안(input)은 원래처럼 바로 보이고, 고르기를 마치면(change) 칸으로 남긴다.
+       한 번 열어 여러 번 change가 와도(일부 휴대폰) 칸은 마지막 색 하나만 남는다. */
+    function bindUserColorInput(row, input) {
+        if (!input) return;
+        let session = null;
+        const begin = () => { session = { start: normalizeHexColor(input.value, ''), added: '' }; };
+        input.addEventListener('pointerdown', begin);
+        input.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') begin(); });
+        const commit = () => {
+            if (!session) begin();
+            const hex = normalizeHexColor(input.value, '');
+            if (!hex || hex === session.added) return;
+            let dropped = false;
+            if (session.added) {
+                const lists = config.userColors = normalizeUserColors(config.userColors);
+                const before = lists[row].length;
+                lists[row] = lists[row].filter(item => item !== session.added);
+                dropped = lists[row].length !== before;
+                session.added = '';
+            }
+            if (addUserColor(row, hex)) session.added = hex;
+            else if (dropped) {
+                saveConfig();
+                renderUserSwatches();
+                syncUserColorRow(row);
+            }
+        };
+        input.addEventListener('change', commit);
+        input.addEventListener('blur', () => {
+            if (session && normalizeHexColor(input.value, '') !== session.start) commit();
+            session = null;
+        });
+    }
+
+    function bindUserSwatches() {
+        bindUserColorInput('bg', editorOverlay.querySelector('#novcap-editor-bg-color'));
+        bindUserColorInput('text', editorOverlay.querySelector('#novcap-editor-text-color'));
+        bindUserColorInput('pattern', editorOverlay.querySelector('#novcap-pattern-color'));
+        bindUserColorInput('note', editorOverlay.querySelector('#novcap-comment-color'));
+        /* 띄운 ×는 다른 곳을 누르면 거둔다. */
+        editorOverlay.addEventListener('pointerdown', event => {
+            const armed = editorOverlay.querySelector('.novcap-sw-user.is-armed');
+            if (armed && !armed.contains(event.target)) disarmUserSwatches();
+        }, true);
+        editorOverlay.addEventListener('pointermove', trackUserSwatchHold, true);
+        editorOverlay.addEventListener('pointerup', trackUserSwatchHold, true);
+        editorOverlay.addEventListener('pointercancel', trackUserSwatchHold, true);
+        renderUserSwatches();
+    }
+
     function bindCustomColorButtons() {
         editorOverlay.querySelector('#novcap-custom-highlight').onclick = () => openColorDialog('highlight');
         editorOverlay.querySelector('#novcap-custom-underline').onclick = () => openColorDialog('underline');
@@ -23048,6 +24947,1127 @@
         };
     }
 
+    /* ── 2.5.5 저장본의 가린 글자: 글자는 그리지 않고(visibility) 모자이크는 줄마다 글자 위 층에 칠한다. ── */
+    function materializeMosaicRects(capturePage) {
+        const document = capturePage.ownerDocument;
+        const view = document.defaultView;
+        capturePage.querySelectorAll('.novcap-mosaic-layer').forEach(layer => layer.remove());
+        const marks = Array.from(capturePage.querySelectorAll('[data-novcap-mosaic]'));
+        if (!marks.length) return;
+        const origin = capturePage.getBoundingClientRect();
+        const boxes = [];
+        marks.forEach(mark => {
+            if (mark.dataset.novcapMosaic !== 'pattern') return;
+            const fontSize = Number.parseFloat(view.getComputedStyle(mark).fontSize) || config.fontSize;
+            const cell = Math.max(2, fontSize * .2);
+            getMarkTextLines(mark, document).forEach(({ line }) => {
+                const height = line.height + fontSize * .12;
+                boxes.push({ left: line.left - origin.left, top: line.top - origin.top + line.height / 2 - height / 2, width: line.width, height, cell });
+            });
+        });
+        marks.forEach(mark => [mark, ...mark.querySelectorAll('*')].forEach(element => element.style.setProperty('visibility', 'hidden', 'important')));
+        if (!boxes.length) return;
+        const layer = document.createElement('div');
+        layer.className = 'novcap-mosaic-layer';
+        boxes.forEach(box => {
+            const rect = document.createElement('div');
+            rect.className = 'novcap-mosaic-rect';
+            rect.style.left = box.left + 'px';
+            rect.style.top = box.top + 'px';
+            rect.style.width = box.width + 'px';
+            rect.style.height = box.height + 'px';
+            rect.style.backgroundSize = (box.cell * 2) + 'px ' + (box.cell * 2) + 'px';
+            layer.appendChild(rect);
+        });
+        capturePage.appendChild(layer);
+    }
+
+    /* 2.5.5: 줄바꿈된 백틱 글자(기본 조판). html2canvas는 테두리를 여러 줄을 감싸는 큰 상자 하나로 그리므로 줄마다 층에 그린다.
+       테마 조판은 materializeCustomRoomDecorations가 같은 일을 한다. */
+    function materializeInlineCodeBorders(capturePage) {
+        if (!config.inlineCodeBorder || capturePage.classList.contains('novcap-custom-room-theme')) return;
+        const document = capturePage.ownerDocument;
+        const view = document.defaultView;
+        const origin = capturePage.getBoundingClientRect();
+        const jobs = [];
+        capturePage.querySelectorAll('.novcap-novel-content code').forEach(code => {
+            if (code.closest('pre')) return;
+            const lines = mergeLineRects(Array.from(code.getClientRects()));
+            if (lines.length < 2) return;
+            const style = view.getComputedStyle(code);
+            jobs.push({ code, lines, color: style.borderTopColor, radius: style.borderTopLeftRadius });
+        });
+        if (!jobs.length) return;
+        const layer = document.createElement('div');
+        layer.className = 'novcap-underline-layer';
+        jobs.forEach(({ code, lines, color, radius }) => {
+            lines.forEach(line => {
+                const rect = document.createElement('div');
+                rect.className = 'novcap-underline-rect';
+                rect.style.left = (line.left - origin.left) + 'px';
+                rect.style.top = (line.top - origin.top) + 'px';
+                rect.style.width = (line.right - line.left) + 'px';
+                rect.style.height = line.height + 'px';
+                rect.style.boxSizing = 'border-box';
+                rect.style.border = '1px solid ' + color;
+                rect.style.borderRadius = radius;
+                layer.appendChild(rect);
+            });
+            code.style.setProperty('border-color', 'transparent', 'important');
+        });
+        capturePage.appendChild(layer);
+    }
+
+    /* ── 2.5.5 상태창 줄 ──
+       코드블럭을 줄마다 글자 칸으로 묶는다. 줄바꿈 글자를 그 줄 끝에 함께 넣어 글 흐름이 그대로이므로 모양은 조금도 바뀌지 않는다.
+       머리글(INFO)도 표시해 둔다. 크랙의 머리글 클래스는 빌드마다 바뀌므로 자리로 찾는다. */
+    function prepareCodeLines(root) {
+        root.querySelectorAll('pre').forEach(pre => {
+            if (pre.hasAttribute('data-novcap-code-lines')) return;
+            const body = pre.querySelector('code') || pre;
+            const doc = body.ownerDocument;
+            const walker = doc.createTreeWalker(body, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
+            const ends = [];
+            let node;
+            while ((node = walker.nextNode())) {
+                if (node.nodeType === Node.TEXT_NODE) {
+                    const breaks = /\r\n|\r|\n/g;
+                    let match;
+                    while ((match = breaks.exec(node.nodeValue))) ends.push([node, match.index + match[0].length]);
+                } else if (node.tagName === 'BR') {
+                    ends.push([node.parentNode, Array.prototype.indexOf.call(node.parentNode.childNodes, node) + 1]);
+                }
+            }
+            const fragment = doc.createDocumentFragment();
+            let start = [body, 0];
+            let number = 0;
+            const append = end => {
+                const range = doc.createRange();
+                range.setStart(start[0], start[1]);
+                range.setEnd(end[0], end[1]);
+                const content = range.cloneContents();
+                /* 맨 끝 줄바꿈 뒤에는 줄이 없다. */
+                if (end[0] === body && ends.length && !content.textContent && !content.querySelector('img, svg, br')) return;
+                const line = doc.createElement('span');
+                line.dataset.novcapCodeLine = String(++number);
+                line.appendChild(content);
+                fragment.appendChild(line);
+            };
+            ends.forEach(end => {
+                append(end);
+                start = end;
+            });
+            append([body, body.childNodes.length]);
+            body.replaceChildren(fragment);
+            pre.setAttribute('data-novcap-code-lines', 'true');
+        });
+    }
+
+    /* 줄 칸은 글자만큼의 자리뿐이라, 줄 오른쪽 빈 곳이나 빈 줄을 눌러도 그 높이의 줄로 본다. 코드블럭 글 칸 밖이면 null */
+    function codeLineAtPoint(target, clientY) {
+        const pre = target?.closest?.('pre[data-novcap-code-lines]');
+        if (!pre) return null;
+        const direct = target.closest('[data-novcap-code-line]');
+        if (direct) return direct;
+        let best = null;
+        let bestDistance = Infinity;
+        pre.querySelectorAll('[data-novcap-code-line]').forEach(line => {
+            for (const rect of line.getClientRects()) {
+                if (rect.height <= 0) continue;
+                const distance = clientY < rect.top ? rect.top - clientY : clientY > rect.bottom ? clientY - rect.bottom : 0;
+                if (distance < bestDistance) {
+                    bestDistance = distance;
+                    best = line;
+                }
+            }
+        });
+        return best;
+    }
+
+    function prepareCodeBlocks(root) {
+        root.querySelectorAll('.wrtn-codeblock').forEach(block => {
+            if (block.querySelector(':scope > [data-novcap-code-head]')) return;
+            let head = block.firstElementChild;
+            if (!head || head.matches('pre, code') || head.querySelector('pre, code')) {
+                head = document.createElement('div');
+                block.insertBefore(head, block.firstChild);
+            }
+            head.setAttribute('data-novcap-code-head', '');
+            if (!head.textContent.trim()) head.setAttribute('data-novcap-code-empty', '');
+            const dots = document.createElement('i');
+            dots.className = 'novcap-code-dots';
+            dots.setAttribute('aria-hidden', 'true');
+            dots.innerHTML = '<b></b><b></b><b></b>';
+            head.insertBefore(dots, head.firstChild);
+        });
+        prepareCodeLines(root);
+    }
+
+    let codePickStart = null;
+    let codePickEnd = null;
+
+    function clearCodePick() {
+        codePickStart = null;
+        codePickEnd = null;
+        editorPage?.querySelectorAll('[data-novcap-code-picked]').forEach(line => line.removeAttribute('data-novcap-code-picked'));
+    }
+
+    function codePickRange() {
+        if (!codePickStart?.isConnected) return null;
+        const pre = codePickStart.closest('pre');
+        if (!pre) return null;
+        const lines = Array.from(pre.querySelectorAll('[data-novcap-code-line]'));
+        const picked = lines.filter(line => line.hasAttribute('data-novcap-code-picked'));
+        if (!picked.length) return null;
+        return { pre, lines, picked, first: lines.indexOf(picked[0]) + 1, last: lines.indexOf(picked[picked.length - 1]) + 1 };
+    }
+
+    function syncCodePickUi() {
+        if (!editorOverlay) return;
+        const on = editorToolMode === 'code-pick';
+        const toggle = editorOverlay.querySelector('#novcap-code-pick');
+        toggle?.classList.toggle('active', on);
+        setAttrIfChanged(toggle, 'aria-checked', String(on));
+        const actions = editorOverlay.querySelector('#novcap-code-actions');
+        if (actions && actions.hidden === on) {
+            actions.hidden = !on;
+            if (on) playOnce(actions, [{ opacity: 0, transform: 'translateY(-4px)' }], { duration: 180 });
+        }
+        const range = on ? codePickRange() : null;
+        const label = range
+            ? (range.first === range.last ? range.first + '줄 골랐어요' : range.first + '~' + range.last + '줄 골랐어요')
+            : on ? '시작 줄을 눌러요' : isPhoneLayout() ? '줄만 빼거나 남겨요' : '상태창 줄 고르기';
+        setTextIfChanged(editorOverlay.querySelector('#novcap-code-pick-label'), label);
+        const disabled = String(!range);
+        setAttrIfChanged(editorOverlay.querySelector('#novcap-code-exclude'), 'aria-disabled', disabled);
+        setAttrIfChanged(editorOverlay.querySelector('#novcap-code-keep'), 'aria-disabled', disabled);
+    }
+
+    /* 처음 누른 줄 하나가 곧 고른 줄이다. 같은 코드블럭의 다른 줄을 누르면 그 사이를 잇고, 그다음 누르면 새로 시작한다. */
+    function pickCodeLine(line) {
+        const samePre = codePickStart?.isConnected && codePickStart.closest('pre') === line.closest('pre');
+        if (!samePre || codePickEnd) {
+            clearCodePick();
+            codePickStart = line;
+            line.setAttribute('data-novcap-code-picked', 'true');
+        } else {
+            codePickEnd = line;
+            const lines = Array.from(line.closest('pre').querySelectorAll('[data-novcap-code-line]'));
+            const a = lines.indexOf(codePickStart);
+            const b = lines.indexOf(line);
+            lines.slice(Math.min(a, b), Math.max(a, b) + 1).forEach(item => item.setAttribute('data-novcap-code-picked', 'true'));
+            /* 휴대폰: 범위를 다 고르면 시트를 열어 빼기·남기기를 보인다. */
+            if (isPhoneLayout() && !isPanelExpanded()) {
+                setSettingsPanelOpen(true, false);
+                requestAnimationFrame(() => editorOverlay?.querySelector('#novcap-code-actions')?.scrollIntoView({ block: 'center' }));
+            }
+        }
+        syncCodePickUi();
+    }
+
+    function applyCodePick(keep) {
+        const range = codePickRange();
+        if (!range) return;
+        range.pre.closest('.wrtn-codeblock')?.removeAttribute('data-novcap-remove');
+        range.pre.removeAttribute('data-novcap-remove');
+        range.lines.forEach(line => {
+            const picked = line.hasAttribute('data-novcap-code-picked');
+            if (keep ? !picked : picked) line.setAttribute('data-novcap-remove', 'true');
+            else if (keep) line.removeAttribute('data-novcap-remove');
+        });
+        clearCodePick();
+        syncCodePickUi();
+        commitHistory();
+        syncExcludeCount();
+        showToast(keep ? '고른 줄만 남겼어요' : '고른 줄을 뺐어요');
+    }
+
+    /* 코드블럭이 숨어 있으면 켠다(고르기·디자인이 보이지 않는 채 눌리지 않게). 켰으면 true */
+    function showHudIfHidden() {
+        if (!config.removeHud) return false;
+        config.removeHud = false;
+        const hudSwitch = editorOverlay?.querySelector('#novcap-editor-hud');
+        if (hudSwitch) hudSwitch.checked = true;
+        return true;
+    }
+
+    /* 원고 높이가 바뀌는 동안 쪽지가 가까운 문단을 따라가게 한다. 쪽지가 없으면 재지 않는다. */
+    function keepCommentsWhile(change) {
+        const plan = editorPage ? computeCommentAnchorPlan(editorPage) : null;
+        const result = change();
+        if (plan) requestAnimationFrame(() => {
+            if (!editorPage) return;
+            const list = commentAnchorCandidates(editorPage);
+            applyCommentAnchorPlan(editorPage, plan, key => list[key]);
+            syncCommentControls();
+        });
+        return result;
+    }
+
+    /* ── 2.5.5 코드블럭 디자인 · 백틱 테두리 ── */
+    function codeBlockPalette() {
+        const theme = customRoomThemeSnapshot?.active ? customRoomThemeSnapshot : null;
+        const text = parseAnyColor(theme ? theme.textColor : config.textColor) || { r: 58, g: 38, b: 25 };
+        const paper = parseAnyColor(theme ? theme.baseColor : config.bgColor) || { r: 255, g: 248, b: 230 };
+        const mix = (from, to, amount) => [from.r, from.g, from.b].map((value, i) => Math.round(value + ([to.r, to.g, to.b][i] - value) * amount));
+        const paperDark = relativeLuminance(paper) < .3;
+        const textDark = relativeLuminance(text) < .3;
+        const windowBack = paperDark ? mix(paper, COLOR_WHITE, .1) : textDark ? mix(text, COLOR_BLACK, .15) : [48, 38, 32];
+        const windowText = paperDark ? (textDark ? [236, 233, 226] : [text.r, text.g, text.b]) : mix(paper, COLOR_WHITE, .1);
+        return {
+            t: [text.r, text.g, text.b].join(', '),
+            wb: windowBack.join(', '),
+            wf: windowText.join(', ')
+        };
+    }
+
+    function applyCodeBlockLook(page) {
+        const design = CODE_DESIGNS.includes(config.codeDesign) && config.codeDesign !== 'plain' ? config.codeDesign : null;
+        setAttrIfChanged(page, 'data-novcap-code-design', design);
+        if (page.classList.contains('novcap-code-border') !== (config.inlineCodeBorder === true)) page.classList.toggle('novcap-code-border', config.inlineCodeBorder === true);
+        if (!design) return;
+        const palette = codeBlockPalette();
+        page.style.setProperty('--nov-code-t', palette.t);
+        page.style.setProperty('--nov-code-wb', palette.wb);
+        page.style.setProperty('--nov-code-wf', palette.wf);
+    }
+
+    function syncCodeLookControls() {
+        if (!editorOverlay) return;
+        editorOverlay.querySelectorAll('.novcap-code-tile').forEach(tile => setSwatchChecked(tile, tile.dataset.codeDesign === config.codeDesign));
+        const borderSwitch = editorOverlay.querySelector('#novcap-inline-code-border');
+        if (borderSwitch) borderSwitch.checked = config.inlineCodeBorder === true;
+    }
+
+    function pickCodeDesign(tile) {
+        const value = CODE_DESIGNS.includes(tile.dataset.codeDesign) ? tile.dataset.codeDesign : 'plain';
+        if (config.codeDesign !== value) {
+            const turnedOn = keepCommentsWhile(() => {
+                config.codeDesign = value;
+                const shown = value !== 'plain' && showHudIfHidden();
+                applyDraftSettings();
+                return shown;
+            });
+            if (turnedOn) showToast('HUD/코드블럭을 켰어요');
+            if (editorPage) scheduleHistory();
+        }
+        syncCodeLookControls();
+    }
+
+    /* ── 2.5.5 로그 정보(생성 시각 · 모델 아이콘 · 모델 이름 · 원래 모델 이름) ──
+       켠 것이 있을 때만 크랙에 메시지 정보를 묻는다. 로그인 토큰은 요청 머리글에만 쓰고 남기지 않는다.
+       꼬리줄은 말풍선 본문 바깥(구역 맨 끝)에 달아 치환·펜·문단 제외가 닿지 않고, 되돌리기 기록에도 넣지 않는다(켠 스위치로 다시 그린다). */
+    const MODEL_NAME_PAIRS = {
+        fablechat_1_0: ['페이블챗 1.0', 'Claude Fable 5'],
+        hyperchat_4_0: ['하이퍼챗 4.0', 'Claude Opus 5.5'],
+        hyperchat_3_0: ['하이퍼챗 3.0', 'Claude Opus 5'],
+        hyperchat_2_0: ['하이퍼챗 2.0', 'Claude Opus 4.8'],
+        hyperchat_1_5: ['하이퍼챗 1.5', 'Claude Opus 4.7'],
+        hyperchat_1_0: ['하이퍼챗 1.0', 'Claude Opus 4.6'],
+        superchat_3_0: ['슈퍼챗 3.0', 'Claude Sonnet 5'],
+        superchat_2_5: ['슈퍼챗 2.5', 'Claude Sonnet 4.6'],
+        superchat_2_0: ['슈퍼챗 2.0', 'Claude Sonnet 4.5'],
+        prochat_2_5: ['프로챗 2.5', 'Gemini 3.1 Pro'],
+        prochat_1_0: ['프로챗 1.0', 'Gemini 2.5 Pro'],
+        ultrachat_1_0: ['울트라챗 1.0', 'Gemini 4 Argon'],
+        powerchat: ['파워챗', '']
+    };
+    const MODEL_BRAND_NAMES = { fablechat: '페이블챗', hyperchat: '하이퍼챗', superchat: '슈퍼챗', prochat: '프로챗', ultrachat: '울트라챗', powerchat: '파워챗' };
+    let messageModelCache = new Map();
+    let messageModelChatId = '';
+    let messageModelPromise = null;
+    const modelCatalogNames = new Map();
+    let modelCatalogPromise = null;
+    let modelCatalogStory = '';
+    let modelCatalogLoadedAt = 0;
+    const modelIconCache = new Map();
+    const modelIconLoads = new Map();
+    let logInfoJob = null;
+    let logKeySeq = 0;
+
+    function logInfoOn() {
+        return Boolean(config.showTimestamp || config.showModelBadge || config.showModelName || config.showOriginalModelName);
+    }
+
+    function normalizeMessageRole(value) {
+        const token = String(value || '').trim().toLowerCase();
+        if (!token) return null;
+        if (/(^|[\s_:/-])(user|human|client|prompt|request)([\s_:/-]|$)/.test(token) || /사용자|유저/.test(token)) return 'USER';
+        if (/(^|[\s_:/-])(assistant|character|model|bot|response|answer)([\s_:/-]|$)/.test(token) || /캐릭터|어시스턴트|답변|응답/.test(token)) return 'CHARACTER';
+        return null;
+    }
+
+    function getCookieValue(name) {
+        const escaped = String(name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const match = document.cookie.match(new RegExp('(?:^|; )' + escaped + '=([^;]*)'));
+        return match ? decodeURIComponent(match[1]) : '';
+    }
+
+    function getCurrentChatId() {
+        const patterns = [/\/episodes\/([a-f0-9]{24})(?:[/?#]|$)/i, /\/chats\/([a-f0-9]{24})(?:[/?#]|$)/i];
+        for (const pattern of patterns) {
+            const match = location.href.match(pattern);
+            if (match) return match[1];
+        }
+        return '';
+    }
+
+    function crackApiHeaders() {
+        const headers = { accept: 'application/json, text/plain, */*', platform: 'web', 'wrtn-locale': 'ko-KR' };
+        const token = getCookieValue('access_token');
+        if (token) headers.authorization = 'Bearer ' + token;
+        return headers;
+    }
+
+    function normalizedModelToken(value) {
+        return String(value || '').trim().toLowerCase().replace(/[\s.\-]+/g, '_');
+    }
+
+    function getMessageModelIconUrl(message) {
+        const token = normalizedModelToken(message?.crackerModel);
+        if (!/^[a-z][a-z0-9]*(?:_\d+)*$/.test(token)) return null;
+        /* 울트라챗은 번호 없는 파일이다(ultrachat1_0.webp는 403). */
+        const filename = token === 'ultrachat_1_0' ? 'ultrachat' : token.replace(/^([a-z][a-z0-9]*)_(?=\d)/i, '$1');
+        return 'https://cdn-image.wrtn.ai/crack/graphics/model-icon/' + filename + '.webp';
+    }
+
+    function originalModelName(value) {
+        const raw = String(value || '').trim();
+        if (!/^(?:(?:claude[ _-]+)?(?:fable|opus|sonnet|haiku)|gemini|gpt|deepseek|qwen)(?=[\s_.-]|$)/i.test(raw)) return '';
+        return raw.replace(/^(gemini)[ _-]+(\d+)[ _-]+(\d+)(?=[ _-]+(?:pro|flash))/i, '$1 $2.$3')
+            .replace(/[_-]+/g, ' ')
+            .replace(/\b(?:gemini|claude|fable|opus|sonnet|haiku|pro|flash|deepseek|qwen)\b/gi, word => word[0].toUpperCase() + word.slice(1).toLowerCase())
+            .replace(/\bgpt\b/gi, 'GPT');
+    }
+
+    function modelMessageFingerprint(value) {
+        const text = String(value).replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+            .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+            .replace(/^\s*(?:#{1,6}\s+|[-+*]\s+|\d+[.)]\s+|>\s*)/gm, '')
+            .replace(/^\s*[-*_]{3,}\s*$/gm, '')
+            .replace(/```[^\n]*\n?/g, '').replace(/[*_`~]/g, '')
+            .replace(/\s+/g, '').normalize('NFC');
+        let a = 2166136261;
+        let b = 5381;
+        for (let i = 0; i < text.length; i++) {
+            a = Math.imul(a ^ text.charCodeAt(i), 16777619);
+            b = Math.imul(b, 33) ^ text.charCodeAt(i);
+        }
+        return text.length + ':' + (a >>> 0) + ':' + (b >>> 0);
+    }
+
+    function recordedMessageModel(id) {
+        if (!id) return '';
+        try {
+            return JSON.parse(localStorage.getItem('cmu_model_bymsg_exact_v2') || '{}')?.[id] || '';
+        } catch (error) {
+            return '';
+        }
+    }
+
+    function modelComparePosition(group) {
+        const buttons = Array.from(group?.querySelectorAll('button') || []);
+        for (const button of buttons) {
+            const match = (button.textContent || '').match(/답변\s*비교\s*(\d+)\s*\/\s*(\d+)/);
+            if (match) return { current: Number(match[1]), total: Number(match[2]) };
+        }
+        return { current: 1, total: 1 };
+    }
+
+    /* 말풍선을 복제할 때 그 답이 어느 메시지인지 적어 둔다(다시 생성한 답은 묶음 번호가 첫 답에 머문다). */
+    function snapshotBubbleModel(bubble, section) {
+        const group = bubble.closest('[data-message-group-id]');
+        section.dataset.logKey = String(++logKeySeq);
+        section.dataset.modelGroupId = group?.getAttribute('data-message-group-id') || '';
+        const textHolder = bubble.cloneNode(true);
+        textHolder.querySelectorAll('.wrtn-codeblock > :first-child').forEach(head => {
+            if (!head.matches('pre, code') && !head.querySelector('pre, code')) head.remove();
+        });
+        section.dataset.modelFingerprint = modelMessageFingerprint(textHolder.textContent || '');
+        const compare = modelComparePosition(group);
+        section.dataset.modelCompareCurrent = String(compare.current);
+        section.dataset.modelCompareTotal = String(compare.total);
+        const badge = group?.querySelector('.cmi-model-badge[data-message-id][data-token]');
+        if (badge && ['api', 'generate_done'].includes(badge.dataset.source)) {
+            section.dataset.modelCertifiedId = badge.dataset.messageId;
+            section.dataset.modelCertifiedToken = badge.dataset.token;
+        }
+    }
+
+    function resolveSectionMessage(section) {
+        const data = section.dataset;
+        const direct = messageModelCache.get(data.modelGroupId);
+        const current = Number(data.modelCompareCurrent) || 1;
+        const total = Number(data.modelCompareTotal) || 1;
+        const pick = message => {
+            if (!message || !['CHARACTER', 'USER'].includes(message.role)) return null;
+            return { id: message.id, token: message.crackerModel || recordedMessageModel(message.id) };
+        };
+        if (total > 1 && direct?.parentTurnId) {
+            const variants = Array.from(messageModelCache.values())
+                .filter(message => message.role === 'CHARACTER' && message.parentTurnId === direct.parentTurnId)
+                .sort((a, b) => a.id.localeCompare(b.id));
+            if (variants.length === total && current >= 1 && current <= total) return pick(variants[current - 1]);
+        }
+        if (data.modelCertifiedId) {
+            const message = messageModelCache.get(data.modelCertifiedId);
+            const token = message?.crackerModel || data.modelCertifiedToken || recordedMessageModel(data.modelCertifiedId);
+            if (!message || message.fingerprint === data.modelFingerprint || (total === 1 && data.modelCertifiedId === data.modelGroupId)) return { id: data.modelCertifiedId, token };
+        }
+        if (total === 1) {
+            const found = pick(direct);
+            if (found) return found;
+            if (!direct && data.modelGroupId) {
+                const token = recordedMessageModel(data.modelGroupId);
+                if (token) return { id: data.modelGroupId, token };
+            }
+        }
+        const matches = Array.from(messageModelCache.values()).filter(message => message.role === 'CHARACTER' && message.fingerprint === data.modelFingerprint);
+        return matches.length === 1 ? pick(matches[0]) : null;
+    }
+
+    function messageTimestamp(id) {
+        const raw = messageModelCache.get(id)?.createdAt;
+        let date = raw ? new Date(raw) : null;
+        if ((!date || !Number.isFinite(date.getTime())) && /^[a-f0-9]{24}$/i.test(id || '')) date = new Date(parseInt(id.slice(0, 8), 16) * 1000);
+        return date && Number.isFinite(date.getTime()) ? date : null;
+    }
+
+    function formatLogTimestamp(date) {
+        const pad = n => String(n).padStart(2, '0');
+        return date.getFullYear() + '.' + pad(date.getMonth() + 1) + '.' + pad(date.getDate()) + ' ' + pad(date.getHours()) + ':' + pad(date.getMinutes());
+    }
+
+    function messageModelNames(token, messageId) {
+        const normalized = normalizedModelToken(token);
+        if (!/^[a-z][a-z0-9]*(?:_\d+)*$/.test(normalized)) return { label: '', engine: '' };
+        const known = MODEL_NAME_PAIRS[normalized];
+        const catalog = modelCatalogNames.get(normalized);
+        const [brand, ...version] = normalized.split('_');
+        const fallback = (MODEL_BRAND_NAMES[brand] || brand[0].toUpperCase() + brand.slice(1)) + (version.length ? ' ' + version.join('.') : '');
+        return {
+            label: catalog?.label || known?.[0] || fallback,
+            /* 지난 로그는 그 메시지에 적힌 엔진이 먼저다(지금 목록은 바뀌었을 수 있다). */
+            engine: originalModelName(messageModelCache.get(messageId)?.engine) || known?.[1] || catalog?.engine || ''
+        };
+    }
+
+    function formatMessageModelName(token, messageId) {
+        const names = messageModelNames(token, messageId);
+        const label = config.showModelName ? names.label : '';
+        const engine = config.showOriginalModelName ? names.engine : '';
+        return label && engine ? label + ' (' + engine + ')' : label || engine;
+    }
+
+    function logSectionsOf(page) {
+        return Array.from(page.querySelectorAll(':scope > .novcap-content-section'));
+    }
+
+    function messageModelsUnresolved(page) {
+        return logSectionsOf(page).some(section => {
+            const id = section.dataset.modelGroupId;
+            if (!/^[a-f0-9]{24}$/i.test(id || '')) return false;
+            const anchor = messageModelCache.get(id);
+            if (!anchor) return true;
+            const total = Number(section.dataset.modelCompareTotal) || 1;
+            if (total <= 1 || anchor.role !== 'CHARACTER') return false;
+            if (!anchor.parentTurnId) return true;
+            return Array.from(messageModelCache.values()).filter(message => message.role === 'CHARACTER' && message.parentTurnId === anchor.parentTurnId).length < total;
+        });
+    }
+
+    /* 고른 메시지를 다 찾을 때까지 최근 메시지부터 읽는다(100개씩, 최대 50번). 다 찾았으면 묻지 않는다. */
+    async function ensureMessageModels(page) {
+        const chatId = getCurrentChatId();
+        if (!chatId) throw new Error('채팅방을 찾지 못했어요');
+        if (messageModelChatId !== chatId) {
+            messageModelChatId = chatId;
+            messageModelCache = new Map();
+            messageModelPromise = null;
+        }
+        if (!messageModelsUnresolved(page)) return;
+        if (messageModelPromise) {
+            await messageModelPromise.catch(() => null);
+            return ensureMessageModels(page);
+        }
+        messageModelPromise = (async () => {
+            const headers = crackApiHeaders();
+            let cursor = '';
+            for (let round = 0; round < 50 && page.isConnected && messageModelsUnresolved(page); round++) {
+                let url = 'https://crack-api.wrtn.ai/crack-gen/v3/chats/' + chatId + '/messages?limit=100';
+                if (cursor) url += '&cursor=' + encodeURIComponent(cursor);
+                const controller = new AbortController();
+                const timer = setTimeout(() => controller.abort(), 10000);
+                let json;
+                try {
+                    const response = await fetch(url, { method: 'GET', headers, credentials: 'include', signal: controller.signal });
+                    if (!response.ok) throw new Error('메시지 정보 응답 오류 (' + response.status + ')');
+                    json = await response.json();
+                } finally {
+                    clearTimeout(timer);
+                }
+                const messages = Array.isArray(json?.data?.messages) ? json.data.messages : Array.isArray(json?.data) ? json.data : [];
+                messages.forEach(message => {
+                    const id = String(message?._id || '');
+                    if (!id) return;
+                    messageModelCache.set(id, {
+                        id,
+                        role: normalizeMessageRole(message?.role),
+                        crackerModel: message?.crackerModel || '',
+                        engine: originalModelName(message?.engine || message?.modelName || message?.model?.name || ''),
+                        parentTurnId: String(message?.parentTurnId || ''),
+                        createdAt: message?.createdAt || message?.created_at || '',
+                        fingerprint: modelMessageFingerprint(message?.content || '')
+                    });
+                });
+                const nextCursor = json?.data?.nextCursor || json?.meta?.nextCursor || json?.nextCursor || '';
+                if (!messages.length || !nextCursor || nextCursor === cursor) break;
+                cursor = nextCursor;
+            }
+        })().finally(() => { messageModelPromise = null; });
+        return messageModelPromise;
+    }
+
+    async function ensureModelCatalogNames() {
+        const storyId = location.pathname.match(/\/stories\/([a-f0-9]{24})(?:\/|$)/i)?.[1];
+        if (!storyId) return;
+        if (modelCatalogStory !== storyId) {
+            modelCatalogStory = storyId;
+            modelCatalogNames.clear();
+            modelCatalogLoadedAt = 0;
+        }
+        if (Date.now() - modelCatalogLoadedAt < 15 * 60 * 1000) return;
+        if (modelCatalogPromise) return modelCatalogPromise;
+        modelCatalogPromise = (async () => {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 8000);
+            try {
+                const response = await fetch('https://crack-api.wrtn.ai/crack-gen/v3/chat-models?serviceType=story&storyId=' + encodeURIComponent(storyId), { headers: crackApiHeaders(), credentials: 'include', signal: controller.signal });
+                if (!response.ok) return;
+                const json = await response.json();
+                const models = json?.data?.models || json?.models || [];
+                if (modelCatalogStory !== storyId || !Array.isArray(models)) return;
+                models.forEach(model => {
+                    const token = normalizedModelToken(model.crackerModel || model.model || model.id || model._id);
+                    if (!/^[a-z][a-z0-9]*(?:_\d+)*$/.test(token)) return;
+                    modelCatalogNames.set(token, { label: String(model.name || '').trim(), engine: originalModelName(model.engine || model.modelName) });
+                });
+            } catch (error) {
+                console.warn('[novcap] 모델 이름 목록을 받지 못했습니다.', error?.message || error);
+            } finally {
+                clearTimeout(timer);
+                if (modelCatalogStory === storyId) modelCatalogLoadedAt = Date.now();
+            }
+        })().finally(() => { modelCatalogPromise = null; });
+        return modelCatalogPromise;
+    }
+
+    /* 아이콘은 Referer가 있어야 받는 곳이라 확장 요청으로 받아 data URL로 둔다(저장 그림이 오염되지 않는다). */
+    function requestModelIconBlob(url, headers) {
+        return withTimeout(new Promise((resolve, reject) => {
+            GM_xmlhttpRequest({
+                method: 'GET',
+                url,
+                responseType: 'arraybuffer',
+                timeout: 15000,
+                headers: { Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8', ...headers },
+                onload(response) {
+                    const status = Number(response.status) || 0;
+                    if (status < 200 || status >= 300) {
+                        reject(new Error('모델 아이콘 응답 오류 (' + status + ')'));
+                        return;
+                    }
+                    const mime = imageMimeFromHeaders(response.responseHeaders);
+                    const blob = toImageBlob(response.response, mime);
+                    if (!blob || !blob.size) {
+                        reject(new Error('모델 아이콘이 비어 있습니다.'));
+                        return;
+                    }
+                    resolve(normalizeImageBlob(blob, mime));
+                },
+                ontimeout: () => reject(new Error('모델 아이콘 응답 시간이 초과되었습니다.')),
+                onerror: () => reject(new Error('모델 아이콘을 받지 못했습니다.')),
+                onabort: () => reject(new Error('모델 아이콘 요청이 중단되었습니다.'))
+            });
+        }), 17000, '모델 아이콘 응답 시간이 초과되었습니다.');
+    }
+
+    function loadModelIcon(url) {
+        if (modelIconCache.has(url)) return Promise.resolve();
+        if (modelIconLoads.has(url)) return modelIconLoads.get(url);
+        const job = (async () => {
+            /* 머리글을 직접 넣지 못하게 막는 휴대폰 관리자도 있어 차례로 낮춘다. */
+            const attempts = [{ Referer: 'https://crack.wrtn.ai/', Origin: 'https://crack.wrtn.ai' }, { Referer: 'https://crack.wrtn.ai/' }, {}];
+            for (const headers of attempts) {
+                try {
+                    modelIconCache.set(url, await readBlobAsDataUrl(await requestModelIconBlob(url, headers)));
+                    return;
+                } catch (error) {
+                    /* 다음 방법으로 */
+                }
+            }
+            modelIconCache.set(url, '');
+        })().finally(() => modelIconLoads.delete(url));
+        modelIconLoads.set(url, job);
+        return job;
+    }
+
+    function sectionLogInfo(section) {
+        const resolved = resolveSectionMessage(section);
+        const id = resolved?.id || section.dataset.modelGroupId || '';
+        const token = resolved?.token && getMessageModelIconUrl({ crackerModel: resolved.token }) ? resolved.token : '';
+        return { id, token, date: messageTimestamp(id), isCharacter: section.dataset.role === 'CHARACTER' };
+    }
+
+    /* 꼬리줄을 지금 스위치와 받아 둔 정보에 맞춘다. 같으면 건드리지 않는다. 바뀌었으면 true */
+    function refreshLogFooters(page = editorPage) {
+        if (!page) return false;
+        const on = logInfoOn();
+        let changed = false;
+        logSectionsOf(page).forEach(section => {
+            let footer = section.querySelector(':scope > .novcap-log-footer');
+            if (!on) {
+                if (footer) {
+                    footer.remove();
+                    changed = true;
+                }
+                return;
+            }
+            const info = sectionLogInfo(section);
+            const timeText = config.showTimestamp && info.date ? formatLogTimestamp(info.date) : '';
+            const name = info.isCharacter && info.token ? formatMessageModelName(info.token, info.id) : '';
+            const iconUrl = info.isCharacter && config.showModelBadge && info.token ? getMessageModelIconUrl({ crackerModel: info.token }) : null;
+            const iconData = iconUrl ? modelIconCache.get(iconUrl) || '' : '';
+            if (!timeText && !name && !iconData) {
+                if (footer) {
+                    footer.remove();
+                    changed = true;
+                }
+                return;
+            }
+            const signature = timeText + '|' + name + '|' + (iconData ? iconUrl : '');
+            if (footer?.dataset.logSig === signature) return;
+            footer?.remove();
+            footer = document.createElement('div');
+            footer.className = 'novcap-log-footer';
+            footer.dataset.logSig = signature;
+            if (timeText) {
+                const time = document.createElement('time');
+                time.className = 'novcap-log-time';
+                time.dateTime = info.date.toISOString();
+                time.textContent = timeText;
+                footer.appendChild(time);
+            }
+            if (name || iconData) {
+                const model = document.createElement('span');
+                model.className = 'novcap-log-model';
+                if (iconData) {
+                    const image = document.createElement('img');
+                    image.className = 'novcap-log-icon';
+                    image.alt = '';
+                    image.width = 20;
+                    image.height = 20;
+                    image.src = iconData;
+                    model.appendChild(image);
+                }
+                if (name) {
+                    const label = document.createElement('span');
+                    label.className = 'novcap-log-name';
+                    label.textContent = name;
+                    model.appendChild(label);
+                }
+                footer.appendChild(model);
+            }
+            section.appendChild(footer);
+            changed = true;
+        });
+        if (changed && page === editorPage) queuePreviewZoomLayout();
+        return changed;
+    }
+
+    function updateLogInfoStatus(page, apiFailed = false) {
+        const status = editorOverlay?.querySelector('#novcap-log-status');
+        if (!status) return;
+        let text = '';
+        if (page && page === editorPage && (config.showModelBadge || config.showModelName || config.showOriginalModelName)) {
+            const infos = logSectionsOf(page).map(sectionLogInfo).filter(info => info.isCharacter);
+            const unknown = infos.filter(info => !info.token).length;
+            const iconFailed = config.showModelBadge ? infos.filter(info => info.token && modelIconCache.get(getMessageModelIconUrl({ crackerModel: info.token })) === '').length : 0;
+            const parts = [];
+            if (apiFailed && unknown) parts.push('모델 정보를 받지 못했어요');
+            else if (unknown) parts.push('로그 ' + unknown + '개의 모델을 찾지 못했어요');
+            if (iconFailed) parts.push('아이콘 ' + iconFailed + '개를 받지 못했어요');
+            text = parts.join(' · ');
+        }
+        setTextIfChanged(status, text);
+        setHiddenIfChanged(status, !text);
+    }
+
+    function startLogInfo(page = editorPage) {
+        if (!page) return null;
+        keepCommentsWhile(() => refreshLogFooters(page));
+        /* 받는 동안에는 안내를 비워 둔다(다 받기 전에 못 찾았다고 하지 않게). */
+        setHiddenIfChanged(editorOverlay?.querySelector('#novcap-log-status'), true);
+        if (!logInfoOn()) return null;
+        const job = (async () => {
+            let apiFailed = false;
+            try {
+                await ensureMessageModels(page);
+            } catch (error) {
+                apiFailed = true;
+                console.warn('[novcap] 모델 정보를 받지 못했습니다.', error?.message || error);
+            }
+            if (config.showModelName || config.showOriginalModelName) await ensureModelCatalogNames();
+            if (page !== editorPage) return;
+            keepCommentsWhile(() => refreshLogFooters(page));
+            if (config.showModelBadge) {
+                const urls = new Set();
+                logSectionsOf(page).map(sectionLogInfo).forEach(info => {
+                    const url = info.isCharacter && info.token ? getMessageModelIconUrl({ crackerModel: info.token }) : null;
+                    if (url) urls.add(url);
+                });
+                urls.forEach(url => {
+                    if (modelIconCache.get(url) === '') modelIconCache.delete(url);
+                });
+                await Promise.all(Array.from(urls, loadModelIcon));
+                if (page !== editorPage) return;
+                keepCommentsWhile(() => refreshLogFooters(page));
+            }
+            updateLogInfoStatus(page, apiFailed);
+        })().catch(error => console.warn('[novcap] 로그 정보를 다 그리지 못했습니다.', error?.message || error)).finally(() => {
+            if (logInfoJob === job) logInfoJob = null;
+        });
+        logInfoJob = job;
+        return job;
+    }
+
+    /* 로그 정보를 받는 중이면 잠깐 기다린다(그림·PDF에 빠지지 않게). 기다렸으면 true */
+    async function waitLogInfoReady(timeout = 15000) {
+        if (!logInfoJob) return false;
+        await Promise.race([logInfoJob, new Promise(resolve => setTimeout(resolve, timeout))]);
+        return true;
+    }
+
+    /* 먼저 떠 둔 저장본에 나중에 도착한 꼬리줄을 옮겨 단다. */
+    function syncCaptureLogFooters(capturePage) {
+        logSectionsOf(capturePage).forEach(section => {
+            section.querySelector(':scope > .novcap-log-footer')?.remove();
+            const source = logSectionsOf(editorPage).find(item => item.dataset.logKey === section.dataset.logKey)?.querySelector(':scope > .novcap-log-footer');
+            if (source) section.appendChild(source.cloneNode(true));
+        });
+    }
+
+    function syncLogInfoControls() {
+        if (!editorOverlay) return;
+        [['#novcap-log-time', 'showTimestamp'], ['#novcap-log-icon', 'showModelBadge'], ['#novcap-log-name', 'showModelName'], ['#novcap-log-engine', 'showOriginalModelName']].forEach(([selector, key]) => {
+            const input = editorOverlay.querySelector(selector);
+            if (input) input.checked = config[key] === true;
+        });
+    }
+
+    /* ── 2.5.5 PDF 저장 ──
+       그림으로 굽지 않고 브라우저 인쇄로 만든다(글자가 진짜 글자로 들어간다). 쪽 크기는 원고 폭 × A4 비율이라 줄바꿈이 미리보기와 같다.
+       가린 글자는 visibility로 숨겨 PDF에 글자로 들어가지 않는다. */
+    function preparePdfMasks(page) {
+        const doc = page.ownerDocument;
+        page.querySelectorAll('[data-novcap-mosaic]').forEach(mark => {
+            /* 링크 안 글자를 가렸으면 주소도 뺀다(눌러 볼 수 있는 링크로 남지 않게). */
+            mark.closest('a[href]')?.removeAttribute('href');
+            if (mark.dataset.novcapMosaic !== 'pattern') {
+                mark.style.setProperty('visibility', 'hidden', 'important');
+                return;
+            }
+            /* 바탕(모자이크)은 바깥 칸이 줄마다 칠하고, 글자는 안쪽 칸에서 숨긴다. */
+            const inner = doc.createElement('span');
+            inner.style.setProperty('visibility', 'hidden', 'important');
+            while (mark.firstChild) inner.appendChild(mark.firstChild);
+            mark.appendChild(inner);
+        });
+    }
+
+    function copyDocumentStyles(doc) {
+        const links = [];
+        const copy = sheet => {
+            if (sheet.disabled) return;
+            let text = null;
+            try {
+                text = Array.from(sheet.cssRules, rule => rule.cssText).join('\n');
+            } catch (error) {
+                text = null;
+            }
+            const media = sheet.media?.mediaText || '';
+            const owner = sheet.ownerNode;
+            if (text !== null) {
+                if (!text) return;
+                const style = doc.createElement('style');
+                if (owner?.id) style.id = owner.id;
+                if (media) style.media = media;
+                style.textContent = text;
+                doc.head.appendChild(style);
+            } else if (sheet.href) {
+                const link = doc.createElement('link');
+                if (owner?.id) link.id = owner.id;
+                link.rel = 'stylesheet';
+                if (media) link.media = media;
+                link.href = sheet.href;
+                doc.head.appendChild(link);
+                links.push(link);
+            }
+        };
+        Array.from(document.styleSheets).forEach(copy);
+        Array.from(document.adoptedStyleSheets || []).forEach(copy);
+        return links;
+    }
+
+    function waitLinksLoaded(links, timeout = 8000) {
+        return Promise.all(links.map(link => new Promise(resolve => {
+            if (link.sheet) {
+                resolve();
+                return;
+            }
+            const done = () => resolve();
+            link.addEventListener('load', done, { once: true });
+            link.addEventListener('error', done, { once: true });
+            setTimeout(done, timeout);
+        })));
+    }
+
+    function buildPdfDocument(printWindow, capturePage, paper) {
+        const doc = printWindow.document;
+        const pageWidth = Math.max(1, Math.round(capturePage.offsetWidth));
+        const pageHeight = Math.round(pageWidth * 297 / 210);
+        doc.open();
+        doc.write('<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=' + pageWidth + '"></head><body></body></html>');
+        doc.close();
+        doc.title = currentFileName || '소설형익명캡처';
+        /* 테마와 크랙 색 변수가 html·body 표시에 걸려 있어 그대로 옮긴다. */
+        [[document.documentElement, doc.documentElement], [document.body, doc.body]].forEach(([from, to]) => {
+            Array.from(from.attributes).forEach(attribute => to.setAttribute(attribute.name, attribute.value));
+        });
+        const links = copyDocumentStyles(doc);
+        const style = doc.createElement('style');
+        style.textContent = '@page { size: ' + pageWidth + 'px ' + pageHeight + 'px; margin: 0; }\n' +
+            'html, body { margin: 0 !important; padding: 0 !important; width: auto !important; min-width: 0 !important; height: auto !important; min-height: 0 !important; max-height: none !important; overflow: visible !important; position: static !important; display: block !important; transform: none !important; background: ' + paper + ' !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }\n' +
+            'html::before, html::after, body::before, body::after { display: none !important; }\n' +
+            '#novcap-pdf-host { display: block !important; position: static !important; width: ' + pageWidth + 'px !important; margin: 0 auto !important; padding: 0 !important; background: transparent !important; overflow: visible !important; }\n' +
+            '#novcap-capture-page { position: relative !important; left: auto !important; top: auto !important; z-index: 1 !important; margin: 0 !important; box-shadow: none !important; transform: none !important; width: ' + pageWidth + 'px !important; min-width: ' + pageWidth + 'px !important; pointer-events: auto !important; -webkit-box-decoration-break: clone !important; box-decoration-break: clone !important; }\n' +
+            '#novcap-capture-page, #novcap-capture-page * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }\n' +
+            '#novcap-capture-page :is(img, .novcap-log-footer, [data-novcap-code-line], .novcap-svg-image, .novcap-youtube-card, .novcap-role-separator) { break-inside: avoid; }\n' +
+            '#novcap-capture-page .novcap-role-separator { break-after: avoid; }\n' +
+            '#novcap-pdf-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; box-sizing: border-box; padding: 12px; background: #242424; color: #fff; font: 14px/1.5 sans-serif; }\n' +
+            '#novcap-pdf-controls button { padding: 10px 16px; border: 0; border-radius: 8px; background: #fff; color: #222; font: inherit; cursor: pointer; }\n' +
+            '#novcap-pdf-controls button:disabled { opacity: .5; cursor: default; }\n' +
+            '#novcap-pdf-background { display: none; }\n' +
+            '@media print { #novcap-pdf-controls { display: none !important; } #novcap-pdf-background { display: block; position: fixed; inset: 0; z-index: 0; pointer-events: none; -webkit-print-color-adjust: exact; print-color-adjust: exact; } }\n';
+        doc.head.appendChild(style);
+        const controls = doc.createElement('div');
+        controls.id = 'novcap-pdf-controls';
+        const button = doc.createElement('button');
+        button.type = 'button';
+        button.textContent = '인쇄 / PDF로 저장';
+        button.disabled = true;
+        button.onclick = () => {
+            printWindow.focus();
+            printWindow.print();
+        };
+        const hint = doc.createElement('span');
+        hint.textContent = '글꼴과 그림을 준비하고 있어요…';
+        controls.append(button, hint);
+        /* 마지막 쪽의 남은 자리도 무늬가 이어지게 한다(쪽마다 깔리는 층). */
+        const background = doc.createElement('div');
+        background.id = 'novcap-pdf-background';
+        const computed = getComputedStyle(capturePage);
+        background.style.backgroundColor = computed.backgroundColor;
+        background.style.backgroundImage = computed.backgroundImage;
+        background.style.backgroundSize = computed.backgroundSize;
+        background.style.backgroundPosition = computed.backgroundPosition;
+        background.style.backgroundRepeat = computed.backgroundRepeat.split(',').map(value => value.trim() === 'no-repeat' ? 'repeat-y' : value.trim()).join(', ');
+        /* 2.5.6: 꾸밈 그림은 쪽마다 되풀이하지 않는다(마지막 쪽 남은 자리는 바탕색) */
+        if (pageBgMode() === 'decor' && !customRoomThemeSnapshot?.active) {
+            background.style.backgroundImage = 'none';
+            background.style.backgroundColor = DECOR_THEMES[decorThemeKey()].bg;
+        }
+        const host = doc.createElement('main');
+        host.id = 'novcap-pdf-host';
+        host.className = 'novcap-capture-host';
+        host.setAttribute('data-novcap-capture-host', '');
+        const page = doc.importNode(capturePage, true);
+        ['position', 'left', 'top', 'z-index', 'box-shadow', 'pointer-events'].forEach(name => page.style.removeProperty(name));
+        page.querySelectorAll('script, iframe, object, embed').forEach(node => node.remove());
+        [page, ...page.querySelectorAll('*')].forEach(element => {
+            Array.from(element.attributes).forEach(attribute => {
+                if (/^on/i.test(attribute.name)) element.removeAttribute(attribute.name);
+            });
+            if (/^\s*javascript:/i.test(element.getAttribute('href') || '')) element.removeAttribute('href');
+        });
+        /* 창에 넣기 전에 가린다: 글꼴을 기다리는 동안 인쇄해도 가린 글자가 나오지 않는다. */
+        preparePdfMasks(page);
+        host.appendChild(page);
+        doc.body.append(controls, background, host);
+        return { doc, page, button, hint, links };
+    }
+
+    async function renderFinalPdf() {
+        if (!editorPage || finalRenderInProgress || captureStage !== 'result') return;
+        /* 누른 순간에 열어야 팝업 차단에 걸리지 않는다. */
+        const printWindow = window.open('', '_blank');
+        if (!printWindow) {
+            alert('PDF 창이 막혔어요. 이 사이트의 팝업을 허용한 뒤 다시 눌러 주세요.');
+            return;
+        }
+        try {
+            printWindow.document.body.textContent = 'PDF를 준비하고 있어요…';
+        } catch (error) {
+            /* 글이 안 보여도 준비는 계속한다. */
+        }
+        finalRenderInProgress = true;
+        const session = editorSessionId;
+        const themeSnapshot = customRoomThemeSnapshot;
+        const stopped = () => session !== editorSessionId || printWindow.closed;
+        let captureHost = null;
+        let released = false;
+        const release = () => {
+            if (released) return;
+            released = true;
+            captureHost?.remove();
+            hideLoading();
+            finalRenderInProgress = false;
+        };
+        showLoading('PDF를 준비하는 중...');
+        try {
+            await waitLogInfoReady();
+            if (stopped()) return;
+            const capturePage = createCapturePage();
+            captureHost = document.createElement('main');
+            captureHost.className = 'novcap-capture-host';
+            captureHost.setAttribute('data-novcap-capture-host', '');
+            captureHost.style.position = 'fixed';
+            captureHost.style.left = '0';
+            captureHost.style.top = '0';
+            captureHost.style.width = 'max-content';
+            captureHost.style.zIndex = '-9999';
+            captureHost.style.pointerEvents = 'none';
+            captureHost.appendChild(capturePage);
+            document.body.appendChild(captureHost);
+            freezeCaptureAnimations(capturePage);
+            if (themeSnapshot?.active) {
+                stabilizeCustomRoomQuotes(capturePage);
+                pinThemeSymbolFonts(capturePage);
+                freezeComputedThemeTypography(capturePage);
+            }
+            if (!(await settleCaptureImages(capturePage)) || stopped()) {
+                if (!printWindow.closed) printWindow.close();
+                return;
+            }
+            if (String(config.fontPreset).startsWith('user:') || capturePage.querySelector(':scope > .novcap-comment[data-font-preset^="user:"]')) readFontLibrary({ fresh: true });
+            const fontNeeds = fontNeedsFor(capturePage);
+            if (document.fonts?.ready) await Promise.race([document.fonts.ready, new Promise(resolve => setTimeout(resolve, 10000))]);
+            if (fontNeeds.length) await awaitFonts(document, fontNeeds, 10000);
+            await ensureSymbolPin();
+            if (stopped()) return;
+            attachSymbolFontStyle();
+            const symbolFontUsed = await loadSymbolFont(document, capturePage);
+            await loadCommentFonts(capturePage);
+            adjustCaptureComments(capturePage);
+            if (stopped()) return;
+            /* 2.5.6: 꾸밈은 빠진 문단을 지운 높이로 다시 그린다(테두리·모서리 잎이 저장할 원고 끝에 오게) */
+            if (pageBgMode() === 'decor' && !themeSnapshot?.active) await paintDecorOnto(capturePage);
+            if (stopped()) return;
+            /* 2.5.6: 꾸밈이면 마지막 쪽 남은 자리도 테마 바탕색 */
+            const paper = themeSnapshot?.active ? themeSnapshot.baseColor : pageBgMode() === 'decor' ? DECOR_THEMES[decorThemeKey()].bg : normalizeHexColor(config.bgColor, DEFAULT_CONFIG.bgColor);
+            const view = buildPdfDocument(printWindow, capturePage, paper);
+            let closedTimer = 0;
+            await Promise.race([
+                new Promise(resolve => {
+                    closedTimer = setInterval(() => {
+                        if (printWindow.closed) resolve();
+                    }, 300);
+                }),
+                (async () => {
+                    await waitLinksLoaded(view.links);
+                    if (fontNeeds.length) await awaitFonts(view.doc, fontNeeds, 15000);
+                    if (symbolFontUsed) await loadSymbolFont(view.doc, view.page);
+                    if (view.doc.fonts?.ready) await view.doc.fonts.ready;
+                    await Promise.all(Array.from(view.page.querySelectorAll('img'), image => (image.decode ? image.decode().catch(() => null) : null)));
+                })(),
+                new Promise(resolve => setTimeout(resolve, 60000))
+            ]);
+            clearInterval(closedTimer);
+            if (stopped()) return;
+            view.button.disabled = false;
+            view.hint.textContent = 'A4 세로 비율로 나눠요. 인쇄 창에서 「PDF로 저장」을 고르세요. 창이 뜨지 않으면 이 단추를 누르세요.';
+            /* 휴대폰 인쇄 창은 돌아올 때까지 멈출 수 있어 편집 화면을 먼저 풀어 준다. */
+            release();
+            if (typeof printWindow.print === 'function') {
+                printWindow.focus();
+                printWindow.print();
+            }
+        } catch (error) {
+            console.error('[novcap] PDF 준비 실패', error);
+            if (!printWindow.closed) {
+                try {
+                    printWindow.document.body.textContent = 'PDF를 준비하지 못했어요. ' + (error?.message || '');
+                } catch (writeError) {
+                    /* 창에 쓰지 못해도 아래 알림으로 알린다. */
+                }
+            }
+            alert('PDF를 준비하지 못했어요.\n' + (error?.message || ''));
+        } finally {
+            release();
+        }
+    }
+
+    function bindCaptureAdditions() {
+        /* 가리기 */
+        editorOverlay.querySelectorAll('.novcap-mosaic-btn').forEach(button => {
+            button.onclick = () => {
+                config.mosaicStyle = button.dataset.style === 'blank' ? 'blank' : 'pattern';
+                saveConfig();
+                setEditorTool('mosaic-add');
+                syncSegments();
+                updatePenSamples();
+            };
+        });
+        editorOverlay.querySelector('#novcap-remove-mosaic').onclick = () => {
+            setEditorTool(editorToolMode === 'mosaic-remove' ? 'mosaic-add' : 'mosaic-remove');
+        };
+        /* 상태창 줄 고르기 */
+        editorOverlay.querySelector('#novcap-code-pick-row').addEventListener('click', () => {
+            if (editorToolMode === 'code-pick') {
+                setEditorTool('idle');
+                return;
+            }
+            if (editorPage && !editorPage.querySelector('[data-novcap-code-line]')) {
+                showToast('원고에 코드블럭이 없어요');
+                return;
+            }
+            if (showHudIfHidden()) {
+                keepCommentsWhile(() => applyDraftSettings());
+                scheduleHistory();
+                showToast('HUD/코드블럭을 켰어요');
+            }
+            setEditorTool('code-pick');
+        });
+        editorOverlay.querySelector('#novcap-code-exclude').addEventListener('click', () => applyCodePick(false));
+        editorOverlay.querySelector('#novcap-code-keep').addEventListener('click', () => applyCodePick(true));
+        /* 코드블럭 모양 · 백틱 테두리 */
+        editorOverlay.querySelectorAll('.novcap-code-tile').forEach(tile => tile.addEventListener('click', () => pickCodeDesign(tile)));
+        editorOverlay.querySelector('#novcap-inline-code-border').addEventListener('change', event => {
+            keepCommentsWhile(() => {
+                config.inlineCodeBorder = event.target.checked;
+                applyDraftSettings();
+            });
+            if (editorPage) scheduleHistory();
+        });
+        /* 로그 정보(되돌리기 대상 아님) */
+        [['#novcap-log-time', 'showTimestamp'], ['#novcap-log-icon', 'showModelBadge'], ['#novcap-log-name', 'showModelName'], ['#novcap-log-engine', 'showOriginalModelName']].forEach(([selector, key]) => {
+            editorOverlay.querySelector(selector).addEventListener('change', event => {
+                config[key] = event.target.checked;
+                saveConfig();
+                if (editorPage) startLogInfo(editorPage);
+            });
+        });
+    }
     function createCapturePage() {
         /* 코멘트 기준 문단은 편집 화면이 보일 때만 잰다. 결과 창에서 폭을 바꿀 때는 마지막에 잰 기준을 다시 쓴다. */
         if (captureStage === 'editing' && editorOverlay.style.display !== 'none') {
@@ -23056,7 +26076,8 @@
         const capturePage = editorPage.cloneNode(true);
         capturePage.id = 'novcap-capture-page';
         capturePage.querySelectorAll('.novcap-edit-selected').forEach(el => el.classList.remove('novcap-edit-selected'));
-        capturePage.classList.remove('novcap-tool-active', 'novcap-comment-mode');
+        capturePage.querySelectorAll('[data-novcap-code-picked]').forEach(el => el.removeAttribute('data-novcap-code-picked'));
+        capturePage.classList.remove('novcap-tool-active', 'novcap-comment-mode', 'novcap-mosaic-tool');
         capturePage.style.removeProperty('--nov-editor-cursor');
         capturePage.style.removeProperty('transform');
         capturePage.style.removeProperty('transform-origin');
@@ -23066,11 +26087,15 @@
         /* 빠질 문단을 지우기 전에 코멘트 기준 문단에 번호를 단다(편집 화면과 같은 순서일 때만 맞는다). */
         tagCommentAnchors(capturePage, lastCommentAnchorPlan);
         capturePage.querySelectorAll('[data-novcap-remove="true"]').forEach(el => el.remove());
+        /* 2.5.5: 줄을 다 뺀 상태창은 빈 상자를 남기지 않는다. */
+        capturePage.querySelectorAll('pre[data-novcap-code-lines]').forEach(pre => {
+            if (!pre.querySelector('[data-novcap-code-line]')) (pre.closest('.wrtn-codeblock') || pre).remove();
+        });
         capturePage.querySelectorAll('ul, ol, blockquote').forEach(el => {
             if (!el.textContent.trim() && !el.querySelector('img, svg, hr, pre, .novcap-svg-image, .novcap-youtube-card')) el.remove();
         });
 
-        if (!config.includeImages) capturePage.querySelectorAll('img, .novcap-svg-image, .novcap-youtube-card').forEach(el => el.remove());
+        if (!config.includeImages) capturePage.querySelectorAll('img:not(.novcap-log-icon), .novcap-svg-image, .novcap-youtube-card').forEach(el => el.remove());
         if (config.removeHud) capturePage.querySelectorAll('[data-novcap-hud="true"]').forEach(el => el.remove());
 
         if (customRoomThemeSnapshot?.active) {
@@ -23537,7 +26562,38 @@
             });
         };
 
+        /* 2.5.4: 줄바꿈된 인라인 코드. html2canvas는 배경·테두리를 여러 줄을 감싸는 큰 상자 하나로 칠해 문단을 덮는다.
+           줄마다 따로 층에 그린다(미리보기와 같은 모양). 한 줄짜리는 그대로 둔다. */
+        capturePage.querySelectorAll('.wrtn-markdown code').forEach(code => {
+            if (code.closest('pre')) return;
+            const style = getComputedStyle(code);
+            if (style.display !== 'inline') return;
+            const framed = ['Top', 'Right', 'Bottom', 'Left'].some(side => Number.parseFloat(style['border' + side + 'Width']) > 0 && style['border' + side + 'Style'] !== 'none');
+            if (!framed && !hasVisibleThemeBackground(style)) return;
+            const lines = mergeLineRects(Array.from(code.getClientRects()));
+            if (lines.length < 2) return;
+            const place = getThemeDecorationPlace(code, getComputedStyle);
+            if (!place) return;
+            recordInlineBackgrounds(place);
+            recorded.add(code);
+            records.push({
+                element: code,
+                block: place.host,
+                lines,
+                manual: false,
+                backgroundImage: style.backgroundImage,
+                backgroundColor: style.backgroundColor,
+                borderRadius: style.borderTopLeftRadius,
+                sliceEnds: (style.boxDecorationBreak || style.webkitBoxDecorationBreak) !== 'clone',
+                border: framed ? `${style.borderTopWidth} ${style.borderTopStyle} ${style.borderTopColor}` : '',
+                paddingLeft: 0,
+                paddingRight: 0
+            });
+        });
+
         themeElements.forEach(element => {
+            /* 2.5.4: 위 인라인 코드가 바깥 배경으로 먼저 옮긴 것은 다시 그리지 않는다 */
+            if (recorded.has(element)) return;
             const place = getThemeDecorationPlace(element, getComputedStyle);
             if (!place) return;
 
@@ -23619,7 +26675,7 @@
             // absolute 좌표의 원점은 border box가 아니라 실제 배경 레이어다.
             // 인용문에 테두리가 있거나 소수점 padding을 쓰는 테마도 맞춘다.
             const blockRect = layer.getBoundingClientRect();
-            record.lines.forEach(line => {
+            record.lines.forEach((line, lineIndex) => {
                 const rect = document.createElement('span');
                 rect.className = 'novcap-theme-decoration-rect';
                 rect.style.left = `${line.left - blockRect.left - record.paddingLeft}px`;
@@ -23633,6 +26689,18 @@
                 }
                 rect.style.setProperty('background-color', record.backgroundColor && record.backgroundColor !== 'rgba(0, 0, 0, 0)' ? record.backgroundColor : 'transparent', 'important');
                 rect.style.borderRadius = record.borderRadius || '2px';
+                /* 2.5.4: 줄 사이로 이어지는 상자는 글 처음·끝 쪽만 둥글게(미리보기와 같다) */
+                const isFirstLine = lineIndex === 0;
+                const isLastLine = lineIndex === record.lines.length - 1;
+                if (record.sliceEnds) {
+                    const radius = record.borderRadius;
+                    rect.style.borderRadius = `${isFirstLine ? radius : 0} ${isLastLine ? radius : 0} ${isLastLine ? radius : 0} ${isFirstLine ? radius : 0}`;
+                }
+                if (record.border) {
+                    rect.style.setProperty('border', record.border, 'important');
+                    if (record.sliceEnds && !isFirstLine) rect.style.setProperty('border-left-width', '0', 'important');
+                    if (record.sliceEnds && !isLastLine) rect.style.setProperty('border-right-width', '0', 'important');
+                }
                 layer.appendChild(rect);
             });
 
@@ -23641,6 +26709,7 @@
             record.element.style.setProperty('background', 'none', 'important');
             record.element.style.setProperty('background-color', 'transparent', 'important');
             record.element.style.setProperty('box-shadow', 'none', 'important');
+            if (record.border) record.element.style.setProperty('border-color', 'transparent', 'important');
         });
         manualMarks.forEach(stripHighlightMark);
 
@@ -23669,6 +26738,16 @@
             /* 로딩막 표시도 DOM 변이이므로 먼저 완전히 분리된 저장본을 확보한다. */
             const capturePage = consumeCapturePage();
             showLoading('최종 이미지를 굽는 중...');
+            /* 2.5.5: 로그 정보를 아직 받는 중이면 기다렸다가 먼저 떠 둔 저장본에 옮겨 단다. */
+            if (logInfoOn()) {
+                if (logInfoJob) {
+                    showLoading('로그 정보를 불러오는 중...');
+                    await waitLogInfoReady();
+                    if (session !== editorSessionId) return false;
+                    showLoading('최종 이미지를 굽는 중...');
+                }
+                syncCaptureLogFooters(capturePage);
+            }
 
             captureHost = document.createElement('main');
             captureHost.className = 'novcap-capture-host';
@@ -23752,6 +26831,12 @@
                 else materializeHighlightRects(root);
                 /* 밑줄은 두 모드 모두 글자 위 한 층에 그린다. 배경 문법 정리 전에 원래 밑줄 CSS를 지운다. */
                 materializeUnderlineRects(root);
+                /* 2.5.5: 백틱 테두리를 줄마다 그리고, 가린 글자는 그리지 않는다(모자이크만 층에 칠한다). */
+                materializeInlineCodeBorders(root);
+                materializeMosaicRects(root);
+                /* 2.5.4: 표 테두리 두 겹·기본 목록 표시(번호·점) 자리를 미리보기에 맞춘다 */
+                normalizeCollapsedTableBorders(root);
+                materializeListMarkers(root);
                 /* 2.5.0: 배경은 캔버스에 이미 그렸다. 복제본 원고의 바탕(색·무늬·사진 층)은 지운다. */
                 if (pageBackdrop) {
                     root.style.setProperty('background-image', 'none', 'important');
@@ -24045,10 +27130,12 @@
         // 사이트의 img { display:block; height:auto } 리셋이 probe를 줄바꿈하면
         // baseline은 커지고 middle은 2px가 되어 글자/취소선이 서로 어긋난다.
         // vertical-align은 엔진이 baseline/super로 바꾸므로 건드리지 않는다.
+        // 2.5.4: 엔진은 기준선을 (probe 윗변 + 2)로 잰다. 1px probe면 실제 기준선보다 1px 아래라 모든 글자가
+        // 미리보기보다 1px 내려간다(형광펜·밑줄·배경은 제자리). 2px probe면 기준선과 꼭 맞는다.
         style.textContent = `
             img[src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"] {
                 display: inline !important;
-                width: 1px !important; height: 1px !important;
+                width: 1px !important; height: 2px !important;
                 min-width: 0 !important; min-height: 0 !important;
                 max-width: none !important; max-height: none !important;
             }
@@ -24108,9 +27195,9 @@
        (스크립트를 읽는 중에 불려도 되게 바깥 const 없이 함수 안에서만 만든다.) */
     function novcapScriptVersion() {
         try {
-            return (typeof GM_info !== 'undefined' && GM_info?.script?.version) || '2.5.3';
+            return (typeof GM_info !== 'undefined' && GM_info?.script?.version) || '2.5.7';
         } catch (error) {
-            return '2.5.3';
+            return '2.5.7';
         }
     }
 
@@ -24219,6 +27306,175 @@
         writes.forEach(([element, prop, value]) => element.style.setProperty(prop, replaceModernColors(value), 'important'));
         if (writes.length) console.info(`[novcap] 최신 색 표기 ${writes.length}곳을 rgb()로 바꿔 저장합니다.`);
         return writes.length;
+    }
+
+    /* 2.5.4: html2canvas는 border-collapse를 몰라 칸마다 테두리를 따로 그려 이웃 칸 경계가 두 겹으로 굵어진다.
+       저장 복제본에서만 경계마다 한쪽 선을 지운다(얇은 쪽, 같으면 오른쪽·아래쪽 칸). 접힌 표의 줄 폭은 두꺼운 선이 정하므로 칸 크기·줄바꿈은 그대로다. */
+    function normalizeCollapsedTableBorders(root) {
+        const view = root.ownerDocument.defaultView;
+        const clears = [];
+        root.querySelectorAll('table').forEach(table => {
+            if (view.getComputedStyle(table).borderCollapse !== 'collapse') return;
+            const cells = Array.from(table.querySelectorAll('th, td')).filter(cell => cell.closest('table') === table).map(cell => {
+                const style = view.getComputedStyle(cell);
+                const width = side => (style['border' + side + 'Style'] === 'none' || style['border' + side + 'Style'] === 'hidden' ? 0 : Number.parseFloat(style['border' + side + 'Width']) || 0);
+                return { cell, box: cell.getBoundingClientRect(), left: width('Left'), right: width('Right'), top: width('Top'), bottom: width('Bottom') };
+            });
+            /* 칸을 합친 표는 왼쪽·위 칸 선을 지우지 않는다(이웃이 여럿이면 어느 칸은 선을 잃는다) */
+            const spanned = cells.some(({ cell }) => cell.rowSpan > 1 || cell.colSpan > 1);
+            cells.forEach(a => cells.forEach(b => {
+                if (a === b) return;
+                const overlapY = Math.min(a.box.bottom, b.box.bottom) - Math.max(a.box.top, b.box.top);
+                const overlapX = Math.min(a.box.right, b.box.right) - Math.max(a.box.left, b.box.left);
+                if (Math.abs(a.box.right - b.box.left) <= 1.5 && overlapY > 1 && a.right > 0 && b.left > 0) {
+                    if (a.right >= b.left) clears.push([b.cell, 'border-left-width']);
+                    else if (!spanned) clears.push([a.cell, 'border-right-width']);
+                }
+                if (Math.abs(a.box.bottom - b.box.top) <= 1.5 && overlapX > 1 && a.bottom > 0 && b.top > 0) {
+                    if (a.bottom >= b.top) clears.push([b.cell, 'border-top-width']);
+                    else if (!spanned) clears.push([a.cell, 'border-bottom-width']);
+                }
+            }));
+        });
+        clears.forEach(([cell, name]) => cell.style.setProperty(name, '0', 'important'));
+    }
+
+    /* 2.5.4: 브라우저 기본 목록 표시(테마 모드의 번호·점). html2canvas는 글자 줄과 따로 어림 자리에 그려 번호 높이가 어긋나고 점이 작아진다.
+       저장 복제본에서만 번호는 글자로, 점은 도형으로 미리보기 자리에 그린다(줄 배치는 그대로). 기본 조판은 표시가 글자(::before)라 해당 없다. */
+    function materializeListMarkers(root) {
+        const doc = root.ownerDocument;
+        const view = doc.defaultView;
+        const makeProbe = () => {
+            const probe = doc.createElement('span');
+            probe.style.cssText = 'display:inline-block !important;width:0 !important;height:0 !important;margin:0 !important;padding:0 !important;border:0 !important;vertical-align:baseline !important;';
+            return probe;
+        };
+        /* 첫 줄이 글자나 문단·제목으로 시작하는 항목만 바꾼다. 표·코드블럭·중첩 목록으로 시작하면 원래대로 둔다. */
+        const firstLineAnchor = item => {
+            let first = item.firstChild;
+            while (first) {
+                const skip = first.nodeType === 1 ? first.classList.contains('novcap-theme-decoration-layer') : (first.nodeType !== 3 || !first.nodeValue.trim());
+                if (!skip) break;
+                first = first.nextSibling;
+            }
+            if (!first) return null;
+            if (first.nodeType === 3) return item;
+            if (first.matches('p, h1, h2, h3, h4, h5, h6')) return first;
+            return view.getComputedStyle(first).display.startsWith('inline') ? item : null;
+        };
+        const counters = new Map();
+        const nextNumber = item => {
+            const list = item.parentElement;
+            let state = counters.get(list);
+            if (!state) {
+                const isOrdered = list.tagName === 'OL';
+                const reversed = isOrdered && list.hasAttribute('reversed');
+                const total = Array.from(list.children).filter(child => child.tagName === 'LI').length;
+                const start = isOrdered ? Number.parseInt(list.getAttribute('start'), 10) : NaN;
+                state = { value: Number.isFinite(start) ? start : (reversed ? total : 1), step: reversed ? -1 : 1 };
+                counters.set(list, state);
+            }
+            const own = Number.parseInt(item.getAttribute('value'), 10);
+            if (Number.isFinite(own)) state.value = own;
+            const current = state.value;
+            state.value += state.step;
+            return current;
+        };
+        const jobs = [];
+        root.querySelectorAll('li').forEach(item => {
+            const style = view.getComputedStyle(item);
+            if (style.display !== 'list-item') return;
+            /* 브라우저는 표시를 숨긴 항목도 센다 */
+            const number = nextNumber(item);
+            if (style.listStylePosition !== 'outside' || style.listStyleImage !== 'none') return;
+            const type = style.listStyleType;
+            if (!['decimal', 'disc', 'circle', 'square'].includes(type)) return;
+            const marker = view.getComputedStyle(item, '::marker');
+            if (marker.content && marker.content !== 'normal' && marker.content !== 'none') return;
+            const anchor = firstLineAnchor(item);
+            if (!anchor) return;
+            const probe = makeProbe();
+            anchor.insertBefore(probe, anchor.firstChild);
+            const baseline = probe.getBoundingClientRect().bottom;
+            probe.remove();
+            let opacity = 1;
+            for (let node = item; node && node !== root.parentElement; node = node.parentElement) opacity *= Number.parseFloat(view.getComputedStyle(node).opacity) || 0;
+            jobs.push({
+                item, type, number, baseline, opacity,
+                itemLeft: item.getBoundingClientRect().left,
+                color: marker.color || style.color,
+                font: { fontStyle: marker.fontStyle, fontWeight: marker.fontWeight, fontSize: marker.fontSize, fontFamily: marker.fontFamily },
+                lineHeight: marker.lineHeight,
+                letterSpacing: marker.letterSpacing
+            });
+        });
+        if (!jobs.length) return;
+        /* 항목 안에 넣으면 테마의 :last-child 규칙이 달라져 줄이 밀릴 수 있어 원고 위 한 층에 모은다(밑줄 층과 같다) */
+        const layer = doc.createElement('div');
+        layer.setAttribute('data-novcap-list-marker-layer', '');
+        layer.setAttribute('aria-hidden', 'true');
+        layer.style.cssText = 'position:absolute !important;left:0 !important;top:0 !important;right:0 !important;bottom:0 !important;margin:0 !important;padding:0 !important;z-index:3 !important;pointer-events:none !important;overflow:visible !important;';
+        root.appendChild(layer);
+        const origin = layer.getBoundingClientRect();
+        const ascents = new Map();
+        jobs.forEach(job => {
+            const { item, type, font } = job;
+            const element = doc.createElement('span');
+            element.setAttribute('aria-hidden', 'true');
+            element.setAttribute('data-novcap-list-marker', '');
+            const set = (name, value) => element.style.setProperty(name, value, 'important');
+            set('position', 'absolute');
+            set('display', 'block');
+            set('margin', '0');
+            set('padding', '0');
+            set('max-width', 'none');
+            set('pointer-events', 'none');
+            if (job.opacity < 0.999) set('opacity', String(job.opacity));
+            if (type === 'decimal') {
+                /* 번호 뒤 공백까지가 표시 폭이고 그 오른쪽 끝이 항목 상자 왼쪽에 닿는다(브라우저와 같다) */
+                element.textContent = job.number + '. ';
+                set('left', '0');
+                set('top', '0');
+                set('white-space', 'pre');
+                set('width', 'max-content');
+                set('border', '0');
+                set('background', 'none');
+                set('color', job.color);
+                set('font-style', font.fontStyle);
+                set('font-weight', font.fontWeight);
+                set('font-size', font.fontSize);
+                set('font-family', font.fontFamily);
+                set('line-height', job.lineHeight);
+                set('letter-spacing', job.letterSpacing);
+                layer.appendChild(element);
+                const own = makeProbe();
+                element.appendChild(own);
+                const ownBaseline = own.getBoundingClientRect().bottom;
+                own.remove();
+                set('top', (job.baseline - ownBaseline) + 'px');
+                set('left', (job.itemLeft - element.getBoundingClientRect().width - origin.left) + 'px');
+            } else {
+                /* 점: 브라우저(Blink)의 표시 크기·자리 계산 그대로. ascent = 글꼴 윗높이 */
+                const ascent = Math.round(measureFontAscent(font, layer, ascents));
+                const twoThirds = Math.trunc(ascent * 2 / 3);
+                const size = Math.trunc((twoThirds + 1) / 2);
+                set('left', (job.itemLeft - twoThirds - 7 - origin.left) + 'px');
+                set('top', (job.baseline - ascent + Math.trunc(3 * (ascent - twoThirds) / 2) - origin.top) + 'px');
+                set('width', size + 'px');
+                set('height', size + 'px');
+                set('box-sizing', 'border-box');
+                set('border-radius', type === 'square' ? '0' : '50%');
+                if (type === 'circle') {
+                    set('border', '1px solid ' + job.color);
+                    set('background', 'none');
+                } else {
+                    set('border', '0');
+                    set('background', job.color);
+                }
+                layer.appendChild(element);
+            }
+            item.style.setProperty('list-style-type', 'none', 'important');
+        });
     }
 
     function sanitizeHtml2CanvasBackgroundSyntax(root) {
@@ -24728,6 +27984,10 @@
             if (editorOverlay.dataset.novcapStep === '3') backToEditor();
         });
         editorOverlay.querySelector('#novcap-save-copy').onclick = copyResultImage;
+        editorOverlay.querySelector('#novcap-save-pdf').onclick = event => {
+            if (event?.detail > 1) return;
+            renderFinalPdf();
+        };
         editorOverlay.querySelector('#novcap-save-download').onclick = downloadCurrentImage;
         editorOverlay.querySelector('#novcap-save-share').onclick = shareResultImage;
 
@@ -25029,6 +28289,9 @@
         pairs.splice(index, 1);
         config.maskPairs = normalizeMaskPairs(pairs);
         saveConfig();
+        /* 2.5.5: 줄 높이가 이름표 수에 따라 달라 지금 높이에서 접는다. */
+        row.style.height = row.offsetHeight + 'px';
+        void row.offsetHeight;
         row.setAttribute('data-leaving', '');
         if (reduceMotion()) row.remove();
         else setTimeout(() => row.remove(), 230);
@@ -25043,6 +28306,7 @@
     }
 
     function bindMaskRows() {
+        bindMaskChips();
         editorOverlay.querySelector('#novcap-add-mask-row').addEventListener('click', () => {
             const pairs = readMaskRows();
             if (pairs.length >= MASK_PAIR_MAX) return;
@@ -25056,12 +28320,13 @@
             row.setAttribute('data-new', '');
             setTimeout(() => row.removeAttribute('data-new'), reduceMotion() ? 0 : 400);
             syncMaskRowsMeta();
-            row.querySelector('.novcap-mask-from')?.focus();
+            row.querySelector('.novcap-mask-typer')?.focus();
         });
 
         /* 쓰는 즉시 목록에 넣고 잠시 뒤 저장한다. 창을 닫거나 칸을 다시 그려도 쓴 글이 남는다. */
         getMaskHolder().addEventListener('input', event => {
-            if (!event.target.closest?.('.novcap-mask-from, .novcap-mask-to')) return;
+            if (!event.target.closest?.('.novcap-mask-typer, .novcap-mask-to')) return;
+            if (event.target.closest('.novcap-mask-typer')) syncMaskRowsMeta();
             config.maskPairs = readMaskRows();
             clearTimeout(maskSaveTimer);
             maskSaveTimer = setTimeout(() => {
@@ -25093,14 +28358,14 @@
         editorOverlay.querySelectorAll('.novcap-highlight-btn').forEach(button => {
             button.classList.toggle('active', button.dataset.color === current);
         });
-        editorOverlay.querySelector('#novcap-custom-highlight')?.classList.toggle('active', current.startsWith('#'));
+        editorOverlay.querySelector('#novcap-custom-highlight')?.classList.toggle('active', current.startsWith('#') && !userColorListed('highlight', current));
         editorOverlay.querySelectorAll('.novcap-underline-btn').forEach(button => {
             button.classList.toggle('active', button.dataset.style === config.underlineStyle);
         });
         editorOverlay.querySelectorAll('.novcap-underline-color-btn').forEach(button => {
             button.classList.toggle('active', button.dataset.color === config.underlineColor);
         });
-        editorOverlay.querySelector('#novcap-custom-underline')?.classList.toggle('active', String(config.underlineColor || '').startsWith('#'));
+        editorOverlay.querySelector('#novcap-custom-underline')?.classList.toggle('active', String(config.underlineColor || '').startsWith('#') && !userColorListed('underline', config.underlineColor));
         editorOverlay.querySelector('#novcap-remove-highlight')?.classList.remove('active');
         editorOverlay.querySelector('#novcap-remove-underline')?.classList.remove('active');
         syncSwatchRings();
