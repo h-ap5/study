@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🧩 Crack Chat Hub (크랙 채팅 허브)
 // @namespace    https://crack.wrtn.ai/
-// @version      1.1.12
+// @version      1.1.13
 // @description  크랙 채팅 합본: 임시저장, 글자수, 채팅창 펼치기, 대시보드(해/달·소설/채팅 즉시 전환), 라디오존데, 채팅·출력 모델 공통 숨김.
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-idle
@@ -2619,11 +2619,16 @@ const hubNotice = (() => {
 
     function isActiveCrackerEvent(event) {
         if (!event || typeof event !== 'object') return false;
+        // 2026-11 크랙: 할인이 끝나도 crackerEvent가 남고 isDiscountActive:false와 기간(startDate~endDate)이 같이 온다.
+        if (event.isDiscountActive === false) return false;
         const v = Number(event.discountedCrackerQuantity);
         if (!Number.isFinite(v) || v <= 0) return false;
+        const now = Date.now();
+        const startAt = event.startDate ? new Date(event.startDate).getTime() : NaN;
+        const endAt = event.endDate ? new Date(event.endDate).getTime() : NaN;
+        if ((Number.isFinite(startAt) && now < startAt) || (Number.isFinite(endAt) && now > endAt)) return false;
         const ranges = Array.isArray(event.timeRanges) ? event.timeRanges : [];
         if (!ranges.length) return true;
-        const now = Date.now();
         return ranges.some((r) => {
             const s = r?.startTime ? new Date(r.startTime).getTime() : -Infinity;
             const e = r?.endTime ? new Date(r.endTime).getTime() : Infinity;
@@ -3922,6 +3927,12 @@ const hubNotice = (() => {
         s.id = 'chud-model-hide-style';
         s.textContent = `
             [data-chud-model-hidden="true"] { display: none !important; }
+            /* 입력창 오른쪽 아래 크랙 모델 버튼: 허브가 대신 눌러 모델을 바꾸므로 지우지 않고 1px로 접는다 */
+            button[data-chud-native-model="hidden"] {
+                position: absolute !important; width: 1px !important; height: 1px !important; min-width: 0 !important;
+                padding: 0 !important; margin: 0 !important; border: 0 !important; overflow: hidden !important;
+                opacity: 0 !important; pointer-events: none !important; clip-path: inset(50%) !important;
+            }
             [role="dialog"][data-chud-model-compact="true"] {
                 height: auto !important;
                 min-height: 0 !important;
@@ -4458,6 +4469,25 @@ const hubNotice = (() => {
         } else if (menu.hasAttribute('data-chud-model-compact')) {
             menu.removeAttribute('data-chud-model-compact');
         }
+    }
+
+    // 2026-11 크랙 업데이트: 모델 선택 버튼이 입력창 오른쪽 아래(보내기 옆)로 들어왔다.
+    // 허브 모델 버튼(네모)이 보일 때만 그 버튼을 화면에서 감춘다. 허브 버튼을 끄거나 대시보드가 없으면 다시 보인다.
+    // 입력창 상자 안의 것만 감추고, 다른 곳에 있는 크랙 모델 버튼은 건드리지 않는다.
+    let nativeModelPill = null;
+    function syncNativeModelPill() {
+        const hubBtn = document.getElementById('chud-model-btn');
+        const hubShown = !!(hubBtn && hubBtn.isConnected && hubBtn.getClientRects().length);
+        let pill = null;
+        const editor = Core.editor;
+        if (hubShown && editor) {
+            const btn = getOfficialModelButton();
+            let p = btn?.parentElement;
+            for (let i = 0; p && i < 6; i++, p = p.parentElement) if (p.contains(editor)) { pill = btn; break; }
+        }
+        if (nativeModelPill && nativeModelPill !== pill) nativeModelPill.removeAttribute('data-chud-native-model');
+        if (pill && pill.getAttribute('data-chud-native-model') !== 'hidden') pill.setAttribute('data-chud-native-model', 'hidden');
+        nativeModelPill = pill;
     }
 
     function fireModelSelectSequence(el) {
@@ -5291,6 +5321,7 @@ const hubNotice = (() => {
         function applyVisible() {
             const set = (b, on) => { if (b) b.style.display = on ? 'inline-flex' : 'none'; };
             set(btns.model, visible.modelButton !== false);
+            syncNativeModelPill();
             set(btns.theme, visible.themeButton !== false);
             set(btns.episodeMode, visible.episodeModeButton !== false);
             set(btns.guide, visible.guideButton !== false);
@@ -5661,6 +5692,7 @@ const hubNotice = (() => {
         // 바 붙이기/떼기
         if (featureEnabled.infoBar) InfoBar.mount(container); else InfoBar.unmount();
         if (featureEnabled.sidebar) Sidebar.mount(container); else Sidebar.unmount();
+        syncNativeModelPill();
 
         // 방 전환
         if (chatId !== lastChatId) {
@@ -6276,6 +6308,7 @@ const hubNotice = (() => {
     startListCrackerObserver();
     scheduleListCrackerUpdate(300);
     Core.on('maintenance',()=>{if(Core.editor&&((featureEnabled.infoBar&&!InfoBar.el?.isConnected)||(featureEnabled.sidebar&&!Sidebar.el?.isConnected)))scheduleUpdate();});
+    Core.on('maintenance',syncNativeModelPill);
     Core.on('layout',()=>{applyLayout();InfoBar.reposition();Sidebar.reposition();});
     scheduleUpdate();
 })();
