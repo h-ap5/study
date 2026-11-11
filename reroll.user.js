@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Crack Reroll Suite (리롤 · 클린 리롤 · 믹서) 🧩✨
 // @namespace    http://tampermonkey.net/
-// @version      2.4.12
+// @version      2.4.13
 // @description  꾹 눌러 리롤, 클린 리롤, 카드형 리롤 믹서와 AI 자연 혼합 도구를 제공합니다. RP Manager(0.x·2.x·Core) 호환.
 // @author       Assistant
 // @match        https://crack.wrtn.ai/*
@@ -50,6 +50,8 @@
     const CLEAN_ANSWER_EVENT = `${SCRIPT_NS}:clean-answer`;
     const CLEAN_RESENT_EVENT = `${SCRIPT_NS}:clean-resent`;
     const CLEAN_CANCEL_EVENT = `${SCRIPT_NS}:clean-cancel`;
+    // 크랙이 답변 실패 때 화면에만 넣는 임시 말풍선의 번호 앞부분입니다(크랙 코드의 t4).
+    const CRACK_LOCAL_ERROR_PREFIX = 'error-message';
     const HOLD_MS = 500;
     const MESSAGE_HOLD_MS = 800;
     const MESSAGE_HOLD_START_DELAY_MS = 300;
@@ -1423,6 +1425,11 @@ A와 B는 서로 이어지는 답변이 아니라 동일한 턴에 대한 서로
 
     function isUserMessage(msg) {
         return String(msg?.role || '').toLowerCase() === 'user';
+    }
+
+    // 생성이 지연·실패해 본문 없이 저장된 AI 답변입니다(서버 status 'error', error.code 408 등).
+    function isFailedAssistantMessage(msg) {
+        return isAssistantMessage(msg) && String(msg?.status || '').toLowerCase() === 'error';
     }
 
     function getRerollFlag(msg) {
@@ -5302,7 +5309,12 @@ Firebase 콘솔 → 보안 → App Check → 앱 탭에서, 위 구성과 같은
             const messages = await fetchAllMessages(chatId, 30);
             const { user, ai } = resolveCleanTurn(messages, messageIdOf(latestSnapshot));
             const aiId = messageIdOf(ai);
-            if (getGroupMessageId(group) !== aiId) {
+            // 답변이 지연 등으로 실패하면 서버에는 본문 없는 status 'error' 답변이 남고, 새로고침 전 화면에는
+            // 크랙이 만든 'error-message…' 임시 번호 말풍선이 뜹니다. 둘을 같은 답변으로 봅니다.
+            const aiFailed = isFailedAssistantMessage(ai);
+            const groupId = getGroupMessageId(group);
+            const localErrorId = aiFailed && groupId !== aiId && groupId.startsWith(CRACK_LOCAL_ERROR_PREFIX) ? groupId : '';
+            if (groupId !== aiId && !localErrorId) {
                 throw new Error('누른 답변과 서버의 최근 AI 답변이 달라요. 새로고침한 뒤 다시 눌러 주세요.');
             }
             userId = messageIdOf(user);
@@ -5313,7 +5325,7 @@ Firebase 콘솔 → 보안 → App Check → 앱 탭에서, 위 구성과 같은
                 throw new Error('이미지가 포함된 USER 메시지는 자동으로 다시 보낼 수 없어요.');
             }
             const aiRaw = getRawMessageContent(ai);
-            if (!aiRaw.trim()) throw new Error('현재 AI 답변 원문을 읽지 못했어요.');
+            if (!aiRaw.trim() && !aiFailed) throw new Error('현재 AI 답변 원문을 읽지 못했어요.');
             const knownIds = new Set(messages.map(messageIdOf).filter(Boolean));
             const previousId = messageIdOf(messages.find(msg => ![userId, aiId].includes(messageIdOf(msg)))) || '';
 
@@ -5336,6 +5348,11 @@ Firebase 콘솔 → 보안 → App Check → 앱 탭에서, 위 구성과 같은
             deletionAttempted = true;
             await Promise.resolve(native.actions.removeMessage(aiId));
             await waitUntilCleanDeleted(chatId, aiId, userId, knownIds);
+            if (localErrorId) {
+                // 크랙은 'error-message…' 번호를 서버에 묻지 않고 화면에서만 지웁니다. 서버 쪽은 위에서 지웠습니다.
+                await Promise.resolve(native.actions.removeMessage(localErrorId)).catch(error =>
+                    console.warn('[reroll-mixer] local error bubble remove failed', error));
+            }
 
             native = await findNativeChat(null, chatId);
             if (!native) throw new Error('크랙 내부 전송 함수가 사라져 USER 메시지는 그대로 두었어요.');
