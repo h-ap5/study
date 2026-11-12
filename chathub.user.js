@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🧩 Crack Chat Hub (크랙 채팅 허브)
 // @namespace    https://crack.wrtn.ai/
-// @version      1.1.13
+// @version      1.1.14
 // @description  크랙 채팅 합본: 임시저장, 글자수, 채팅창 펼치기, 대시보드(해/달·소설/채팅 즉시 전환), 라디오존데, 채팅·출력 모델 공통 숨김.
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-idle
@@ -3933,6 +3933,8 @@ const hubNotice = (() => {
                 padding: 0 !important; margin: 0 !important; border: 0 !important; overflow: hidden !important;
                 opacity: 0 !important; pointer-events: none !important; clip-path: inset(50%) !important;
             }
+            /* 같은 묶음의 다른 확프 버튼(위시 OFF · Verso 펜 등)이 붙이던 옛 여백을 빼고 크랙 간격 하나로 맞춘다 */
+            [data-chud-composer-tools="1"] > * { margin-left: 0 !important; margin-right: 0 !important; }
             [role="dialog"][data-chud-model-compact="true"] {
                 height: auto !important;
                 min-height: 0 !important;
@@ -4474,17 +4476,25 @@ const hubNotice = (() => {
     // 2026-11 크랙 업데이트: 모델 선택 버튼이 입력창 오른쪽 아래(보내기 옆)로 들어왔다.
     // 허브 모델 버튼(네모)이 보일 때만 그 버튼을 화면에서 감춘다. 허브 버튼을 끄거나 대시보드가 없으면 다시 보인다.
     // 입력창 상자 안의 것만 감추고, 다른 곳에 있는 크랙 모델 버튼은 건드리지 않는다.
-    let nativeModelPill = null;
+    // 같은 묶음에는 크랙이 칸 사이 간격(gap)을 넣었는데, 다른 확프 버튼은 예전 화면에 맞춘 여백을 계속 붙여 간격이 벌어진다.
+    // 대시보드가 붙어 있고 묶음에 간격이 있을 때만 그 안의 좌우 여백을 뺀다(크랙이 간격을 없애면 원래 여백이 돌아온다).
+    let nativeModelPill = null, composerToolsRow = null;
     function syncNativeModelPill() {
         const hubBtn = document.getElementById('chud-model-btn');
         const hubShown = !!(hubBtn && hubBtn.isConnected && hubBtn.getClientRects().length);
-        let pill = null;
+        let composerBtn = null;
         const editor = Core.editor;
-        if (hubShown && editor) {
+        if (hubBtn && hubBtn.isConnected && editor) {
             const btn = getOfficialModelButton();
             let p = btn?.parentElement;
-            for (let i = 0; p && i < 6; i++, p = p.parentElement) if (p.contains(editor)) { pill = btn; break; }
+            for (let i = 0; p && i < 6; i++, p = p.parentElement) if (p.contains(editor)) { composerBtn = btn; break; }
         }
+        let row = composerBtn?.parentElement || null;
+        if (row && !(parseFloat(getComputedStyle(row).columnGap) > 0)) row = null;
+        if (composerToolsRow && composerToolsRow !== row) composerToolsRow.removeAttribute('data-chud-composer-tools');
+        if (row && row.getAttribute('data-chud-composer-tools') !== '1') row.setAttribute('data-chud-composer-tools', '1');
+        composerToolsRow = row;
+        const pill = hubShown ? composerBtn : null;
         if (nativeModelPill && nativeModelPill !== pill) nativeModelPill.removeAttribute('data-chud-native-model');
         if (pill && pill.getAttribute('data-chud-native-model') !== 'hidden') pill.setAttribute('data-chud-native-model', 'hidden');
         nativeModelPill = pill;
