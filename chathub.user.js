@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🧩 Crack Chat Hub (크랙 채팅 허브)
 // @namespace    https://crack.wrtn.ai/
-// @version      1.1.14
+// @version      1.1.15
 // @description  크랙 채팅 합본: 임시저장, 글자수, 채팅창 펼치기, 대시보드(해/달·소설/채팅 즉시 전환), 라디오존데, 채팅·출력 모델 공통 숨김.
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-idle
@@ -4037,6 +4037,10 @@ const hubNotice = (() => {
             .chud-translator-icon { width: 16.5px; height: 16.5px; transform-origin: center; }
             .chud-ai-summary-icon { width: 16.5px; height: 16.5px; transform-origin: center; }
             .chud-ai-writer-icon { width: 16.5px; height: 16.5px; transform-origin: center; }
+            #chud-model-btn .chud-model-btn-img { width: 20px; height: 20px; object-fit: contain; -webkit-user-drag: none; user-select: none; }
+            @keyframes chud-model-pop { 0% { transform: scale(.45); opacity: 0; } 60% { transform: scale(1.14); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
+            #chud-model-btn .chud-model-btn-img.is-new { animation: chud-model-pop .34s cubic-bezier(.34, 1.56, .64, 1) both; }
+            @media (prefers-reduced-motion: reduce) { #chud-model-btn .chud-model-btn-img.is-new { animation: none; } }
 
             /* 드롭다운 / 설정 메뉴 공통 */
             #chud-side-dropdown, #chud-side-menu, #chud-info-menu {
@@ -5147,7 +5151,35 @@ const hubNotice = (() => {
             if (dropdown.style.display === 'flex') positionFloat(dropdown, dropdownAnchor || btns.model || settingsBtn);
         }
 
+        // 크랙 모델 버튼을 감춘 뒤로는 지금 모델이 안 보여서, 네모(모델 버튼)를 지금 고른 모델 아이콘으로 바꾼다.
+        // 모델을 모르면(방 들어가는 중 등) 원래 네모. 같은 그림이면 DOM을 건드리지 않는다.
+        function syncModelButtonIcon() {
+            const b = btns.model;
+            if (!b) return;
+            const m = shared.currentModel;
+            const src = m && typeof m.icon === 'string' && m.icon.startsWith('https://') ? m.icon : '';
+            if (!b.hasAttribute('data-chud-model-icon') || b.getAttribute('data-chud-model-icon') !== src) {
+                const firstPaint = !b.hasAttribute('data-chud-model-icon');
+                b.setAttribute('data-chud-model-icon', src);
+                if (src) {
+                    const img = document.createElement('img');
+                    img.className = 'chud-btn-icon chud-model-btn-img' + (firstPaint ? '' : ' is-new');
+                    img.alt = '';
+                    img.draggable = false;
+                    img.decoding = 'async';
+                    img.addEventListener('error', () => { if (b.getAttribute('data-chud-model-icon') === src) b.innerHTML = ICON.model; }, { once: true });
+                    img.src = src;
+                    b.replaceChildren(img);
+                } else {
+                    b.innerHTML = ICON.model;
+                }
+            }
+            const label = m?.name ? `모델 변경 · 지금 ${m.name}` : '모델 변경';
+            if (b.title !== label) { b.title = label; b.setAttribute('aria-label', label); }
+        }
+
         function highlightCurrent() {
+            syncModelButtonIcon();
             if (!dropdown) return;
             const cur = shared.currentModel?.name || pendingModelName || '';
             dropdown.querySelectorAll('.chud-model-item').forEach((it) => {
