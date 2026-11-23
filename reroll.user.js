@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Crack Reroll Suite (리롤 · 클린 리롤 · 믹서) 🧩✨
 // @namespace    http://tampermonkey.net/
-// @version      2.4.13
+// @version      2.4.14
 // @description  꾹 눌러 리롤, 클린 리롤, 카드형 리롤 믹서와 AI 자연 혼합 도구를 제공합니다. RP Manager(0.x·2.x·Core) 호환.
 // @author       Assistant
 // @match        https://crack.wrtn.ai/*
@@ -90,6 +90,8 @@
     // 고를 수 있는 모델입니다. 추론 단계(낮음·중간·높음)를 그대로 받는 Gemini 3·4 계열만 둡니다.
     const GEMINI_MODEL_OPTIONS = Object.freeze([
         { value: 'gemini-4-argon', label: '4 Argon' },
+        { value: 'gemini-4-neon', label: '4 Neon' },
+        { value: 'gemini-4-hydrogen', label: '4 Hydrogen' },
         { value: 'gemini-3.8-flash', label: '3.8 Flash' },
         { value: 'gemini-3.7-flash', label: '3.7 Flash' },
         { value: 'gemini-3.6-flash', label: '3.6 Flash' },
