@@ -1,7 +1,9 @@
 // ==UserScript==
 // @name         🧩 Crack Chat Hub (크랙 채팅 허브)
 // @namespace    https://crack.wrtn.ai/
-// @version      1.1.15
+// @version      1.1.16
+// @updateURL    https://raw.githubusercontent.com/h-ap5/study/main/chathub.user.js
+// @downloadURL  https://raw.githubusercontent.com/h-ap5/study/main/chathub.user.js
 // @description  크랙 채팅 합본: 임시저장, 글자수, 채팅창 펼치기, 대시보드(해/달·소설/채팅 즉시 전환), 라디오존데, 채팅·출력 모델 공통 숨김.
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-idle
@@ -253,7 +255,7 @@ const hubNotice = (() => {
   'use strict';
 
   const SCRIPT_NAME = '크랙 채팅 허브';
-  const VERSION = '1.0.2';
+  const VERSION = '1.0.3';
   const PREFIX = 'cwa-chat-draft:v1:';
 
   // 저장 타이밍: 너무 잦은 동기 저장을 피하면서도 체감상 빠르게.
@@ -264,6 +266,12 @@ const hubNotice = (() => {
 
   // 오래된 임시저장 자동 정리.
   const OLD_DRAFT_MS = 30 * 24 * 60 * 60 * 1000;
+
+  // 방을 옮기면 크랙이 입력창을 새로 만들고 한 번 비운다. 그사이 되살린 글이 지워지면 다시 넣는다.
+  const RESTORE_GUARD_MS = 4000;
+  const RESTORE_GUARD_TRIES = 4;
+  // 방을 옮긴 순간 남아 있던 앞 방 입력창. 크랙이 이 시간 안에 바꾸지 않으면 이 방 입력창으로 본다.
+  const STALE_EDITOR_MS = 3000;
 
   const DEBUG = false;
 
@@ -283,6 +291,12 @@ const hubNotice = (() => {
     protectedDraft: false,
     lastKnownText: '',
     latestInputText: '',
+    guard: null,
+    guardTimer: 0,
+    staleEditor: null,
+    staleTimer: 0,
+    ownedEditor: null,
+    userTouched: false,
 
     startedAt: Date.now()
   };
@@ -621,6 +635,8 @@ const hubNotice = (() => {
 
   function startPossibleSend(reason = 'possible-send') {
     if (!state.roomKey || !state.editor || !isChatInputEditor(state.editor)) return;
+    state.userTouched = true;
+    endGuard();
     const text = getEditorText(state.editor);
     if (isBlankText(text)) return;
 
@@ -654,6 +670,8 @@ const hubNotice = (() => {
   function onInput(event) {
     if (!state.editor || !state.editor.isConnected || state.restoring || state.composing ||
         getRoomKeyFromLocation() !== state.roomKey) return;
+    state.userTouched = true;
+    endGuard();
 
     const text = getEditorText(state.editor);
     if (isBlankText(text)) {
@@ -674,11 +692,14 @@ const hubNotice = (() => {
     }
 
     state.latestInputText = text;
+    state.ownedEditor = state.editor;
     scheduleSave('input');
   }
 
   function onKeydown(event) {
     if (!state.editor) return;
+    state.userTouched = true;
+    endGuard();
     if (event.isComposing || state.composing) return;
 
     const isEnterSend = event.key === 'Enter' &&
@@ -690,6 +711,8 @@ const hubNotice = (() => {
   function onCompositionStart() {
     clearTimeout(state.saveTimer);
     state.composing = true;
+    state.userTouched = true;
+    endGuard();
   }
 
   function onCompositionEnd() {
@@ -807,8 +830,61 @@ const hubNotice = (() => {
     }
   }
 
+  function guardActive() {
+    const g = state.guard;
+    if (!g) return null;
+    if (g.roomKey !== state.roomKey || state.userTouched || now() > g.until || g.tries >= RESTORE_GUARD_TRIES) {
+      state.guard = null;
+      return null;
+    }
+    return g;
+  }
+
+  function endGuard() {
+    state.guard = null;
+    clearTimeout(state.guardTimer);
+  }
+
+  function putDraftBack(text) {
+    if (!state.editor || state.editor === state.staleEditor || !isChatInputEditor(state.editor)) return false;
+    if (!isBlankText(getEditorText(state.editor))) return false;
+    const ok = setEditorText(state.editor, text);
+    if (ok) state.lastKnownText = normalizeText(text);
+    return ok;
+  }
+
+  // 사용자가 손대기 전에 크랙이 새 입력창을 비우면 되살린 글을 다시 넣는다.
+  function checkGuard() {
+    clearTimeout(state.guardTimer);
+    const g = guardActive();
+    if (!g || !state.editor || state.composing) return;
+    if (state.restoring) {
+      state.guardTimer = setTimeout(checkGuard, 160);
+      return;
+    }
+    if (!isBlankText(getEditorText(state.editor))) return;
+    g.tries += 1;
+    putDraftBack(g.text);
+  }
+
+  function onContent() {
+    if (!state.guard) return;
+    clearTimeout(state.guardTimer);
+    state.guardTimer = setTimeout(checkGuard, 0);
+  }
+
   function tryRestoreDraft() {
     if (!state.roomKey || !state.editor || !isChatInputEditor(state.editor)) return;
+    // 방을 옮긴 직후 남아 있는 앞 방 입력창에는 넣지 않는다. 크랙이 곧 새 입력창으로 바꾼다.
+    if (state.editor === state.staleEditor) return;
+
+    const guard = guardActive();
+    if (guard) {
+      // 같은 방에서 입력창이 또 새로 만들어졌다.
+      guard.until = Math.max(guard.until, now() + RESTORE_GUARD_MS);
+      if (putDraftBack(guard.text)) guard.tries += 1;
+      return;
+    }
     if (state.restoredRoomKey === state.roomKey) return;
 
     const draft = getDraft(state.roomKey);
@@ -823,11 +899,13 @@ const hubNotice = (() => {
       return;
     }
 
+    if (!state.userTouched) {
+      state.guard = { roomKey: state.roomKey, text: draft.text, until: now() + RESTORE_GUARD_MS, tries: 0 };
+    }
     if (!isBlankText(getEditorText(state.editor))) return;
 
-    const ok = setEditorText(state.editor, draft.text);
+    const ok = putDraftBack(draft.text);
     if (ok) {
-      state.lastKnownText = draft.text;
       state.lastSavedRaw = JSON.stringify(draft);
       state.savedRoomKey = state.roomKey;
       state.savedPending = false;
@@ -842,9 +920,26 @@ const hubNotice = (() => {
     const text = getEditorText(state.editor);
     if (!isBlankText(text)) {
       saveDraftNow(reason, text, Boolean(state.pendingSend));
-    } else if (!state.pendingSend && !state.protectedDraft) {
+    } else if (!state.pendingSend && !state.protectedDraft && !guardActive() &&
+        state.ownedEditor === state.editor) {
+      // 사용자가 글을 친 바로 그 입력창이 비었을 때만 지운다(보내기를 못 알아챈 경우).
+      // 방을 옮기는 사이 잠깐 남은 앞 방 입력창이나 크랙이 만들고 비운 입력창은 저장본과 상관없다.
       deleteDraft(state.roomKey, 'blank-before-' + reason);
     }
+  }
+
+  function markStaleEditor() {
+    if (Core.route().roomKey === state.roomKey) return;
+    clearTimeout(state.staleTimer);
+    const el = state.editor;
+    state.staleEditor = el && el.isConnected ? el : null;
+    if (!state.staleEditor) return;
+    state.staleTimer = setTimeout(() => {
+      const stale = state.staleEditor;
+      state.staleEditor = null;
+      // 크랙이 입력창을 바꾸지 않고 그대로 쓰는 경우: 이제 이 방 입력창으로 본다.
+      if (stale && stale.isConnected && state.editor === stale) tryRestoreDraft();
+    }, STALE_EDITOR_MS);
   }
 
   function resetForRoute(newRoomKey) {
@@ -854,6 +949,9 @@ const hubNotice = (() => {
     detachEditor();
     clearTimeout(state.saveTimer);
     clearPendingSend('route-change');
+    endGuard();
+    state.ownedEditor = null;
+    state.userTouched = false;
 
     state.roomKey = newRoomKey;
     state.restoredRoomKey = null;
@@ -904,7 +1002,8 @@ const hubNotice = (() => {
   function boot() {
     cleanupOldDrafts();
     Core.on('before-history',()=>flushBeforeLeave('history'));
-    Core.on('before-route',()=>flushBeforeLeave('route'));
+    Core.on('before-route',()=>{flushBeforeLeave('route');markStaleEditor();});
+    Core.on('content',onContent);
     Core.on('route',initForCurrentRoute);
     Core.on('before-editor',({previous,next})=>{if(previous && previous!==next && state.roomKey===Core.route().roomKey)flushBeforeLeave('editor-change');});
     Core.on('editor',initForCurrentRoute);
@@ -3367,6 +3466,32 @@ const hubNotice = (() => {
         };
         try { Object.defineProperty(dl, '__chudPushWrapped', { value: true, configurable: true }); }
         catch (e) { dl.__chudPushWrapped = true; }
+    }
+
+    // 2026-11: 크랙은 generate_done을 자체 분석 도구로만 보내고 페이지 dataLayer에는 더 이상 넣지 않는다.
+    // 입력창 보내기 단추가 「생성 중지」였다가 돌아오는 순간을 답변 생성이 끝난 때로 본다.
+    let stopButtonSeen = false;
+    function findComposerStopButton() {
+        let node = Core.editor;
+        for (let i = 0; node && i < 7; i++, node = node.parentElement) {
+            const btn = node.querySelector?.('button[aria-label="생성 중지"]');
+            if (btn && !isOwnEl(btn)) return btn;
+        }
+        return null;
+    }
+    function checkGenerationButton() {
+        const { chatId, isChat } = getPathInfo();
+        if (!isChat || !chatId || !Core.editor) return;
+        if (findComposerStopButton()) {
+            if (!stopButtonSeen) {
+                stopButtonSeen = true;
+                if (!activeGenerationSession || activeGenerationSession.chatId !== chatId) startGenerationSession(chatId);
+            }
+            return;
+        }
+        if (!stopButtonSeen) return;
+        stopButtonSeen = false;
+        finishGenerationSession(`stop-button::${chatId}`);
     }
 
     function finishGenerationSession(eventKey = '') {
@@ -6344,6 +6469,9 @@ const hubNotice = (() => {
     bindGlobalEvents();
     hookHistoryForUpdate();
     watchGenerateDone();
+    Core.on('route',()=>{stopButtonSeen=false;});
+    Core.on('maintenance',checkGenerationButton);
+    Core.on('mutations',()=>Core.frame('chud-generation',checkGenerationButton));
     registerMenus();
     startObserver();
     injectListCrackerStyle();
