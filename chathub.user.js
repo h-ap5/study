@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🧩 Crack Chat Hub (크랙 채팅 허브)
 // @namespace    https://crack.wrtn.ai/
-// @version      1.1.16
+// @version      1.1.17
 // @updateURL    https://raw.githubusercontent.com/h-ap5/study/main/chathub.user.js
 // @downloadURL  https://raw.githubusercontent.com/h-ap5/study/main/chathub.user.js
 // @description  크랙 채팅 합본: 임시저장, 글자수, 채팅창 펼치기, 대시보드(해/달·소설/채팅 즉시 전환), 라디오존데, 채팅·출력 모델 공통 숨김.
@@ -2274,7 +2274,8 @@ const hubNotice = (() => {
         chatModels: `${API_BASE}/crack-gen/v3/chat-models`,
         chatBase: `${API_BASE}/crack-gen/v3/chats`,
         episodeUiSetting: `${API_BASE}/crack-api/profiles/ui-setting`,
-        rawMessages: `${CONTENTS_API_BASE}/character-chat/v3/chats`
+        // contents-api.wrtn.ai는 11/25부터 503·520으로 죽어 있어 크랙 화면과 같은 crack-gen 주소로 메시지 목록을 받는다.
+        rawMessages: `${API_BASE}/crack-gen/v3/chats`
     };
 
     const MODEL_TTL = 6 * 60 * 60 * 1000; // 모델 목록 캐시 6시간
